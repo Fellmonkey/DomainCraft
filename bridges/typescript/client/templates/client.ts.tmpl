@@ -1,0 +1,205 @@
+{{ template "banner" . }}
+
+// Thin fetch wrapper: attaches the JWT, JSON content type, and turns non-2xx
+// responses into a typed ApiError. A concurrency conflict surfaces as
+// `err.isConcurrencyConflict()` (409 + code "CONCURRENCY_CONFLICT"); a 429
+// rate-limit response is retried with exponential backoff (honoring the
+// server's Retry-After header) before the final ApiError is thrown.
+
+export class ApiError extends Error {
+  readonly status: number;
+  readonly detail: unknown;
+  /** Stable machine code from the server's error payload (e.g. `CONCURRENCY_CONFLICT`, `UNIQUE_CONFLICT`). */
+  readonly code: string | undefined;
+  /** The server's `Retry-After` delay in seconds (429 responses only), when present. */
+  readonly retryAfterSeconds: number | undefined;
+
+  constructor(status: number, detail: unknown, retryAfterSeconds?: number) {
+    super(`API request failed (${status})`);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+    this.code = extractErrorCode(detail);
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+
+  /** True for any 409 Conflict (unique/FK constraint violation, concurrency, setup already complete). */
+  isConflict(): boolean {
+    return this.status === 409;
+  }
+
+  /** True specifically for an optimistic-lock version conflict (409 + `CONCURRENCY_CONFLICT`). */
+  isConcurrencyConflict(): boolean {
+    return this.status === 409 && this.code === "CONCURRENCY_CONFLICT";
+  }
+
+  /** True for a rate-limit rejection (429 Too Many Requests). */
+  isRateLimited(): boolean {
+    return this.status === 429;
+  }
+
+  /** True when the server rejected the request with field-level validation errors (400 + `errors` map). */
+  isValidationError(): boolean {
+    return this.status === 400 && Object.keys(fieldErrorsFrom(this.detail)).length > 0;
+  }
+
+  /** Field-level validation messages from the server (`ValidationProblemDetails.errors`), one message per field. */
+  fieldErrors(): Record<string, string> {
+    return fieldErrorsFrom(this.detail);
+  }
+}
+
+function extractErrorCode(detail: unknown): string | undefined {
+  if (detail !== null && typeof detail === "object" && "code" in detail) {
+    const code = (detail as { code?: unknown }).code;
+    if (typeof code === "string") return code;
+  }
+  return undefined;
+}
+
+// ASP.NET Core [ApiController] returns ValidationProblemDetails for model
+// validation: { status: 400, errors: { field: [messages] } }. Collapse to the
+// first message per field — what a form renders.
+function fieldErrorsFrom(detail: unknown): Record<string, string> {
+  if (detail === null || typeof detail !== "object") return {};
+  const errors = (detail as { errors?: unknown }).errors;
+  if (errors === null || typeof errors !== "object" || Array.isArray(errors)) return {};
+  const out: Record<string, string> = {};
+  for (const [field, messages] of Object.entries(errors)) {
+    if (Array.isArray(messages) && messages.length > 0) out[field] = String(messages[0]);
+  }
+  return out;
+}
+
+// ---- 429 retry policy ----
+
+export interface RetryOptions {
+  /** Max retries on 429 before giving up (default 3). */
+  maxRetries: number;
+  /** Initial backoff delay in ms when no Retry-After header is present (default 500). */
+  baseDelayMs: number;
+  /** Upper bound for the exponential backoff (default 8000). */
+  maxDelayMs: number;
+  /** Honor the server's Retry-After header (seconds) when present (default true). */
+  respectRetryAfter: boolean;
+}
+
+const defaultRetryOptions: RetryOptions = {
+  maxRetries: 3,
+  baseDelayMs: 500,
+  maxDelayMs: 8000,
+  respectRetryAfter: true,
+};
+
+let retryOptions: RetryOptions = { ...defaultRetryOptions };
+
+/** Override the 429 retry policy (partial merge). */
+export function configureRetry(options: Partial<RetryOptions>): void {
+  retryOptions = { ...retryOptions, ...options };
+}
+
+/** Reset the retry policy to its defaults. */
+export function resetRetry(): void {
+  retryOptions = { ...defaultRetryOptions };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Exponential backoff: base * 2^attempt, capped at maxDelayMs.
+function backoffDelay(attempt: number): number {
+  return Math.min(retryOptions.baseDelayMs * 2 ** attempt, retryOptions.maxDelayMs);
+}
+
+// Retry-After is either a delay in seconds ("5") or an HTTP date. Returns the
+// delay in seconds (non-negative), or undefined when absent/unparseable.
+function parseRetryAfterSeconds(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds;
+  const date = Date.parse(value);
+  if (!Number.isNaN(date)) return Math.max(0, Math.ceil((date - Date.now()) / 1000));
+  return undefined;
+}
+
+const TOKEN_KEY = "domaincraft_token";
+{{- if .Project.Deploy }}
+const DEFAULT_BASE = {{ jsonValue (printf "http://%s:%d" .Project.Deploy.Domain .Project.Deploy.Port) }};
+{{- else }}
+const DEFAULT_BASE = "";
+{{- end }}
+
+{{- if .Project.Pagination }}
+/** List-sizing limits from the model (project.pagination): a UI can clamp or
+ * prefill pageSize with these instead of hard-coding numbers. */
+export const PAGINATION = {
+  defaultPageSize: {{ .Project.Pagination.DefaultPageSize }},
+  maxPageSize: {{ .Project.Pagination.MaxPageSize }},
+} as const;
+{{- end }}
+
+let apiBase = DEFAULT_BASE;
+let token: string | null = null;
+
+/** Override the API origin at runtime (e.g. `configureApiBase("http://localhost:9000")`). */
+export function configureApiBase(base: string): void {
+  apiBase = base.replace(/\/$/, "");
+}
+
+export function setToken(next: string | null): void {
+  token = next;
+  if (typeof localStorage !== "undefined") {
+    if (next === null) localStorage.removeItem(TOKEN_KEY);
+    else localStorage.setItem(TOKEN_KEY, next);
+  }
+}
+
+export function getToken(): string | null {
+  if (token !== null) return token;
+  if (typeof localStorage !== "undefined") {
+    token = localStorage.getItem(TOKEN_KEY);
+  }
+  return token;
+}
+
+export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const url = `${apiBase}/${path.replace(/^\//, "")}`;
+  for (let attempt = 0; ; attempt++) {
+    const res = await request(url, init);
+
+    if (res.ok) return (await readJson(res)) as T;
+
+    const retryAfterSeconds = parseRetryAfterSeconds(res.headers.get("Retry-After"));
+    if (res.status === 429 && attempt < retryOptions.maxRetries) {
+      const delayMs =
+        retryOptions.respectRetryAfter && retryAfterSeconds !== undefined
+          ? retryAfterSeconds * 1000
+          : backoffDelay(attempt);
+      await sleep(delayMs);
+      continue;
+    }
+
+    throw new ApiError(res.status, await readJson(res), retryAfterSeconds);
+  }
+}
+
+async function request(url: string, init: RequestInit): Promise<Response> {
+  const headers = new Headers(init.headers);
+  if (init.body !== undefined && init.body !== null) {
+    headers.set("Content-Type", "application/json");
+  }
+  const auth = getToken();
+  if (auth) headers.set("Authorization", `Bearer ${auth}`);
+  return fetch(url, { ...init, headers });
+}
+
+async function readJson(res: Response): Promise<unknown> {
+  const text = await res.text();
+  if (!text) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "ts-client-tck",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Technology Compatibility Kit for the ts-client layer: Zod/fetch/ApiError runtime contract + interop against a k6-certified backend, on top of the certified ts-core.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "certify": "npm run typecheck && npm run test",
+    "interop": "vitest run interop.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^3.0.0",
+    "zod": "^3.23.0"
+  }
+}

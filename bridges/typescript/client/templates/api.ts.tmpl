@@ -1,0 +1,52 @@
+{{ template "banner" . }}
+import { api } from "./client";
+import { buildQueryParams } from "./query";
+import type { ListResult } from "./types";
+{{ range $e := .Project.Entities }}import type { {{ $e.Name }}, {{ $e.Name }}With } from "./types";
+import type { {{ $e.Name }}Create, {{ $e.Name }}Update, {{ $e.Name }}Patch } from "./schemas";
+import type { {{ $e.Name }}Query, {{ $e.Name }}Include } from "./query";
+{{ end }}
+/** Substitutes `{id}` in an endpoint path template (the core's IREndpoint.Path). */
+function fillPath(template: string, id: string | number): string {
+  return template.replace("{id}", encodeURIComponent(String(id)));
+}
+
+{{ range $e := .Project.Entities }}
+// Endpoint routes come from the core's endpoint contract (IREntity.Endpoints) —
+// method paths, not hand-written strings.
+export const {{ camelcase $e.NamePlural }}Routes = {
+{{- range $ep := $e.Endpoints }}
+  {{ $ep.Operation }}: {{ jsonValue $ep.Path }},
+{{- end }}
+} as const;
+
+export function list{{ $e.NamePlural }}<I extends {{ $e.Name }}Include = never>(
+  query: Omit<{{ $e.Name }}Query, "include"> & { include?: I[] } = {},
+  init?: RequestInit,
+): Promise<ListResult<{{ $e.Name }}With<I>>> {
+  const params = buildQueryParams(query);
+  const qs = params.toString();
+  return api<ListResult<{{ $e.Name }}With<I>>>(`${ {{- camelcase $e.NamePlural -}}Routes.list}${qs ? `?${qs}` : ""}`, init);
+}
+
+export function get{{ $e.Name }}(id: {{ template "pkType" $e }}, init?: RequestInit): Promise<{{ $e.Name }}> {
+  return api<{{ $e.Name }}>(fillPath({{ camelcase $e.NamePlural }}Routes.get, id), init);
+}
+
+export function create{{ $e.Name }}(input: {{ $e.Name }}Create, init?: RequestInit): Promise<{{ $e.Name }}> {
+  return api<{{ $e.Name }}>({{ camelcase $e.NamePlural }}Routes.create, { method: "POST", body: JSON.stringify(input), ...init });
+}
+
+export function update{{ $e.Name }}(id: {{ template "pkType" $e }}, input: {{ $e.Name }}Update, init?: RequestInit): Promise<{{ $e.Name }}> {
+  return api<{{ $e.Name }}>(fillPath({{ camelcase $e.NamePlural }}Routes.update, id), { method: "PUT", body: JSON.stringify(input), ...init });
+}
+
+export function patch{{ $e.Name }}(id: {{ template "pkType" $e }}, input: {{ $e.Name }}Patch, init?: RequestInit): Promise<{{ $e.Name }}> {
+  return api<{{ $e.Name }}>(fillPath({{ camelcase $e.NamePlural }}Routes.patch, id), { method: "PATCH", body: JSON.stringify(input), ...init });
+}
+
+export function delete{{ $e.Name }}(id: {{ template "pkType" $e }}, init?: RequestInit): Promise<void> {
+  return api<void>(fillPath({{ camelcase $e.NamePlural }}Routes.delete, id), { method: "DELETE", ...init });
+}
+
+{{ end }}

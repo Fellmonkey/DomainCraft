@@ -1,0 +1,31 @@
+# TypeScript type mapping for DomainCraft IR database types.
+# Enums (enum(X)) are not listed here: the renderer maps them to the PascalCase
+# enum name (e.g. "OrderStatus"), which the bridge emits as a union type.
+types:
+  string: "string"
+  text: "string"
+  int: "number"
+  bigint: "number"
+  float: "number"
+  decimal: "number"
+  boolean: "boolean"
+  date: "string"
+  datetime: "string"
+  uuid: "string"
+  json: "unknown"
+  jsonb: "unknown"
+  "array(string)": "string[]"
+  "array(text)": "string[]"
+  "array(int)": "number[]"
+  "array(bigint)": "number[]"
+  "array(float)": "number[]"
+  "array(decimal)": "number[]"
+  "array(boolean)": "boolean[]"
+  "array(uuid)": "string[]"
+  "array(date)": "string[]"
+  "array(datetime)": "string[]"
+  "array(json)": "unknown[]"
+  "array(jsonb)": "unknown[]"
+
+# Nullability is handled in the templates (response -> `| null`, request -> `?`),
+# so no nullable_format / enum_nullable wrapping is applied.
