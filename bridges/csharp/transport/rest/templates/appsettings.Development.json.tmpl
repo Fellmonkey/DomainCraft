@@ -1,0 +1,14 @@
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Debug",
+      "Microsoft.AspNetCore": "Information",
+      "Microsoft.EntityFrameworkCore.Database.Command": "Information"
+    }
+  },
+  "DetailedErrors": true{{ if .Project.HasAuth }},
+  "Jwt": {
+    "Secret": "dev-only-secret-change-me-in-production-32-chars-min"
+  }
+{{ end }}
+}

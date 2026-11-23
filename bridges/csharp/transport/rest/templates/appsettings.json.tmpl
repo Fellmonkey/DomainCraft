@@ -1,0 +1,36 @@
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft": "Warning",
+      "Microsoft.EntityFrameworkCore": "Information"
+    }
+  },
+  "ConnectionStrings": {
+    "PostgreSQL": "Host=localhost;Port=5432;Database={{ .Project.Name | snakecase }}_db;Username=postgres;Password=postgres;Include Error Detail=true;"
+  },
+{{- if .Project.HasAuth }}
+  "Jwt": {
+    "Issuer": "{{ .Project.Name }}-api",
+    "Audience": "{{ .Project.Name }}-client",
+    "ExpirationMinutes": 60
+  },
+{{- end }}
+  "Storage": {
+    "RootPath": "storage"
+  },
+  "Database": {
+    "SchemaMode": "ensureCreated"
+  },
+  "AllowedHosts": "*"
+{{- if and .Project.CORS .Project.CORS.Enabled .Project.CORS.Origins }},
+  "Cors": {
+    "AllowedOrigins": [
+{{- range $i, $origin := .Project.CORS.Origins }}
+{{- if $i }},{{ end }}
+      "{{ $origin }}"
+{{- end }}
+    ]
+  }
+{{- end }}
+}

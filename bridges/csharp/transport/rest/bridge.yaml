@@ -1,0 +1,99 @@
+name: csharp-rest
+description: ASP.NET Core REST transport for DomainCraft C#.
+version: "1.0.0"
+layer: transport
+extends: csharp-efcore
+registry_url: "https://api.nuget.org/v3-flatcontainer/{id}/index.json"
+registry_packages:
+  jwt_bearer: Microsoft.AspNetCore.Authentication.JwtBearer
+  identity_model: Microsoft.IdentityModel.Tokens
+  swashbuckle: Swashbuckle.AspNetCore
+  swashbuckle_annotations: Swashbuckle.AspNetCore.Annotations
+  healthchecks_npgsql: AspNetCore.HealthChecks.NpgSql
+  versioning: Asp.Versioning.Mvc
+  versioning_api_explorer: Asp.Versioning.Mvc.ApiExplorer
+  hangfire: Hangfire
+  hangfire_postgresql: Hangfire.PostgreSql
+  serilog: Serilog.AspNetCore
+  serilog_settings: Serilog.Settings.Configuration
+  serilog_seq: Serilog.Sinks.Seq
+  serilog_console: Serilog.Sinks.Console
+  otel_hosting: OpenTelemetry.Extensions.Hosting
+  otel_aspnetcore: OpenTelemetry.Instrumentation.AspNetCore
+  otel_jaeger: OpenTelemetry.Exporter.Jaeger
+  test_sdk: Microsoft.NET.Test.Sdk
+  xunit: xunit
+  xunit_runner: xunit.runner.visualstudio
+  mvc_testing: Microsoft.AspNetCore.Mvc.Testing
+  testcontainers: Testcontainers.PostgreSql
+  npgsql: Npgsql
+  ef_core_inmemory: Microsoft.EntityFrameworkCore.InMemory
+templates:
+  - for: entity
+    source: templates/controller.cs.tmpl
+    target: "src/WebApi/Controllers/{{ pluralize .Entity.Name }}Controller.g.cs"
+  - for: project
+    source: templates/auth-controller.cs.tmpl
+    target: "src/WebApi/Controllers/{{ .Project.Auth.Entity }}Controller.g.cs"
+    when: hasAuth
+  - for: project
+    source: templates/api-service-extensions.cs.tmpl
+    target: "src/WebApi/Extensions/ServiceCollectionExtensions.g.cs"
+  - for: project
+    source: templates/api-app-extensions.cs.tmpl
+    target: "src/WebApi/Extensions/ApplicationBuilderExtensions.g.cs"
+  - for: project
+    source: templates/health-checks.cs.tmpl
+    target: "src/WebApi/HealthChecks/HealthCheckResponseWriter.g.cs"
+  - for: project
+    source: templates/Program.cs.tmpl
+    target: "src/WebApi/Program.cs"
+    overwrite: false
+  - for: project
+    source: templates/appsettings.json.tmpl
+    target: "src/WebApi/appsettings.json"
+  - for: project
+    source: templates/appsettings.Development.json.tmpl
+    target: "src/WebApi/appsettings.Development.json"
+  - for: project
+    source: templates/appsettings.Staging.json.tmpl
+    target: "src/WebApi/appsettings.Staging.json"
+  - for: project
+    source: templates/appsettings.Production.json.tmpl
+    target: "src/WebApi/appsettings.Production.json"
+  - for: project
+    source: templates/solution.sln.tmpl
+    target: "{{ .Project.Name | pascalcase }}.sln"
+  - for: project
+    source: templates/tests.ApiTests.cs.tmpl
+    target: "tests/ApiTests.g.cs"
+  - for: project
+    source: templates/tests.AuthTests.cs.tmpl
+    target: "tests/AuthTests.g.cs"
+  - for: project
+    source: templates/tests.EntityTests.cs.tmpl
+    target: "tests/EntityTests.g.cs"
+  - for: project
+    source: templates/tests.EntityStateTests.cs.tmpl
+    target: "tests/EntityStateTests.g.cs"
+  - for: project
+    source: templates/tests.csproj.tmpl
+    target: "tests/{{ .Project.Name | pascalcase }}.Tests.csproj"
+  - for: project
+    source: templates/Dockerfile.tmpl
+    target: "Dockerfile"
+  - for: project
+    source: templates/docker-compose.yml.tmpl
+    target: "docker-compose.yml"
+  - for: project
+    source: templates/k8s/deployment.yaml.tmpl
+    target: "deploy/k8s/deployment.yaml"
+  - for: project
+    source: templates/k8s/service.yaml.tmpl
+    target: "deploy/k8s/service.yaml"
+  - for: project
+    source: templates/k8s/ingress.yaml.tmpl
+    target: "deploy/k8s/ingress.yaml"
+  - for: project
+    source: templates/webapi.csproj.tmpl
+    target: "src/WebApi/WebApi.csproj"

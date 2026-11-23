@@ -1,0 +1,106 @@
+# DomainCraft - GENERATED: DO NOT EDIT. Regenerated on every `domaincraft generate`. Make model changes in domain.yaml.
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: {{ .Project.Name | snakecase }}-postgres
+    environment:
+      # DEV-ONLY credentials. Override POSTGRES_PASSWORD (and the matching
+      # connection string below) before exposing this compose to any non-local
+      # environment.
+      POSTGRES_DB: {{ .Project.Name }}_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: {{ .Project.Name | snakecase }}-api
+    ports:
+      - "{{ .Project.Deploy.Port }}:{{ .Project.Deploy.Port }}"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__PostgreSQL=Host=postgres;Database={{ .Project.Name }}_db;Username=postgres;Password=postgres
+{{- if .Project.HasAuth }}
+      # DEV-ONLY JWT secret. The app fails fast at startup unless Jwt__Secret is
+      # at least 32 characters, so this must be overridden for staging/production.
+      - Jwt__Secret=YourSuperSecretKeyThatIsAtLeast32CharactersLong!
+      - Jwt__Issuer={{ .Project.Name }}
+      - Jwt__Audience={{ .Project.Name | snakecase }}-api
+{{- end }}
+{{- if .Project.HasAddon "observability" }}
+      - Seq__Url=http://seq:5341
+      - Jaeger__Enabled=true
+      - OTEL_EXPORTER_JAEGER_AGENT_HOST=jaeger
+{{- end }}
+    depends_on:
+      postgres:
+        condition: service_healthy
+{{- if .Project.HasAddon "dapr" }}
+      dapr-sidecar:
+        condition: service_started
+{{- end }}
+    restart: unless-stopped
+    volumes:
+      - storage_data:/app/storage
+
+{{- if .Project.HasAddon "dapr" }}
+  # Dapr sidecar — runs next to the application process and talks to the
+  # infrastructure declared in dapr/components/*.yaml (pubsub, statestore, ...).
+  dapr-sidecar:
+    image: daprio/daprd:1.13
+    command: ["./daprd", "-app-id", "{{ .Project.Name | snakecase }}-api", "-app-port", "{{ .Project.Deploy.Port }}", "-components-path", "/components"]
+    container_name: {{ .Project.Name | snakecase }}-dapr
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./dapr/components:/components
+    healthcheck:
+      # Best-effort: probe the sidecar's own HTTP health endpoint (default 3500).
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:3500/v1.0/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+{{- end }}
+
+{{- if .Project.HasAddon "observability" }}
+  # Seq — log sink (see Program.cs: Serilog reads Seq:Url). UI on http://localhost:5341
+  seq:
+    image: datalust/seq:latest
+    container_name: {{ .Project.Name | snakecase }}-seq
+    environment:
+      - ACCEPT_EULA=Y
+    ports:
+      - "5341:80"
+    volumes:
+      - seq_data:/data
+
+  # Jaeger — distributed tracing collector + UI. UI on http://localhost:16686
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: {{ .Project.Name | snakecase }}-jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"
+      - "6831:6831/udp"
+{{- end }}
+
+volumes:
+  postgres_data:
+  storage_data:
+{{- if .Project.HasAddon "observability" }}
+  seq_data:
+{{- end }}

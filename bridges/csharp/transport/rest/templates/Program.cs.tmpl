@@ -1,0 +1,23 @@
+// DomainCraft - scaffolded once (overwrite: false). The heavy lifting lives in the
+// regenerated extension classes:
+//   - src/WebApi/Extensions/ServiceCollectionExtensions.g.cs  (AddWebApiServices / AddWebApiLogging)
+//   - src/WebApi/Extensions/ApplicationBuilderExtensions.g.cs (UseWebApiPipeline / MapWebApiEndpoints / InitializeWebApiDatabaseAsync)
+// Add custom middleware or services here — they run around the generated pipeline.
+using {{ .Project.Name | pascalcase }}.WebApi.Extensions;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddWebApiServices(builder.Configuration, builder.Environment);
+builder.AddWebApiLogging();
+
+var app = builder.Build();
+
+app.UseWebApiPipeline();
+app.MapWebApiEndpoints();
+
+await app.InitializeWebApiDatabaseAsync();
+
+app.Run();
+
+// Make Program accessible for integration tests
+public partial class Program { }
