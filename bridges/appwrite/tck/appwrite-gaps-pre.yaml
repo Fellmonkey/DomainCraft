@@ -1,0 +1,51 @@
+# DomainCraft → Appwrite bridge — gaps model, PRE-rename phase (TCK, plan §3.2).
+#
+# Identical to tck/appwrite-gaps.yaml except the renamed entity is still called
+# Gadget (no `old_name`). The oracle pushes THIS config first (table `gadgets`
+# named "Gadgets" + the seed row), then pushes appwrite-gaps.yaml (Widget with
+# old_name: Gadget → the same table $id, new name "Widgets"). The seed row
+# created here must survive the rename — that is the "строки на месте" proof.
+project:
+  name: AppwriteGaps
+  version: 1.0.0
+database: appwrite
+auth:
+  type: jwt
+  entity: User
+  roles: [Admin, User]
+entities:
+  User:
+    fields:
+      id: uuid [primary]
+      email: string [required, unique]
+      password: string [required]
+  Gadget:
+    fields:
+      id: uuid [primary]
+      sku: string [required, unique]
+      stock: bigint [required, gte:1, lte:1000000]
+    permissions:
+      read: [Admin, "@Owner"]
+      create: [User]
+      update: ["@Owner"]
+      delete: [Admin]
+    seed:
+      - { id: "550e8400-e29b-41d4-a716-446655440111", sku: "GAP-1", stock: 42 }
+  Bundle:
+    fields:
+      id: uuid [primary]
+      widgetId: relation(Gadget) [required, on_delete:cascade]
+      label: string
+  PublicNote:
+    fields:
+      id: uuid [primary]
+      body: string
+  LockedNote:
+    fields:
+      id: uuid [primary]
+      body: string
+    permissions:
+      read: []
+      create: []
+      update: []
+      delete: []

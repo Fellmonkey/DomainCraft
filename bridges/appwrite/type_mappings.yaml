@@ -1,0 +1,46 @@
+# IR database type → Appwrite TablesDB column type.
+# Loaded at runtime by the renderer: `languageType .EnumTypeName false`
+# resolves the column "type" for scalar fields; enums are handled by the template
+# ("enum" + elements), relationships by the template ("relationship" + relatedTable).
+#
+# Fixed losses (documented in the generated README):
+#   decimal → double   (no decimal column in TablesDB; "double" in the config, /float on the wire)
+#   json/jsonb → text  (JSON stored as a string)
+#   date → datetime    (no date-only column; defaults normalized to T00:00:00Z)
+#
+# CLI 26 config contract (from the CLI source, internal/schema/attributes.go):
+#   float/decimal are written as "double" (the API reports /float on the wire)
+#   email/url/ip/enum are NOT column types: they are "string" + a "format"
+#   (email|url|ip|enum), emitted by the template — so this file maps them to
+#   "string" and the template adds the format field.
+types:
+  string: "varchar"
+  text: "text"
+  int: "integer"
+  bigint: "bigint"
+  float: "double"
+  decimal: "double"
+  boolean: "boolean"
+  date: "datetime"
+  datetime: "datetime"
+  email: "string"
+  url: "string"
+  ipv4: "string"
+  uuid: "varchar"
+  json: "text"
+  jsonb: "text"
+
+# IR on_delete → Appwrite relationship onDelete. no_action has no Appwrite
+# equivalent and maps to restrict (fixed, deterministic).
+behaviors:
+  cascade: "cascade"
+  set_null: "setNull"
+  restrict: "restrict"
+  no_action: "restrict"
+
+# Default column size per IR type (the template overrides string with a `max`
+# validation). Sizes are bridge-specific (Appwrite varchar(uuid)=36, string=255),
+# so they live here rather than in the template or the core.
+column_sizes:
+  string: "255"
+  uuid: "36"
