@@ -66,14 +66,44 @@ func (r *Resolver) Resolve(input string) (string, error) {
 	// ".." would be a path fragment, not a GitHub user (looksLikePath already
 	// rejects dot-led inputs; this keeps step 3 correct on its own too).
 	if parts := strings.SplitN(input, "/", 2); len(parts) == 2 && parts[0] != "" && parts[1] != "" && parts[0] != "." && parts[0] != ".." {
+		repo, ref := splitPinRef(input)
 		entry := RegistryEntry{
 			ID:     parts[1],
-			GitHub: input,
+			GitHub: repo,
 		}
-		return EnsureBridge(entry, r.ensure)
+		path, err := EnsureBridge(entry, r.ensure)
+		if err != nil {
+			return "", err
+		}
+		if ref != "" {
+			if err := checkoutPinnedRef(path, ref); err != nil {
+				return "", err
+			}
+		}
+		return path, nil
 	}
 
 	return "", fmt.Errorf("bridge %q not found: not a local path, registry ID, or owner/repo", input)
+}
+
+// splitPinRef splits a `owner/repo@ref` shorthand into the repository and the
+// pinned ref (commit SHA, tag or branch). A bare `owner/repo` has no ref.
+func splitPinRef(s string) (repo, ref string) {
+	if i := strings.LastIndexByte(s, '@'); i > 0 {
+		return s[:i], s[i+1:]
+	}
+	return s, ""
+}
+
+// checkoutPinnedRef checks that the pinned ref exists in the checkout and
+// switches the cached bridge to it, so community-bridge resolution is pinned to
+// a specific commit/tag rather than "whatever main is today".
+func checkoutPinnedRef(dir, ref string) error {
+	if _, err := runGit(dir, "rev-parse", "--verify", ref+"^{commit}"); err != nil {
+		return fmt.Errorf("pinned ref %q not found in %s: %w", ref, dir, err)
+	}
+	_, err := runGit(dir, "checkout", "-q", ref)
+	return err
 }
 
 // looksLikePath reports whether input is path-like — relative ("../x", "./x"),

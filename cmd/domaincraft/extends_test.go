@@ -73,7 +73,7 @@ func TestResolveExtendsRefPrefersLocalCheckout(t *testing.T) {
 	// (monorepo sibling layout) — must resolve locally without cloning.
 	sibling := writeBridgeDir(t, filepath.Join(root, "domaincraft-bridge-csharp"), "")
 
-	got, err := resolveExtendsRef("csharp-restful", filepath.Join(root, "adapter"), resolver)
+	got, err := bridge.ResolveExtendsRef("csharp-restful", filepath.Join(root, "adapter"), resolver)
 	if err != nil {
 		t.Fatalf("resolveExtendsRef: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestResolveExtendsRefPrefersLocalCheckout(t *testing.T) {
 	innerAdapter := filepath.Join(innerRoot, "adapter")
 	inner := writeBridgeDir(t, filepath.Join(innerAdapter, "domaincraft-bridge-csharp"), "")
 
-	got, err = resolveExtendsRef("csharp-restful", innerAdapter, resolver)
+	got, err = bridge.ResolveExtendsRef("csharp-restful", innerAdapter, resolver)
 	if err != nil {
 		t.Fatalf("resolveExtendsRef: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestResolveExtendsRefPrefersMonorepoLayout(t *testing.T) {
 	// Distractor sibling checkout with the legacy repo name — must NOT win now.
 	writeBridgeDir(t, filepath.Join(root, "domaincraft-bridge-csharp-core"), "")
 
-	got, err := resolveExtendsRef("csharp-core", filepath.Join(root, "adapter"), resolver)
+	got, err := bridge.ResolveExtendsRef("csharp-core", filepath.Join(root, "adapter"), resolver)
 	if err != nil {
 		t.Fatalf("resolveExtendsRef: %v", err)
 	}
@@ -115,9 +115,9 @@ func TestResolveExtendsRefPrefersMonorepoLayout(t *testing.T) {
 
 	// A bridge with a multi-segment path: csharp-efcore → csharp/persistence/efcore.
 	ef := writeBridgeDir(t, filepath.Join(root, "bridges", "csharp", "persistence", "efcore"), "")
-	got, err = resolveExtendsRef("csharp-efcore", filepath.Join(root, "adapter"), resolver)
+	got, err = bridge.ResolveExtendsRef("csharp-efcore", filepath.Join(root, "adapter"), resolver)
 	if err != nil {
-		t.Fatalf("resolveExtendsRef(efcore): %v", err)
+		t.Fatalf("bridge.ResolveExtendsRef(efcore): %v", err)
 	}
 	if abs, _ := filepath.Abs(got); abs != ef {
 		t.Errorf("resolved = %q, want %q", got, ef)
@@ -128,7 +128,7 @@ func TestResolveExtendsRefFallsBackWhenNoMonorepo(t *testing.T) {
 	root := t.TempDir()
 	resolver := bridge.NewResolver(bridge.Default())
 	sibling := writeBridgeDir(t, filepath.Join(root, "domaincraft-bridge-csharp"), "")
-	got, err := resolveExtendsRef("csharp-restful", filepath.Join(root, "adapter"), resolver)
+	got, err := bridge.ResolveExtendsRef("csharp-restful", filepath.Join(root, "adapter"), resolver)
 	if err != nil {
 		t.Fatalf("resolveExtendsRef: %v", err)
 	}

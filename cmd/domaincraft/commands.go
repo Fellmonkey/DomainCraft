@@ -193,6 +193,16 @@ func newGenerateCmd() *cobra.Command {
 				return err
 			}
 			bridgePath = newBridgePath
+			// Phase 3.5: a community bridge (not a bundled official bridge) must
+			// never have migrations auto-run — that would execute arbitrary shell
+			// lines from an untrusted bridge.yaml during a code-generation run.
+			chainHasCommunity := false
+			for _, p := range append([]string{bridgePath}, basePaths...) {
+				if !bridge.IsOfficialBundled(p) {
+					chainHasCommunity = true
+					break
+				}
+			}
 			log.Info("Rendering via %s", bridgePath)
 			rendererInstance, err := renderer.New(bridgePath, log)
 			if err != nil {
@@ -254,7 +264,12 @@ func newGenerateCmd() *cobra.Command {
 			// has to think about SQL schemas. Triggered explicitly via --migrate, or
 			// automatically in --prune mode when the diff detected renames/deletions
 			// that must reach the database (skipped when cleanup was deferred).
-			shouldMigrate := migrateFlag || (prune && migrationDiff.HasSchemaChanges())
+			autoMigrate := prune && migrationDiff.HasSchemaChanges()
+			if autoMigrate && chainHasCommunity {
+				log.Warn("community bridge(s) in the resolved chain — not auto-running database migrations; use --migrate explicitly")
+				autoMigrate = false
+			}
+			shouldMigrate := migrateFlag || autoMigrate
 			if applied && shouldMigrate && rendererInstance.MigrationConfig() != nil && rendererInstance.MigrationConfig().Enabled {
 				if err := runDatabaseMigrations(rendererInstance.MigrationConfig(), outputDir, cmd, log); err != nil {
 					if migrateFlag {
@@ -396,7 +411,7 @@ func resolveBridgeInteractive(log *logger.Logger) (string, string, error) {
 		// <root>/bridges/<path> copy when it exists (same order as `extends`).
 		if entry := bridge.Default().ByID(bridgePath); entry != nil && entry.Path != "" {
 			if wd, err := os.Getwd(); err == nil {
-				if p := findMonorepoBridge(wd, entry.Path); p != "" {
+				if p := bridge.FindMonorepoBridge(wd, entry.Path); p != "" {
 					return p, "", nil
 				}
 			}
@@ -433,7 +448,7 @@ func resolveBaseChain(adapterDir, baseRef string, log *logger.Logger) ([]string,
 	fromDir := adapterDir
 	cur := baseRef
 	for cur != "" {
-		path, err := resolveExtendsRef(cur, fromDir, resolver)
+		path, err := bridge.ResolveExtendsRef(cur, fromDir, resolver)
 		if err != nil {
 			return nil, fmt.Errorf("resolve bridge `extends: %s`: %w", cur, err)
 		}
@@ -511,7 +526,7 @@ func buildFullChainTopFirst(entryDir string, log *logger.Logger) ([]string, erro
 		if ext == "" {
 			break
 		}
-		next, err := resolveExtendsRef(ext, curDir, resolver)
+		next, err := bridge.ResolveExtendsRef(ext, curDir, resolver)
 		if err != nil {
 			return nil, fmt.Errorf("resolve bridge `extends: %s`: %w", ext, err)
 		}
@@ -558,7 +573,7 @@ func resolveChainWithReplacements(entryDir string, reps []replaceEntry, log *log
 			return "", nil, fmt.Errorf("no bridge with layer or name %q in chain %v", rep.left, fullChain)
 		}
 		// Resolve replacement bridge.
-		rightPath, err := resolveExtendsRef(rep.right, entryDir, resolver)
+		rightPath, err := bridge.ResolveExtendsRef(rep.right, entryDir, resolver)
 		if err != nil {
 			return "", nil, fmt.Errorf("resolve --replace %s=%s: %w", rep.left, rep.right, err)
 		}
@@ -647,7 +662,7 @@ func writeDomainLock(domainPath string, dirs []string) error {
 		seen[id] = true
 		b := lockBridge{ID: id, Version: version, ContractVersion: contractVersion}
 		if entry := reg.ByID(id); entry != nil {
-			if p := monorepoRelPath(dir, entry.Path); p != "" {
+			if p := bridge.MonorepoRelPath(dir, entry.Path); p != "" {
 				b.Path = p
 			} else if entry.GitHub != "" {
 				b.Source = entry.GitHub
@@ -687,74 +702,6 @@ func bridgeMetadata(dir string) (id, version string, contractVersion int, err er
 		cfg.ContractVersion = 1
 	}
 	return cfg.Name, cfg.Version, cfg.ContractVersion, nil
-}
-
-// monorepoRelPath reports whether dir is the monorepo location for an official
-// bridge (i.e. it ends with `bridges/<entryPath>`) and returns that relative
-// path, or "" when the bridge was resolved from elsewhere.
-func monorepoRelPath(dir, entryPath string) string {
-	if entryPath == "" {
-		return ""
-	}
-	suffix := filepath.Join("bridges", filepath.FromSlash(entryPath))
-	if strings.HasSuffix(filepath.Clean(dir), suffix) {
-		return filepath.ToSlash(suffix)
-	}
-	return ""
-}
-
-// resolveExtendsRef resolves one `extends` reference. It shares the loader
-// order with the top-level `--bridge` entry (see resolveBridgeInteractive),
-// from most to least preferred:
-//
-// First, the monorepo layout: walk up from the extending bridge looking for
-// <root>/bridges/<entry.Path>. The ID→path mapping is registry data, never
-// inferred from the directory name.
-//
-// Second, the legacy layouts: a repo-named checkout next to the extending
-// bridge (monorepo sibling) or inside its directory (a CI checkout), so
-// development works before the base bridge is published.
-//
-// Finally, the normal path/ID/owner-repo resolution (cache + clone).
-func resolveExtendsRef(ref, fromDir string, resolver *bridge.Resolver) (string, error) {
-	if entry := bridge.Default().ByID(ref); entry != nil {
-		if p := findMonorepoBridge(fromDir, entry.Path); p != "" {
-			return p, nil
-		}
-		repo := filepath.Base(entry.GitHub)
-		for _, candidate := range []string{
-			filepath.Join(filepath.Dir(fromDir), repo), // sibling of the adapter (monorepo)
-			filepath.Join(fromDir, repo),               // inside the adapter's directory (CI checkout)
-		} {
-			if info, err := os.Stat(filepath.Join(candidate, "bridge.yaml")); err == nil && !info.IsDir() {
-				return candidate, nil
-			}
-		}
-	}
-	return resolver.Resolve(ref)
-}
-
-// findMonorepoBridge walks up from dir looking for <root>/bridges/<relPath>
-// containing a bridge.yaml. It returns the bridge directory, or "" when relPath
-// is empty or no such bridge exists anywhere up the tree. The walk stops at the
-// filesystem root; the upward search is safe because an unrelated
-// `<root>/bridges` higher up is the explicit, documented monorepo convention.
-func findMonorepoBridge(dir, relPath string) string {
-	if relPath == "" {
-		return ""
-	}
-	cur := dir
-	for {
-		candidate := filepath.Join(cur, "bridges", filepath.FromSlash(relPath))
-		if info, err := os.Stat(filepath.Join(candidate, "bridge.yaml")); err == nil && !info.IsDir() {
-			return candidate
-		}
-		parent := filepath.Dir(cur)
-		if parent == cur {
-			return ""
-		}
-		cur = parent
-	}
 }
 
 // bridgeEnsureOptions builds the bridge caching/update policy from the CLI
@@ -837,6 +784,12 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 		return nil
 	}
 	out := cmd.OutOrStdout()
+	// The resolved command lines are printed before they run, so the developer
+	// always sees exactly what will be executed (Phase 3.5 safety).
+	fmt.Fprintf(out, "  Applying %d database migration command(s):\n", len(cfg.Commands))
+	for i, command := range cfg.Commands {
+		fmt.Fprintf(out, "    %d) %s\n", i+1, command)
+	}
 	for i, command := range cfg.Commands {
 		log.Info("Migration %d/%d: %s", i+1, len(cfg.Commands), command)
 		var argv []string
