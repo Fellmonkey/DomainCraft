@@ -39,3 +39,38 @@ go.work.sum
 bridges/**/bin
 bridges/**/obj
 
+# Generated output from the bridges' own generators — never commit these.
+# The generator recreates them; committing them only churns the tree.
+.domaincraft/
+**/generated/
+node_modules/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Transient build / test artifacts
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*.log
+*.tsbuildinfo
+coverage.html
+dist/
+build/
+out/
+.history/
+
+# Interpreter caches (may appear inside imported bridges)
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+

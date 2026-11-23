@@ -3,6 +3,7 @@
 package contract
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"flag"
@@ -126,6 +127,10 @@ func renderChain(t *testing.T, chain []string, proj *ir.IRProject) map[string]st
 		if err != nil {
 			return err
 		}
+		// Hash normalized content so the golden manifest is platform-independent:
+		// a Windows checkout yields CRLF while Linux yields LF, and the bytes
+		// should compare equal regardless of the host's line endings.
+		b = bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n"))
 		sum := sha256.Sum256(b)
 		files[filepath.ToSlash(rel)] = hex.EncodeToString(sum[:])
 		return nil
@@ -167,6 +172,9 @@ func TestGoldenLeafBridges(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read golden %s (run with -update to create): %v", goldenPath, err)
 			}
+			// Normalize the stored golden the same way the output is normalized, so
+			// a CRLF checkout on Windows compares equal to an LF checkout on Linux.
+			data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
 			if want := strings.TrimRight(string(data), "\n"); want != got {
 				t.Errorf("generated output for %s differs from golden manifest", id)
 			}
