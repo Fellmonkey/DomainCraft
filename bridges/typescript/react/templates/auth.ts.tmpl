@@ -1,0 +1,118 @@
+{{ template "banner" . }}
+{{- $auth := .Project.Auth }}
+{{- $authEntity := .Project.AuthEntity }}
+{{- $hasRole := false }}{{ range $authEntity.Fields }}{{ if eq (lower .Name) "role" }}{{ $hasRole = true }}{{ end }}{{ end }}
+import { useMutation, useQuery, useQueryClient, type UseMutationOptions, type UseQueryOptions } from "@tanstack/react-query";
+import { api, ApiError, setToken } from "./client";
+import { can, type EntityName, type PermissionOp } from "./permissions";
+import type { {{ if $auth.Endpoints.HasLogin }}AuthResponse, LoginRequest, {{ end }}{{ if or $auth.Endpoints.HasRegister $auth.Endpoints.HasSetup }}RegisterRequest, {{ end }}{{ $auth.Entity }} } from "./types";
+
+// Auth endpoint paths come from the core's endpoint contract
+// (IRProject.AuthEndpoints) — only endpoints enabled in domain.yaml exist here.
+const AUTH_ROUTES = {
+{{- range .Project.AuthEndpoints }}
+  {{ .Operation }}: {{ jsonValue .Path }},
+{{- end }}
+} as const;
+
+export const meKeys = { me: ["auth", "me"] as const };
+
+/** Clears the session client-side: drops the JWT and every cached query
+ * (the /me profile included), so no other user's data lingers in memory. */
+export function useLogout(): () => void {
+  const queryClient = useQueryClient();
+  return () => {
+    setToken(null);
+    queryClient.clear();
+  };
+}
+{{ if $auth.Endpoints.HasLogin }}
+
+export function login(input: LoginRequest): Promise<AuthResponse> {
+  return api<AuthResponse>(AUTH_ROUTES.login, { method: "POST", body: JSON.stringify(input) });
+}
+
+export function useLogin(options?: Omit<UseMutationOptions<AuthResponse, Error, LoginRequest>, "mutationFn">) {
+  return useMutation({
+    mutationFn: login,
+    ...options,
+    onSuccess: (res, ...rest) => {
+      setToken(res.token);
+      options?.onSuccess?.(res, ...rest);
+    },
+  });
+}
+{{ end }}
+{{ if $auth.Endpoints.HasRegister }}
+
+export function register(input: RegisterRequest): Promise<void> {
+  return api<void>(AUTH_ROUTES.register, { method: "POST", body: JSON.stringify(input) });
+}
+
+export function useRegister(options?: Omit<UseMutationOptions<void, Error, RegisterRequest>, "mutationFn">) {
+  return useMutation({
+    mutationFn: register,
+    ...options,
+    onSuccess: (...args) => {
+      options?.onSuccess?.(...args);
+    },
+  });
+}
+{{ end }}
+{{ if $auth.Endpoints.HasSetup }}
+
+export function setup(input: RegisterRequest): Promise<void> {
+  return api<void>(AUTH_ROUTES.setup, { method: "POST", body: JSON.stringify(input) });
+}
+
+export function useSetup(options?: Omit<UseMutationOptions<void, Error, RegisterRequest>, "mutationFn">) {
+  return useMutation({
+    mutationFn: setup,
+    ...options,
+    onSuccess: (...args) => {
+      options?.onSuccess?.(...args);
+    },
+  });
+}
+{{ end }}
+{{ if $auth.Endpoints.HasMe }}
+
+export async function me(): Promise<{{ $auth.Entity }}> {
+  try {
+    return await api<{{ $auth.Entity }}>(AUTH_ROUTES.me);
+  } catch (err) {
+    // A stale token surfaces as 401 on /me — clear it so the app falls back
+    // to its logged-out state instead of retrying with a dead JWT.
+    if (err instanceof ApiError && err.status === 401) setToken(null);
+    throw err;
+  }
+}
+
+export function useMe(options?: Omit<UseQueryOptions<{{ $auth.Entity }}>, "queryKey" | "queryFn">) {
+  return useQuery({
+    queryKey: meKeys.me,
+    queryFn: me,
+    ...options,
+  });
+}
+{{ end }}
+
+/** Role-based permission guard for UI. This is a client-side affordance only —
+ * the server is authoritative. */
+{{ if $auth.Endpoints.HasMe }}
+export function useCan() {
+  const { data } = useMe();
+{{- if $hasRole }}
+  const roles: string[] = data && data.role != null ? [String(data.role)] : [];
+{{- else }}
+  const roles: string[] = [];
+{{- end }}
+  return (entity: EntityName | string, op: PermissionOp): boolean => can(roles, entity, op);
+}
+{{ else }}
+export function useCan() {
+  // No /me endpoint in this model — roles are unknown, so only public (`*`)
+  // and owner-scoped (`@`) operations light up, mirroring can([], ...).
+  return (entity: EntityName | string, op: PermissionOp): boolean => can([], entity, op);
+}
+{{ end }}

@@ -1,0 +1,34 @@
+name: react-rest
+description: React + TypeScript client for DomainCraft — a thin adapter over the ts-client data layer, adding TanStack Query hooks, JWT auth hooks and a role-based useCan guard.
+version: "1.0.0"
+layer: framework
+extends: ts-client
+output_dir: frontend
+
+templates:
+  # ===== FRAMEWORK GLUE (the only React-specific part) =====
+  - for: project
+    source: templates/hooks.ts.tmpl
+    target: "src/generated/hooks.ts"
+
+  - for: project
+    source: templates/auth.ts.tmpl
+    target: "src/generated/auth.ts"
+    when: hasAuth
+
+  # ===== PROJECT SCAFFOLD (framework-shaped: deps, jsx, entry) =====
+  - for: project
+    source: templates/index.ts.tmpl
+    target: "src/index.ts"
+
+  - for: project
+    source: templates/package.json.tmpl
+    target: "package.json"
+
+  - for: project
+    source: templates/tsconfig.json.tmpl
+    target: "tsconfig.json"
+
+  - for: project
+    source: templates/README.md.tmpl
+    target: "README.md"

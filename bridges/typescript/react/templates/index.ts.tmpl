@@ -1,0 +1,12 @@
+{{ template "banner" . }}
+
+export * from "./generated/types";
+export * from "./generated/schemas";
+export * from "./generated/query";
+export * from "./generated/client";
+export * from "./generated/api";
+export * from "./generated/hooks";
+export * from "./generated/permissions";
+{{- if .Project.HasAuth }}
+export * from "./generated/auth";
+{{- end }}
