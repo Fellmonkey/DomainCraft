@@ -1,0 +1,12 @@
+services:
+  admin:
+    image: busybox:stable
+    working_dir: /app
+    volumes:
+      - ./admin:/app
+    command: ["httpd", "-f", "-p", "3000", "-h", "/app"]
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped

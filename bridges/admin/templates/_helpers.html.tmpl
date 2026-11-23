@@ -1,0 +1,385 @@
+{{/* ==================== Head ==================== */}}
+{{ define "head" }}
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{{ . }}</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/0builddotdev/0build@0.4.6/dist/css/kit.min.css" />
+<script>
+  const htmlElement = document.documentElement;
+  const __Z_THEME__ = JSON.parse(localStorage.getItem("__Z_THEME__") || "{}");
+  if (__Z_THEME__.mode === "dark" || (!__Z_THEME__.mode && window.matchMedia("(prefers-color-scheme: dark)").matches)) htmlElement.classList.add("dark");
+  else htmlElement.classList.remove("dark");
+  htmlElement.classList.add(__Z_THEME__.layout || "z-layout-small");
+</script>
+<style>
+  [x-cloak] { display: none !important; }
+
+  .sidebar {
+    width: 260px;
+    min-height: 100vh;
+    border-right: 1px solid var(--z-border);
+    background: var(--z-bg);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .sidebar-nav {
+    flex: 1;
+    padding: 0.75rem;
+    overflow-y: auto;
+  }
+
+  .sidebar-section {
+    margin-bottom: 1.25rem;
+  }
+
+  .sidebar-section-title {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--z-muted-f);
+    opacity: 0.6;
+  }
+
+  .sidebar-link {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.5rem 0.75rem;
+    color: var(--z-bg-f);
+    text-decoration: none;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 450;
+    transition: all 0.15s ease;
+    margin-bottom: 0.125rem;
+  }
+
+  .sidebar-link:hover {
+    background: color-mix(in srgb, var(--z-bg-f) 8%, transparent);
+    color: var(--z-bg-f);
+  }
+
+  .sidebar-link.active {
+    background: var(--z-primary);
+    color: var(--z-primary-f);
+    font-weight: 500;
+  }
+
+  .sidebar-link.active:hover {
+    background: var(--z-primary);
+    color: var(--z-primary-f);
+  }
+
+  .main-content {
+    flex: 1;
+    padding: 2rem;
+    min-height: 100vh;
+    background: var(--z-bg-muted);
+  }
+
+  .page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 1.75rem;
+  }
+
+  .page-title {
+    font-size: 1.5rem;
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    margin: 0;
+    color: var(--z-color);
+  }
+
+  .page-subtitle {
+    margin: 0.25rem 0 0;
+    font-size: 0.875rem;
+    color: var(--z-muted-f);
+  }
+
+  .stat-card {
+    display: block;
+    padding: 1.25rem;
+    border: 1px solid var(--z-border);
+    border-radius: 0.75rem;
+    background: var(--z-bg);
+    text-decoration: none;
+    color: inherit;
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+
+  .stat-card:hover {
+    border-color: var(--z-primary);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    transform: translateY(-1px);
+  }
+
+  .stat-card-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+    color: var(--z-color);
+  }
+
+  .stat-card-desc {
+    font-size: 0.8125rem;
+    color: var(--z-muted-f);
+  }
+
+  .data-card {
+    background: var(--z-bg);
+    border: 1px solid var(--z-border);
+    border-radius: 0.75rem;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+
+  .auth-footer {
+    padding: 1rem;
+    border-top: 1px solid var(--z-border);
+  }
+
+  .theme-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.625rem 0.75rem;
+    margin: 0 0.75rem 0.5rem;
+    border-radius: 0.5rem;
+    font-size: 0.8125rem;
+    color: var(--z-muted-f);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .theme-toggle:hover {
+    background: color-mix(in srgb, var(--z-bg-f) 8%, transparent);
+    color: var(--z-bg-f);
+  }
+
+  .btn-primary {
+    background: var(--z-primary);
+    color: var(--z-primary-f);
+    border: none;
+    font-weight: 500;
+  }
+
+  .btn-primary:hover {
+    opacity: 0.9;
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--z-muted-f);
+    border: 1px solid var(--z-border);
+  }
+
+  .btn-ghost:hover {
+    background: color-mix(in srgb, var(--z-bg-f) 8%, transparent);
+    color: var(--z-bg-f);
+  }
+
+  .login-card {
+    width: 100%;
+    max-width: 420px;
+    padding: 2.5rem;
+    border: 1px solid var(--z-border);
+    border-radius: 1rem;
+    background: var(--z-bg);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+  }
+</style>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.15.12/dist/cdn.min.js"></script>
+<script>
+  document.addEventListener('alpine:init', () => {
+    Alpine.store('auth', {
+      token: localStorage.getItem('jwt_token') || null,
+
+      get isLoggedIn() {
+        return !!this.token;
+      },
+
+      login(token) {
+        this.token = token;
+        localStorage.setItem('jwt_token', token);
+        window.location.href = 'index.html';
+      },
+
+      logout() {
+        this.token = null;
+        localStorage.removeItem('jwt_token');
+        window.location.href = 'login.html';
+      },
+
+      async api(url, options = {}) {
+        if (!this.token) { this.logout(); return null; }
+        options.headers = { ...options.headers, 'Authorization': `Bearer ${this.token}`, 'Content-Type': 'application/json' };
+        const response = await fetch(url, options);
+        if (response.status === 401) { this.logout(); return null; }
+        return response;
+      }
+    });
+
+    Alpine.store('theme', {
+      mode: localStorage.getItem('__Z_THEME__')
+        ? JSON.parse(localStorage.getItem('__Z_THEME__')).mode || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+        : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'),
+
+      toggle() {
+        this.mode = this.mode === 'dark' ? 'light' : 'dark';
+        const html = document.documentElement;
+        if (this.mode === 'dark') {
+          html.classList.add('dark');
+        } else {
+          html.classList.remove('dark');
+        }
+        const saved = JSON.parse(localStorage.getItem('__Z_THEME__') || '{}');
+        saved.mode = this.mode;
+        localStorage.setItem('__Z_THEME__', JSON.stringify(saved));
+      }
+    });
+  });
+</script>
+<script src="https://cdn.jsdelivr.net/gh/0builddotdev/0build@0.4.6/dist/js/hwc/core.iife.js" type="module"></script>
+
+{{ end }}
+
+{{/* ==================== Scripts ==================== */}}
+{{ define "scripts" }}
+<script src="https://cdn.jsdelivr.net/gh/0builddotdev/0build@0.4.6/dist/js/uikit.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/0builddotdev/0build@0.4.6/dist/js/runtime.iife.js" type="module"></script>
+<script src="https://cdn.jsdelivr.net/gh/0builddotdev/0build@0.4.6/dist/js/hwc/icon.iife.js" type="module"></script>
+<script src="https://cdn.jsdelivr.net/gh/0builddotdev/0build@0.4.6/dist/js/hwc/components.iife.js" type="module"></script>
+{{ end }}
+
+{{/* ==================== Sidebar ==================== */}}
+{{ define "sidebar" }}
+<aside class="sidebar">
+  <div style="padding: 1.25rem 1rem; border-bottom: 1px solid var(--z-border);">
+    <a href="index.html" style="font-size: 1.125rem; font-weight: 650; text-decoration: none; color: var(--z-color); letter-spacing: -0.02em;">{{ .Project.Name | pascalcase }}</a>
+    <div style="font-size: 0.75rem; color: var(--z-muted-f); margin-top: 0.125rem;">Admin Panel</div>
+  </div>
+  <div class="sidebar-nav">
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Navigation</div>
+      <a href="index.html" class="sidebar-link{{ if eq .Active "dashboard" }} active{{ end }}">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+        Dashboard
+      </a>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Entities</div>
+      {{- range .Project.Entities }}
+      <a href="{{ lower .NamePlural }}.html" class="sidebar-link{{ if eq .Name $.Active }} active{{ end }}">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+        {{ .NamePlural }}
+      </a>
+      {{- end }}
+    </div>
+  </div>
+  {{ template "authFooter" . }}
+</aside>
+{{ end }}
+
+{{/* ==================== Auth Footer ==================== */}}
+{{ define "authFooter" }}
+<div class="auth-footer">
+  <div class="theme-toggle" @click="$store.theme.toggle()">
+    <span style="display: flex; align-items: center; gap: 0.5rem;">
+      <template x-if="$store.theme.mode === 'dark'">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+      </template>
+      <template x-if="$store.theme.mode !== 'dark'">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+      </template>
+      <span x-text="$store.theme.mode === 'dark' ? 'Light Mode' : 'Dark Mode'"></span>
+    </span>
+  </div>
+  {{- if .Project.HasAuth }}
+  <template x-if="$store.auth.isLoggedIn">
+    <div style="display: flex; align-items: center; justify-content: space-between; padding: 0 0.75rem;">
+      <span class="z-label z-label-success" style="font-size: 0.75rem;">Authenticated</span>
+      <button @click="$store.auth.logout()" class="z-button z-button-link z-button-small" style="font-size: 0.8125rem;">Logout</button>
+    </div>
+  </template>
+  <template x-if="!$store.auth.isLoggedIn">
+    <a href="login.html" class="z-button btn-primary z-button-small" style="width: 100%; margin: 0 0.75rem; width: calc(100% - 1.5rem);">Login</a>
+  </template>
+  {{- end }}
+</div>
+{{ end }}
+
+{{/* ==================== Alert ==================== */}}
+{{ define "alert" }}
+<template x-if="alert.show">
+  <div class="z-alert" :class="alert.type === 'success' ? 'z-alert-success' : 'z-alert-danger'" style="margin-bottom: 1.5rem; border-radius: 0.5rem;">
+    <span x-text="alert.message"></span>
+    <button @click="alert.show = false" class="z-alert-close" type="button"></button>
+  </div>
+</template>
+{{ end }}
+
+{{/* ==================== Form Field ==================== */}}
+{{ define "formField" }}
+{{- $f := .Field -}}
+{{- $enums := .Enums -}}
+<div class="margin-bottom">
+  <label class="z-form-label{{ if $f.HasValidation "required" }} z-form-label-required{{ end }}" style="font-weight: 500; font-size: 0.875rem;">{{ humanize $f.Name }}</label>
+  <div class="z-form-controls">
+    {{- if $f.IsRelation }}
+    <select class="z-select" x-model="form.{{ $f.Name }}" {{ if $f.HasValidation "required" }}required{{ end }}>
+      <option value="">Select...</option>
+      <template x-for="opt in (relatedData['{{ $f.RelationTarget | lowercase }}'] || [])" :key="opt.id">
+        <option :value="opt.id" x-text="opt.name"></option>
+      </template>
+    </select>
+    {{- else if $f.IsBoolean }}
+    <label class="z-toggle-switch-label"><input type="checkbox" class="z-toggle-switch" x-model="form.{{ $f.Name }}" /><span x-text="form.{{ $f.Name }} ? 'Yes' : 'No'"></span></label>
+    {{- else if $f.IsArray }}
+    <textarea class="z-textarea" x-model="form.{{ $f.Name }}" placeholder="Comma-separated values" rows="3"></textarea>
+    {{- else if $f.IsEnum }}
+    <select class="z-select" x-model="form.{{ $f.Name }}" {{ if $f.HasValidation "required" }}required{{ end }}>
+      <option value="">Select...</option>
+      {{- range index $enums ($f.EnumTypeName) }}
+      <option value="{{ . }}">{{ humanize . }}</option>
+      {{- end }}
+    </select>
+    {{- else if $f.IsJson }}
+    <textarea class="z-textarea" x-model="form.{{ $f.Name }}" placeholder="{ &quot;key&quot;: &quot;value&quot; }" rows="5"></textarea>
+    {{- else if $f.IsTextOnly }}
+    <textarea class="z-textarea" x-model="form.{{ $f.Name }}"{{ if $f.HasValidation "required" }} required{{ end }}{{ if $f.HasValidation "min" }} minlength="{{ $f.ValidationValue "min" }}"{{ end }}{{ if $f.HasValidation "max" }} maxlength="{{ $f.ValidationValue "max" }}"{{ end }} rows="4"></textarea>
+    {{- else }}
+    <input type="{{ if $f.HasValidation "email" }}email{{ else if $f.HasValidation "url" }}url{{ else }}{{ inputType $f.DatabaseType }}{{ end }}" class="z-input" x-model="form.{{ $f.Name }}"{{ if $f.HasValidation "required" }} required{{ end }}{{ if $f.HasValidation "min" }}{{ if $f.IsNumeric }} min="{{ $f.ValidationValue "min" }}"{{ else }} minlength="{{ $f.ValidationValue "min" }}"{{ end }}{{ end }}{{ if $f.HasValidation "max" }}{{ if $f.IsNumeric }} max="{{ $f.ValidationValue "max" }}"{{ else }} maxlength="{{ $f.ValidationValue "max" }}"{{ end }}{{ end }}{{ if $f.HasValidation "gte" }}{{ if $f.IsNumeric }} min="{{ $f.ValidationValue "gte" }}"{{ end }}{{ end }}{{ if $f.HasValidation "gt" }}{{ if $f.IsNumeric }} min="{{ $f.ValidationValue "gt" }}"{{ end }}{{ end }}{{ if $f.HasValidation "lt" }}{{ if $f.IsNumeric }} max="{{ $f.ValidationValue "lt" }}"{{ end }}{{ end }}{{ if $f.HasValidation "lte" }}{{ if $f.IsNumeric }} max="{{ $f.ValidationValue "lte" }}"{{ end }}{{ end }}{{ if $f.HasValidation "regex" }} pattern="{{ $f.ValidationValue "regex" }}"{{ end }} />
+    {{- end }}
+  </div>
+  {{- if or ($f.HasValidation "min") ($f.HasValidation "max") ($f.HasValidation "gte") ($f.HasValidation "gt") ($f.HasValidation "lt") ($f.HasValidation "lte") ($f.HasValidation "regex") ($f.HasValidation "email") ($f.HasValidation "url") }}
+  <div class="z-form-help text-small text-muted" style="margin-top: 0.375rem;">
+    {{- if $f.HasValidation "email" }}Email format{{ end -}}
+    {{- if $f.HasValidation "url" }}URL format{{ end -}}
+    {{- if and ($f.HasValidation "min") ($f.HasValidation "max") }}{{ if $f.IsNumeric }}Value: {{ $f.ValidationValue "min" }} - {{ $f.ValidationValue "max" }}{{ else }}Length: {{ $f.ValidationValue "min" }} - {{ $f.ValidationValue "max" }} characters{{ end }}{{ end -}}
+    {{- if and ($f.HasValidation "min") (not ($f.HasValidation "max")) }}{{ if $f.IsNumeric }}Min: {{ $f.ValidationValue "min" }}{{ else }}Min length: {{ $f.ValidationValue "min" }} characters{{ end }}{{ end -}}
+    {{- if and (not ($f.HasValidation "min")) ($f.HasValidation "max") }}{{ if $f.IsNumeric }}Max: {{ $f.ValidationValue "max" }}{{ else }}Max length: {{ $f.ValidationValue "max" }} characters{{ end }}{{ end -}}
+    {{- if $f.HasValidation "gte" }} >= {{ $f.ValidationValue "gte" }}{{ end -}}
+    {{- if $f.HasValidation "gt" }} > {{ $f.ValidationValue "gt" }}{{ end -}}
+    {{- if $f.HasValidation "lt" }} < {{ $f.ValidationValue "lt" }}{{ end -}}
+    {{- if $f.HasValidation "lte" }} <= {{ $f.ValidationValue "lte" }}{{ end -}}
+    {{- if $f.HasValidation "regex" }}Pattern: {{ $f.ValidationValue "regex" }}{{ end -}}
+  </div>
+  {{- end }}
+</div>
+{{ end }}
+
+{{/* ==================== Form Fields Loop ==================== */}}
+{{ define "formFields" }}
+{{- $ctx := . -}}
+{{- range $f := $ctx.Entity.Fields -}}
+{{- if and (not ($f.IsFeatureField)) (not $f.IsPrimary) (not $f.IsHidden) (not (and $f.IsRelation $f.IsMany)) -}}
+{{ template "formField" (dict "Field" $f "Enums" $ctx.Project.Enums) }}
+{{- end -}}
+{{- end -}}
+{{ end }}
