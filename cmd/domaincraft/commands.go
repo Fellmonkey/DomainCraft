@@ -104,6 +104,11 @@ func newRootCommand() *cobra.Command {
 	rootCmd.PersistentFlags().StringVar(&addonsFlag, "addons", "", "comma-separated infrastructure addons to enable (e.g. dapr)")
 	rootCmd.PersistentFlags().BoolVar(&updateBridges, "update-bridges", false, "check cached bridges for newer versions and download them before generating (no prompts)")
 
+	// Best-effort "new version available" notice on every invocation.
+	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		maybeNotifyUpdate(cmd)
+	}
+
 	rootCmd.AddCommand(newValidateCmd())
 	rootCmd.AddCommand(newGenerateCmd())
 	rootCmd.AddCommand(newBridgesCmd())
