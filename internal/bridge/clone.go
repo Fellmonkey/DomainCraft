@@ -123,6 +123,16 @@ func maybeUpdate(entry RegistryEntry, opts *EnsureOptions) error {
 		return nil // up to date (or the remote could not be reached)
 	}
 
+	// Contract gate: never offer (and thus never download) an upstream bridge
+	// this core cannot support. The hard check is re-done in ApplyUpdate; this
+	// only avoids prompting for an update that would be rejected anyway.
+	if c, rerr := remoteContractVersion(entry, update.RemoteBranch); rerr == nil {
+		if cerr := shouldApplyContract(c); cerr != nil {
+			warnOpts(opts, "skipping update of %q: %v", entry.ID, cerr)
+			return nil
+		}
+	}
+
 	// No policy set: keep the cached version and surface the availability.
 	if opts.ConfirmUpdate == nil {
 		if opts.Warn != nil {

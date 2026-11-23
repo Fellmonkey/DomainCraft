@@ -154,7 +154,7 @@ domaincraft generate --bridge csharp-rest --replace persistence=csharp-dapper
 domaincraft bridges --check-updates
 ```
 
-Official bridges ship in `bridges/` (monorepo) and are embedded into the binary; community/legacy bridges are cached in `~/.domaincraft/bridges/` and `~/.domaincraft/cache/` (24h TTL). Full registry: [Bridges](https://domaincraft.github.io/domaincraft-site/docs/reference/bridges/).
+Official bridges ship in `bridges/` (monorepo) and are embedded into the binary as the default; `--update-bridges` refreshes them from their upstream repos into the local cache with a contract-version gate (an unsupported bridge is never applied). Community/legacy bridges are cached in `~/.domaincraft/bridges/` and `~/.domaincraft/cache/` (24h TTL). Full registry: [Bridges](https://domaincraft.github.io/domaincraft-site/docs/reference/bridges/).
 
 ## CLI
 

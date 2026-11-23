@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // httpClient is shared by remote version probes.
@@ -23,6 +25,50 @@ var httpGetBodyFn = httpGetBody
 // managers: fresh enough that template fixes reach users, sparse enough that
 // an invocation does not hit the network every time.
 const DefaultUpdateInterval = 24 * time.Hour
+
+// CoreContractVersion is the bridge-contract version the current core
+// implements. It must match renderer.ContractVersion. An upstream bridge
+// declaring a higher contract is unsupported and must never be applied.
+const CoreContractVersion = 1
+
+// parseBridgeContractVersion reads `contract_version` from bridge.yaml bytes.
+// An absent field means contract v1.
+func parseBridgeContractVersion(data []byte) int {
+	var cfg struct {
+		ContractVersion int `yaml:"contract_version"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return 1
+	}
+	if cfg.ContractVersion == 0 {
+		return 1
+	}
+	return cfg.ContractVersion
+}
+
+// shouldApplyContract verifies that a bridge declaring contractVersion is
+// supported by the current core. A newer contract is a hard error — an
+// unsupported bridge must never be downloaded/applied.
+func shouldApplyContract(contractVersion int) error {
+	if contractVersion > CoreContractVersion {
+		return fmt.Errorf("bridge requires contract v%d, but this core implements contract v%d", contractVersion, CoreContractVersion)
+	}
+	return nil
+}
+
+// remoteContractVersion fetches a bridge's declared contract version at a ref
+// without cloning, via the GitHub raw-content endpoint. Best-effort: a missing
+// or unreadable bridge.yaml is treated as contract v1 (the lowest).
+func remoteContractVersion(entry RegistryEntry, ref string) (int, error) {
+	if ref == "" {
+		ref = "main"
+	}
+	body, err := httpGetBodyFn(fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/bridge.yaml", entry.GitHub, ref))
+	if err != nil {
+		return 0, err
+	}
+	return parseBridgeContractVersion(body), nil
+}
 
 // Update describes a detected newer version of a cached bridge. Callers hand it
 // to the user (e.g. an interactive prompt) and then to ApplyUpdate.
@@ -99,6 +145,13 @@ func ApplyUpdate(entry RegistryEntry, u *Update) (string, error) {
 
 	// Fast path: update the existing checkout in place.
 	if _, err := runGit(cacheDir, "fetch", "--depth", "1", "origin", branch); err == nil {
+		// Contract gate: never apply an upstream bridge this core cannot support.
+		// Check the fetched tree's bridge.yaml before touching the checkout.
+		if out, serr := runGit(cacheDir, "show", "FETCH_HEAD:bridge.yaml"); serr == nil {
+			if cerr := shouldApplyContract(parseBridgeContractVersion([]byte(out))); cerr != nil {
+				return "", cerr
+			}
+		}
 		if _, err := runGit(cacheDir, "reset", "--hard", "FETCH_HEAD"); err == nil {
 			return syncMetaAfterUpdate(entry, branch)
 		}
