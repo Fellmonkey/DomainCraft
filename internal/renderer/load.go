@@ -13,11 +13,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ContractVersion is the version of the bridge contract the core implements. A
+// bridge may declare the contract it was authored against via `contract_version`
+// in bridge.yaml. The core rejects bridges written against a newer contract and
+// treats an absent declaration as contract 1 (with a deprecation notice).
+const ContractVersion = 1
+
 // sourceConfig is one bridge directory plus its parsed bridge.yaml. A composed
 // renderer holds several of these, ordered base-first, with the adapter last.
 type sourceConfig struct {
 	dir    string
 	config BridgeConfig
+	// contractDeclared records whether bridge.yaml explicitly declared
+	// `contract_version` (vs. being absent → treated as 1).
+	contractDeclared bool
 }
 
 // Renderer reads bridge.yaml and renders files from IR.
@@ -74,7 +83,18 @@ func loadSource(bridgePath string) (sourceConfig, error) {
 	if config.OutputDir == "" {
 		config.OutputDir = "generated"
 	}
-	return sourceConfig{dir: bridgeDir, config: config}, nil
+	// Contract version: absent (0) means contract 1, with a deprecation notice
+	// (emitted by the caller); a newer contract is a hard error.
+	contractDeclared := config.ContractVersion != 0
+	if config.ContractVersion == 0 {
+		config.ContractVersion = 1
+	}
+	if config.ContractVersion > ContractVersion {
+		return sourceConfig{}, fmt.Errorf(
+			"bridge %q requires contract v%d, but this DomainCraft core implements contract v%d",
+			config.Name, config.ContractVersion, ContractVersion)
+	}
+	return sourceConfig{dir: bridgeDir, config: config, contractDeclared: contractDeclared}, nil
 }
 
 // New loads a single (leaf) bridge.
@@ -82,6 +102,9 @@ func New(bridgePath string, log *logger.Logger) (*Renderer, error) {
 	src, err := loadSource(bridgePath)
 	if err != nil {
 		return nil, err
+	}
+	if !src.contractDeclared && log != nil {
+		log.Warn("bridge %q does not declare `contract_version`; assuming contract v1 (deprecated — please add it)", src.config.Name)
 	}
 	return &Renderer{sources: []sourceConfig{src}, log: log}, nil
 }

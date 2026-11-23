@@ -1,0 +1,26 @@
+<!-- DomainCraft - GENERATED: DO NOT EDIT. Regenerated on every `domaincraft generate`. Make model changes in domain.yaml. -->
+
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>{{ or .Project.Platform "net10.0" }}</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <NoWarn>xUnit1000</NoWarn>
+    <RootNamespace>{{ .Project.Name | pascalcase }}.Tests</RootNamespace>
+    <AssemblyName>{{ .Project.Name | pascalcase }}.Tests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="{{ index .Packages "mvc_testing" }}" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="{{ index .Packages "testcontainers" }}" />
+    <PackageReference Include="Npgsql" Version="{{ index .Packages "npgsql" }}" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="{{ index .Packages "test_sdk" }}" />
+    <PackageReference Include="xunit" Version="{{ index .Packages "xunit" }}" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="{{ index .Packages "xunit_runner" }}" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../src/WebApi/WebApi.csproj" />
+  </ItemGroup>
+</Project>

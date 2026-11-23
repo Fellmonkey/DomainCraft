@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  {{ template "head" (printf "%s Admin" (.Project.Name | pascalcase)) }}
+  <script>
+    document.addEventListener('alpine:init', () => {
+      Alpine.data('dashboard', () => ({
+        health: null, me: null, healthError: false,
+        apiBase: window.API_BASE_URL || 'http://{{ .Project.Deploy.Domain }}:{{ .Project.Deploy.Port }}/api',
+        async init() {
+          {{- if .Project.HasAuth }}
+          if (!Alpine.store('auth').token) { window.location.href = 'login.html'; return; }
+          {{- end }}
+          try {
+            const base = this.apiBase.replace(/\/+$/, '');
+            const h = await fetch(base.replace(/\/api$/, '') + '/health');
+            if (h.ok) this.health = await h.json();
+          } catch(e) { this.healthError = true; }
+          {{- if .Project.HasAuth }}
+          try {
+            const m = await Alpine.store('auth').api(this.apiBase + '/{{ .Project.Auth.Entity | lowercase }}/me');
+            if (m && m.ok) this.me = await m.json();
+          } catch(e) {}
+          {{- end }}
+        }
+      }));
+    });
+  </script>
+</head>
+<body class="bg color" style="--bg: var(--z-bg); --color: var(--z-bg-f)">
+  <div x-data style="display: flex; min-height: 100vh;">
+    {{ template "sidebar" (dict "Project" .Project "Active" "dashboard") }}
+    <main class="main-content" x-data="dashboard" x-init="init()">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Dashboard</h1>
+          <p class="page-subtitle">Welcome to {{ .Project.Name | pascalcase }} Admin</p>
+        </div>
+      </div>
+
+      <template x-if="health">
+        <div class="data-card" style="padding: 1.25rem; margin-bottom: 1.75rem;">
+          <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+            <span class="z-label" :class="health.status === 'Healthy' ? 'z-label-success' : 'z-label-danger'" x-text="'API: ' + health.status"></span>
+            <template x-for="check in (health.checks || [])" :key="check.name">
+              <span class="z-label" :class="check.status === 'Healthy' ? 'z-label-success' : 'z-label-danger'" x-text="check.name + ': ' + check.status"></span>
+            </template>
+          </div>
+        </div>
+      </template>
+      <template x-if="healthError">
+        <div class="z-alert z-alert-danger" style="margin-bottom: 1.75rem; border-radius: 0.5rem;"><span>API health check unavailable</span></div>
+      </template>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1rem;">
+        {{- range .Project.Entities }}
+        <a href="{{ lower .NamePlural }}.html" class="stat-card">
+          <div class="stat-card-title">{{ .NamePlural }}</div>
+          <div class="stat-card-desc">Manage {{ .Name | lowercase }}</div>
+        </a>
+        {{- end }}
+      </div>
+
+      <template x-if="me">
+        <div class="data-card" style="padding: 1.25rem; margin-top: 2rem;">
+          <h2 class="page-title" style="font-size: 1rem; margin-bottom: 0.5rem;">Signed in as</h2>
+          <p style="font-size: 0.875rem; color: var(--z-muted-f); margin: 0;" x-text="me.Email || me.email || ''"></p>
+          <p style="font-size: 0.75rem; color: var(--z-muted-f); margin: 0.25rem 0 0;" x-text="'ID: ' + (me.Id || me.id || '')"></p>
+        </div>
+      </template>
+    </main>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+  <script>window.zRuntime = window.zRuntime || {}; window.zApexCharts = window.ApexCharts;</script>
+  {{ template "scripts" }}
+</body>
+</html>

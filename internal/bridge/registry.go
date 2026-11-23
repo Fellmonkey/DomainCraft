@@ -7,6 +7,19 @@ type RegistryEntry struct {
 	Description string // one-line description
 	Language    string // target language, e.g. "C#", "Java", "TypeScript"
 	GitHub      string // GitHub "owner/repo", e.g. "DomainCraft/domaincraft-bridge-csharp"
+	// Path is the monorepo-relative location of the bridge inside the core
+	// repository (<root>/bridges/<Path>), e.g. "csharp/persistence/efcore".
+	// Empty means the bridge has no fixed position in the monorepo (community
+	// or local bridges). The ID→Path mapping lives here, in the registry — it
+	// is never derived from directory names at resolution time.
+	Path string
+	// Layer is the bridge's open layer identifier (core/domain/persistence/
+	// transport, core/client/framework/offline, ...). It matches the `layer:`
+	// field each bridge declares, so --replace matches what it documents.
+	Layer string
+	// Deprecated marks legacy bridges kept resolvable for existing `extends:`
+	// chains but hidden from interactive selection and flagged in `bridges`.
+	Deprecated bool
 }
 
 // DefaultRegistry is the hardcoded list of known bridges.
@@ -18,6 +31,8 @@ var DefaultRegistry = []RegistryEntry{
 		Description: "C# language core — enum wire, entity types, query schema, permission matrix (thin, certified once per language)",
 		Language:    "C#",
 		GitHub:      "DomainCraft/domaincraft-bridge-csharp-core",
+		Path:        "csharp/core",
+		Layer:       "core",
 	},
 	{
 		ID:          "csharp-domain",
@@ -25,6 +40,8 @@ var DefaultRegistry = []RegistryEntry{
 		Description: "Domain + Application layer for C# (services, Generation Gap, ports) — extends csharp-core",
 		Language:    "C#",
 		GitHub:      "DomainCraft/domaincraft-bridge-csharp-domain",
+		Path:        "csharp/domain",
+		Layer:       "domain",
 	},
 	{
 		ID:          "csharp-efcore",
@@ -32,6 +49,8 @@ var DefaultRegistry = []RegistryEntry{
 		Description: "EF Core persistence layer for DomainCraft C# (extends csharp-domain)",
 		Language:    "C#",
 		GitHub:      "DomainCraft/domaincraft-bridge-csharp-efcore",
+		Path:        "csharp/persistence/efcore",
+		Layer:       "persistence",
 	},
 	{
 		ID:          "csharp-rest",
@@ -39,13 +58,17 @@ var DefaultRegistry = []RegistryEntry{
 		Description: "ASP.NET Core REST transport for DomainCraft C# (extends csharp-efcore)",
 		Language:    "C#",
 		GitHub:      "DomainCraft/domaincraft-bridge-csharp-rest",
+		Path:        "csharp/transport/rest",
+		Layer:       "transport",
 	},
 	{
 		ID:          "csharp-restful",
 		Name:        "C# REST API",
-		Description: "ASP.NET Core + EF Core + PostgreSQL + JWT + Clean Architecture",
+		Description: "ASP.NET Core + EF Core + PostgreSQL + JWT + Clean Architecture (deprecated monolith)",
 		Language:    "C#",
 		GitHub:      "DomainCraft/domaincraft-bridge-csharp",
+		Path:        "csharp/legacy/restful",
+		Deprecated:  true,
 	},
 	{
 		ID:          "admin-alpine",
@@ -53,6 +76,7 @@ var DefaultRegistry = []RegistryEntry{
 		Description: "Admin panel with Alpine.js + 0build UIkit",
 		Language:    "HTML",
 		GitHub:      "DomainCraft/domaincraft-bridge-admin",
+		Path:        "admin",
 	},
 	{
 		ID:          "appwrite",
@@ -60,6 +84,7 @@ var DefaultRegistry = []RegistryEntry{
 		Description: "Appwrite schema: TablesDB + role teams + settings in one appwrite.config.json, deployed via the Appwrite CLI",
 		Language:    "JSON",
 		GitHub:      "DomainCraft/domaincraft-bridge-appwrite",
+		Path:        "appwrite",
 	},
 	{
 		ID:          "ts-core",
@@ -67,6 +92,8 @@ var DefaultRegistry = []RegistryEntry{
 		Description: "TypeScript language core — enum wire, entity types, query schema, permission matrix (thin, certified once per language)",
 		Language:    "TypeScript",
 		GitHub:      "DomainCraft/domaincraft-bridge-ts-core",
+		Path:        "typescript/core",
+		Layer:       "core",
 	},
 	{
 		ID:          "ts-client",
@@ -74,6 +101,8 @@ var DefaultRegistry = []RegistryEntry{
 		Description: "TypeScript client — Zod validation, JWT client and CRUD API. Extends ts-core",
 		Language:    "TypeScript",
 		GitHub:      "DomainCraft/domaincraft-bridge-ts-client",
+		Path:        "typescript/client",
+		Layer:       "client",
 	},
 	{
 		ID:          "react-rest",
@@ -81,6 +110,8 @@ var DefaultRegistry = []RegistryEntry{
 		Description: "React data layer (TanStack Query hooks, JWT auth) — extends ts-client (which extends ts-core)",
 		Language:    "TypeScript",
 		GitHub:      "DomainCraft/domaincraft-bridge-react",
+		Path:        "typescript/react",
+		Layer:       "framework",
 	},
 }
 
@@ -112,4 +143,23 @@ func (r *Registry) ByID(id string) *RegistryEntry {
 		}
 	}
 	return nil
+}
+
+// OfficialPath returns the monorepo-relative location (`bridges/<Path>`) of an
+// official bridge, or "" when the ID is unknown or has no fixed position.
+// This is the single source of truth for the ID→path mapping — callers must
+// never derive it from directory names.
+func (r *Registry) OfficialPath(id string) string {
+	if e := r.ByID(id); e != nil {
+		return e.Path
+	}
+	return ""
+}
+
+// ByIDDeprecated reports whether the named bridge is deprecated.
+func (r *Registry) ByIDDeprecated(id string) bool {
+	if e := r.ByID(id); e != nil {
+		return e.Deprecated
+	}
+	return false
 }

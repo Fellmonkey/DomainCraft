@@ -1,0 +1,13 @@
+input_types:
+  string: "text"
+  int: "number"
+  bigint: "number"
+  float: "number"
+  decimal: "number"
+  boolean: "checkbox"
+  date: "date"
+  datetime: "datetime-local"
+  uuid: "text"
+  json: "textarea"
+  jsonb: "textarea"
+  text: "textarea"

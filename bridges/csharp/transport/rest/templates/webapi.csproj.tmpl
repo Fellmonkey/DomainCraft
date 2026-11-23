@@ -1,0 +1,65 @@
+<!-- DomainCraft - GENERATED: DO NOT EDIT. Regenerated on every `domaincraft generate`. Make model changes in domain.yaml. -->
+
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>{{ or .Project.Platform "net10.0" }}</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>{{ .Project.Name | pascalcase }}.WebApi</RootNamespace>
+    <AssemblyName>{{ .Project.Name | pascalcase }}.WebApi</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="{{ .Project.Name | pascalcase }}.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Domain/Domain.csproj" />
+    <ProjectReference Include="../Application/Application.csproj" />
+    <ProjectReference Include="../Infrastructure/Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+{{- if .Project.HasAuth }}
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="{{ index .Packages "jwt_bearer" }}" />
+    <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="{{ index .Packages "identity_model" }}" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="{{ index .Packages "identity_model" }}" />
+{{- end }}
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="{{ index .Packages "swashbuckle" }}" />
+    <PackageReference Include="Swashbuckle.AspNetCore.Annotations" Version="{{ index .Packages "swashbuckle_annotations" }}" />
+    <PackageReference Include="AspNetCore.HealthChecks.NpgSql" Version="{{ index .Packages "healthchecks_npgsql" }}" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="{{ index .Packages "ef_core_inmemory" }}" />
+    <PackageReference Include="Asp.Versioning.Mvc" Version="{{ index .Packages "versioning" }}" />
+    <PackageReference Include="Asp.Versioning.Mvc.ApiExplorer" Version="{{ index .Packages "versioning_api_explorer" }}" />
+{{- if .Project.HasAddon "dapr" }}
+    <PackageReference Include="Dapr.AspNetCore" Version="{{ index .Packages "dapr" }}" />
+    <PackageReference Include="Hangfire" Version="{{ index .Packages "hangfire" }}" />
+    <PackageReference Include="Hangfire.PostgreSql" Version="{{ index .Packages "hangfire_postgresql" }}" />
+{{- end }}
+{{- if .Project.HasAddon "observability" }}
+    <PackageReference Include="Serilog.AspNetCore" Version="{{ index .Packages "serilog" }}" />
+    <PackageReference Include="Serilog.Settings.Configuration" Version="{{ index .Packages "serilog_settings" }}" />
+    <PackageReference Include="Serilog.Sinks.Seq" Version="{{ index .Packages "serilog_seq" }}" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="{{ index .Packages "serilog_console" }}" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="{{ index .Packages "otel_hosting" }}" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="{{ index .Packages "otel_aspnetcore" }}" />
+    <PackageReference Include="OpenTelemetry.Exporter.Jaeger" Version="{{ index .Packages "otel_jaeger" }}" />
+{{- end }}
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="appsettings.Development.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="appsettings.Staging.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="appsettings.Production.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+</Project>

@@ -1,0 +1,35 @@
+{{ template "banner" . }}
+
+// Permission matrix generated from domain.yaml. `can()` is a UI hint — the
+// server is authoritative. `*` (public) and `@`-prefixed ownership tokens are
+// preserved verbatim; an `@Owner`/`@` operation is treated as "you may be able
+// to", because the actual ownership check happens server-side per record.
+
+export type PermissionOp = "read" | "create" | "update" | "delete";
+
+export const ROLES = [{{ if .Project.HasAuth }}{{ range $i, $r := .Project.Auth.Roles }}{{ if $i }}, {{ end }}{{ jsonValue $r }}{{ end }}{{ end }}] as const;
+export type AuthRole = (typeof ROLES)[number];
+
+export const PERMISSIONS = {
+{{- range .Project.Entities }}
+{{- if .Permissions }}
+  {{ .Name }}: {
+    read: [{{ range $i, $r := .Permissions.Read }}{{ if $i }}, {{ end }}{{ jsonValue $r }}{{ end }}],
+    create: [{{ range $i, $r := .Permissions.Create }}{{ if $i }}, {{ end }}{{ jsonValue $r }}{{ end }}],
+    update: [{{ range $i, $r := .Permissions.Update }}{{ if $i }}, {{ end }}{{ jsonValue $r }}{{ end }}],
+    delete: [{{ range $i, $r := .Permissions.Delete }}{{ if $i }}, {{ end }}{{ jsonValue $r }}{{ end }}],
+  },
+{{- end }}
+{{- end }}
+} as const;
+
+export type EntityName = keyof typeof PERMISSIONS;
+
+export function can(roles: readonly string[], entity: string, op: PermissionOp): boolean {
+  const perms = (PERMISSIONS as Record<string, Record<PermissionOp, readonly string[]> | undefined>)[entity];
+  if (!perms) return true; // no permissions block -> public (matches the backend default)
+  const allowed = perms[op] ?? [];
+  if (allowed.includes("*")) return true;
+  if (allowed.some((r) => r.startsWith("@"))) return true; // owner-scoped; server enforces
+  return allowed.some((r) => roles.includes(r));
+}

@@ -1,0 +1,18 @@
+name: ts-client
+description: TypeScript client — Zod validation, JWT client and CRUD API. Extends language core.
+version: "1.0.0"
+layer: client
+extends: ts-core
+
+templates:
+  - for: project
+    source: templates/schemas.ts.tmpl
+    target: "src/generated/schemas.ts"
+
+  - for: project
+    source: templates/client.ts.tmpl
+    target: "src/generated/client.ts"
+
+  - for: project
+    source: templates/api.ts.tmpl
+    target: "src/generated/api.ts"

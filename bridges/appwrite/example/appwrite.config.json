@@ -1,0 +1,394 @@
+{
+  "projectId": "<PROJECT_ID>",
+  "projectName": "Demo Shop",
+  "endpoint": "https://cloud.appwrite.io/v1",
+  "settings": {
+    "services": {
+      "databases": true,
+      "users": true,
+      "teams": true
+    },
+    "protocols": {
+      "rest": true
+    },
+    "auth": {
+      "methods": {
+        "email-password": true
+      }
+    }
+  },
+  "tablesDB": [
+    { "$id": "main", "name": "main", "enabled": true }
+  ],
+  "tables": [
+    {
+      "$id": "categories",
+      "$permissions": ["create(\"team:role-admin\")","read(\"any\")","update(\"team:role-admin\")","delete(\"team:role-admin\")"
+      ],
+      "databaseId": "main",
+      "name": "Categories",
+      "enabled": true,
+      "rowSecurity": false,
+      "columns": [
+        {
+          "key": "createdAt",
+          "type": "datetime",
+          "required": false,
+          "default": null
+        },
+        {
+          "key": "updatedAt",
+          "type": "datetime",
+          "required": false,
+          "default": null
+        },
+        {
+          "key": "name",
+          "type": "varchar",
+          "required": true,
+          "size": 100,
+          "default": null
+        },
+        {
+          "key": "slug",
+          "type": "varchar",
+          "required": true,
+          "size": 255,
+          "default": null
+        },
+        {
+          "key": "isActive",
+          "type": "boolean",
+          "required": false,
+          "default": true
+        },
+        {
+          "key": "sortOrder",
+          "type": "integer",
+          "required": false,
+          "default": 0
+        }
+      ],
+      "indexes": [
+        {
+          "key": "idx-categories-name-uniq",
+          "type": "unique",
+          "columns": [
+            "name"
+          ]
+        },
+        {
+          "key": "idx-categories-slug-uniq",
+          "type": "unique",
+          "columns": [
+            "slug"
+          ]
+        }
+      ]
+    },
+    {
+      "$id": "products",
+      "$permissions": ["create(\"team:role-admin\")","read(\"any\")","update(\"team:role-admin\")","delete(\"team:role-admin\")"
+      ],
+      "databaseId": "main",
+      "name": "Products",
+      "enabled": true,
+      "rowSecurity": false,
+      "columns": [
+        {
+          "key": "createdAt",
+          "type": "datetime",
+          "required": false,
+          "default": null
+        },
+        {
+          "key": "deletedAt",
+          "type": "datetime",
+          "required": false,
+          "default": null
+        },
+        {
+          "key": "updatedAt",
+          "type": "datetime",
+          "required": false,
+          "default": null
+        },
+        {
+          "key": "title",
+          "type": "varchar",
+          "required": true,
+          "size": 200,
+          "default": null
+        },
+        {
+          "key": "description",
+          "type": "text",
+          "required": false,
+          "default": null
+        },
+        {
+          "key": "price",
+          "type": "double",
+          "required": true,
+          "default": null,
+          "min": 0
+        },
+        {
+          "key": "stock",
+          "type": "integer",
+          "required": false,
+          "default": 0
+        },
+        {
+          "key": "status",
+          "type": "string",
+          "format": "enum",
+          "required": false,
+          "default": "DRAFT",
+          "elements": ["DRAFT","PUBLISHED","ARCHIVED"
+          ]
+        },
+        {
+          "key": "categoryId",
+          "type": "relationship",
+          "required": false,
+          "relatedTable": "categories",
+          "relationType": "manyToOne",
+          "twoWay": true,
+          "twoWayKey": "products",
+          "onDelete": "setNull"
+        }
+      ],
+      "indexes": [
+        {
+          "key": "idx-products-0",
+          "type": "key",
+          "columns": ["status"
+          ]
+        }
+      ]
+    },
+    {
+      "$id": "orders",
+      "$permissions": ["create(\"team:role-user\")"
+      ],
+      "databaseId": "main",
+      "name": "Orders",
+      "enabled": true,
+      "rowSecurity": true,
+      "columns": [
+        {
+          "key": "createdBy",
+          "type": "varchar",
+          "required": false,
+          "size": 36,
+          "default": null
+        },
+        {
+          "key": "deletedAt",
+          "type": "datetime",
+          "required": false,
+          "default": null
+        },
+        {
+          "key": "updatedBy",
+          "type": "varchar",
+          "required": false,
+          "size": 36,
+          "default": null
+        },
+        {
+          "key": "orderNumber",
+          "type": "varchar",
+          "required": true,
+          "size": 255,
+          "default": null
+        },
+        {
+          "key": "userId",
+          "type": "varchar",
+          "required": true,
+          "size": 36,
+          "default": null
+        },
+        {
+          "key": "status",
+          "type": "string",
+          "format": "enum",
+          "required": false,
+          "default": "PENDING",
+          "elements": ["PENDING","PAID","SHIPPED","DELIVERED","CANCELLED"
+          ]
+        },
+        {
+          "key": "totalAmount",
+          "type": "double",
+          "required": true,
+          "default": null,
+          "min": 0
+        },
+        {
+          "key": "notes",
+          "type": "varchar",
+          "required": false,
+          "size": 1000,
+          "default": null
+        }
+      ],
+      "indexes": [
+        {
+          "key": "idx-orders-order-number-uniq",
+          "type": "unique",
+          "columns": [
+            "orderNumber"
+          ]
+        }
+      ]
+    },
+    {
+      "$id": "order-items",
+      "$permissions": ["create(\"team:role-user\")"
+      ],
+      "databaseId": "main",
+      "name": "OrderItems",
+      "enabled": true,
+      "rowSecurity": true,
+      "columns": [
+        {
+          "key": "createdAt",
+          "type": "datetime",
+          "required": false,
+          "default": null
+        },
+        {
+          "key": "updatedAt",
+          "type": "datetime",
+          "required": false,
+          "default": null
+        },
+        {
+          "key": "quantity",
+          "type": "integer",
+          "required": true,
+          "default": null,
+          "min": 1
+        },
+        {
+          "key": "unitPrice",
+          "type": "double",
+          "required": true,
+          "default": null,
+          "min": 0
+        },
+        {
+          "key": "orderId",
+          "type": "relationship",
+          "required": true,
+          "relatedTable": "orders",
+          "relationType": "manyToOne",
+          "twoWay": true,
+          "twoWayKey": "items",
+          "onDelete": "cascade"
+        },
+        {
+          "key": "productId",
+          "type": "relationship",
+          "required": true,
+          "relatedTable": "products",
+          "relationType": "manyToOne",
+          "twoWay": true,
+          "twoWayKey": "orderItems",
+          "onDelete": "restrict"
+        }
+      ],
+      "indexes": [
+      ]
+    },
+    {
+      "$id": "reviews",
+      "$permissions": ["create(\"team:role-user\")"
+      ],
+      "databaseId": "main",
+      "name": "Reviews",
+      "enabled": true,
+      "rowSecurity": true,
+      "columns": [
+        {
+          "key": "createdBy",
+          "type": "varchar",
+          "required": false,
+          "size": 36,
+          "default": null
+        },
+        {
+          "key": "deletedAt",
+          "type": "datetime",
+          "required": false,
+          "default": null
+        },
+        {
+          "key": "updatedBy",
+          "type": "varchar",
+          "required": false,
+          "size": 36,
+          "default": null
+        },
+        {
+          "key": "userId",
+          "type": "varchar",
+          "required": true,
+          "size": 36,
+          "default": null
+        },
+        {
+          "key": "rating",
+          "type": "integer",
+          "required": true,
+          "default": null,
+          "min": 1,
+          "max": 6
+        },
+        {
+          "key": "title",
+          "type": "varchar",
+          "required": true,
+          "size": 100,
+          "default": null
+        },
+        {
+          "key": "content",
+          "type": "text",
+          "required": false,
+          "default": null
+        },
+        {
+          "key": "isVerifiedPurchase",
+          "type": "boolean",
+          "required": false,
+          "default": false
+        },
+        {
+          "key": "productId",
+          "type": "relationship",
+          "required": true,
+          "relatedTable": "products",
+          "relationType": "manyToOne",
+          "twoWay": true,
+          "twoWayKey": "reviews",
+          "onDelete": "cascade"
+        }
+      ],
+      "indexes": [
+      ]
+    }
+  ],
+  "teams": [
+    { "$id": "role-admin", "name": "Admin" },
+    { "$id": "role-user", "name": "User" }
+  ],
+  "buckets": [],
+  "functions": [],
+  "sites": [],
+  "webhooks": [],
+  "topics": []
+}

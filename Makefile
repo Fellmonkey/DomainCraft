@@ -118,6 +118,14 @@ test: install-deps
 	@echo "Running tests..."
 	@go test ./...
 
+# Contract tests (Phase 2): golden output + determinism for bundled bridges.
+contract-test:
+	@go test ./internal/contract/
+
+# Regenerate the golden manifests after an intentional output change.
+contract-golden-update:
+	@go test ./internal/contract/ -run TestGoldenLeafBridges -update
+
 test-verbose: install-deps
 	@echo "Running tests (verbose)..."
 	@go test -v ./...

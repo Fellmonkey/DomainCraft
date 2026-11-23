@@ -1,0 +1,15 @@
+name: ts-core
+description: TypeScript language core — enum wire values, entity types, query schema, permission matrix. Certified once per language.
+version: "1.0.0"
+layer: core
+helpers: templates/_helpers.ts.tmpl
+templates:
+  - for: project
+    source: templates/types.ts.tmpl
+    target: "src/generated/types.ts"
+  - for: project
+    source: templates/query.ts.tmpl
+    target: "src/generated/query.ts"
+  - for: project
+    source: templates/permissions.ts.tmpl
+    target: "src/generated/permissions.ts"

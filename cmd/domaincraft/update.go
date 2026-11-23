@@ -6,10 +6,13 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
+	"github.com/DomainCraft/DomainCraft/internal/appdir"
+	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 	"github.com/DomainCraft/DomainCraft/internal/packages"
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
 
@@ -35,6 +38,61 @@ type githubRelease struct {
 		Name               string `json:"name"`
 		BrowserDownloadURL string `json:"browser_download_url"`
 	} `json:"assets"`
+}
+
+// updateNoticeTTL throttles the automatic "new version available" notice so it
+// does not hit the GitHub API on every CLI invocation.
+const updateNoticeTTL = 24 * time.Hour
+
+// updateCheckCache is the on-disk record of the last core update check.
+type updateCheckCache struct {
+	CheckedAt time.Time `json:"checked_at"`
+	Latest    string    `json:"latest"`
+}
+
+// maybeNotifyUpdate prints a one-line notice to stderr when a newer core release
+// exists. It is best-effort, throttled by a local cache, and skipped for
+// development builds and for the `update` command itself.
+func maybeNotifyUpdate(cmd *cobra.Command) {
+	current := strings.TrimPrefix(version, "v")
+	if current == "" || current == "dev" || cmd.Name() == "update" {
+		return
+	}
+	latest, err := cachedLatestCoreVersion()
+	if err != nil || latest == "" {
+		return
+	}
+	if packages.VersionGreater(latest, current) {
+		fmt.Fprintf(os.Stderr, "ℹ A new domaincraft version is available: v%s (current v%s). Run `domaincraft update` to install it.\n", latest, current)
+	}
+}
+
+// cachedLatestCoreVersion returns the latest released core version, using the
+// throttled cache when it is fresh and otherwise querying GitHub.
+func cachedLatestCoreVersion() (string, error) {
+	cacheDir, err := appdir.CacheDir("core")
+	if err != nil {
+		cacheDir = os.TempDir()
+	}
+	cachePath := filepath.Join(cacheDir, "core-update.json")
+	if data, rerr := os.ReadFile(cachePath); rerr == nil {
+		var c updateCheckCache
+		if json.Unmarshal(data, &c) == nil && !c.CheckedAt.IsZero() && time.Since(c.CheckedAt) < updateNoticeTTL && c.Latest != "" {
+			return c.Latest, nil
+		}
+	}
+
+	rel, err := latestRelease()
+	if err != nil {
+		return "", err
+	}
+	latest := strings.TrimPrefix(rel.TagName, "v")
+	if werr := os.MkdirAll(cacheDir, 0o755); werr == nil {
+		if body, jerr := json.Marshal(updateCheckCache{CheckedAt: time.Now(), Latest: latest}); jerr == nil {
+			_ = fsutil.AtomicWrite(cachePath, body)
+		}
+	}
+	return latest, nil
 }
 
 // newUpdateCmd checks for and installs a newer version of the domaincraft core.

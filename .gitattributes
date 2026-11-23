@@ -1,0 +1,3 @@
+# Golden contract manifests are compared byte-wise (after CRLF normalization);
+# pin them to LF so a Windows checkout cannot silently rewrite them to CRLF.
+*.golden.txt text eol=lf

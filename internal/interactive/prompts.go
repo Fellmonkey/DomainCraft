@@ -9,7 +9,14 @@ import (
 // SelectBridge shows a bridge selection menu. ↑/↓ or 1-9 moves, Enter picks,
 // Esc aborts.
 func SelectBridge(registry *bridge.Registry) (*bridge.RegistryEntry, error) {
-	entries := registry.All()
+	// Hide deprecated bridges from interactive selection; they remain resolvable
+	// for existing `extends:` chains and via explicit --bridge IDs.
+	entries := make([]bridge.RegistryEntry, 0, len(registry.All()))
+	for _, e := range registry.All() {
+		if !e.Deprecated {
+			entries = append(entries, e)
+		}
+	}
 	if len(entries) == 0 {
 		return nil, fmt.Errorf("no bridges available")
 	}

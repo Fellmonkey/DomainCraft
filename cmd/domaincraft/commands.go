@@ -1,6 +1,8 @@
 package main
 
 import (
+	"cmp"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/DomainCraft/DomainCraft/internal/bridge"
+	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 	"github.com/DomainCraft/DomainCraft/internal/interactive"
 	"github.com/DomainCraft/DomainCraft/internal/ir"
 	"github.com/DomainCraft/DomainCraft/internal/parser"
@@ -24,6 +27,7 @@ import (
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -99,6 +103,11 @@ func newRootCommand() *cobra.Command {
 	rootCmd.PersistentFlags().BoolVar(&nonInteractive, "non-interactive", false, "disable interactive prompts (requires all flags)")
 	rootCmd.PersistentFlags().StringVar(&addonsFlag, "addons", "", "comma-separated infrastructure addons to enable (e.g. dapr)")
 	rootCmd.PersistentFlags().BoolVar(&updateBridges, "update-bridges", false, "check cached bridges for newer versions and download them before generating (no prompts)")
+
+	// Best-effort "new version available" notice on every invocation.
+	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		maybeNotifyUpdate(cmd)
+	}
 
 	rootCmd.AddCommand(newValidateCmd())
 	rootCmd.AddCommand(newGenerateCmd())
@@ -189,6 +198,16 @@ func newGenerateCmd() *cobra.Command {
 				return err
 			}
 			bridgePath = newBridgePath
+			// Phase 3.5: a community bridge (not a bundled official bridge) must
+			// never have migrations auto-run — that would execute arbitrary shell
+			// lines from an untrusted bridge.yaml during a code-generation run.
+			chainHasCommunity := false
+			for _, p := range append([]string{bridgePath}, basePaths...) {
+				if !bridge.IsOfficialBundled(p) {
+					chainHasCommunity = true
+					break
+				}
+			}
 			log.Info("Rendering via %s", bridgePath)
 			rendererInstance, err := renderer.New(bridgePath, log)
 			if err != nil {
@@ -250,7 +269,12 @@ func newGenerateCmd() *cobra.Command {
 			// has to think about SQL schemas. Triggered explicitly via --migrate, or
 			// automatically in --prune mode when the diff detected renames/deletions
 			// that must reach the database (skipped when cleanup was deferred).
-			shouldMigrate := migrateFlag || (prune && migrationDiff.HasSchemaChanges())
+			autoMigrate := prune && migrationDiff.HasSchemaChanges()
+			if autoMigrate && chainHasCommunity {
+				log.Warn("community bridge(s) in the resolved chain — not auto-running database migrations; use --migrate explicitly")
+				autoMigrate = false
+			}
+			shouldMigrate := migrateFlag || autoMigrate
 			if applied && shouldMigrate && rendererInstance.MigrationConfig() != nil && rendererInstance.MigrationConfig().Enabled {
 				if err := runDatabaseMigrations(rendererInstance.MigrationConfig(), outputDir, cmd, log); err != nil {
 					if migrateFlag {
@@ -295,6 +319,11 @@ func newGenerateCmd() *cobra.Command {
 			bridgeID := bridgePath
 			if bridgeName != "" {
 				bridgeID = bridgeName
+			}
+			// Record the resolved bridge chain next to domain.yaml (Phase 0.4).
+			// Best-effort: a lock-write failure must never abort generation.
+			if err := writeDomainLock(domainFile, append([]string{bridgePath}, basePaths...)); err != nil {
+				log.Warn("could not write domaincraft.lock.json: %v", err)
 			}
 			if err := snapshot.Save(snapPath, snapshot.New(bridgeID, irProject, manifest)); err != nil {
 				return fmt.Errorf("save schema snapshot: %w", err)
@@ -354,7 +383,11 @@ func newBridgesCmd() *cobra.Command {
 						}
 					}
 				}
-				fmt.Fprintf(out, "%-20s %-10s %-26s %s\n", e.ID, e.Language, status, e.Description)
+				desc := e.Description
+				if e.Deprecated {
+					desc += " (deprecated)"
+				}
+				fmt.Fprintf(out, "%-20s %-10s %-26s %s\n", e.ID, e.Language, status, desc)
 			}
 
 			if checkUpdates {
@@ -379,6 +412,15 @@ func resolveBridgeInteractive(log *logger.Logger) (string, string, error) {
 	resolver := bridge.NewResolver(bridge.Default()).WithEnsureOptions(bridgeEnsureOptions(log))
 
 	if bridgePath != "" {
+		// Monorepo-first: an official bridge ID resolves to the local
+		// <root>/bridges/<path> copy when it exists (same order as `extends`).
+		if entry := bridge.Default().ByID(bridgePath); entry != nil && entry.Path != "" {
+			if wd, err := os.Getwd(); err == nil {
+				if p := bridge.FindMonorepoBridge(wd, entry.Path); p != "" {
+					return p, "", nil
+				}
+			}
+		}
 		resolved, err := resolver.Resolve(bridgePath)
 		return resolved, "", err
 	}
@@ -411,7 +453,7 @@ func resolveBaseChain(adapterDir, baseRef string, log *logger.Logger) ([]string,
 	fromDir := adapterDir
 	cur := baseRef
 	for cur != "" {
-		path, err := resolveExtendsRef(cur, fromDir, resolver)
+		path, err := bridge.ResolveExtendsRef(cur, fromDir, resolver)
 		if err != nil {
 			return nil, fmt.Errorf("resolve bridge `extends: %s`: %w", cur, err)
 		}
@@ -489,7 +531,7 @@ func buildFullChainTopFirst(entryDir string, log *logger.Logger) ([]string, erro
 		if ext == "" {
 			break
 		}
-		next, err := resolveExtendsRef(ext, curDir, resolver)
+		next, err := bridge.ResolveExtendsRef(ext, curDir, resolver)
 		if err != nil {
 			return nil, fmt.Errorf("resolve bridge `extends: %s`: %w", ext, err)
 		}
@@ -536,7 +578,7 @@ func resolveChainWithReplacements(entryDir string, reps []replaceEntry, log *log
 			return "", nil, fmt.Errorf("no bridge with layer or name %q in chain %v", rep.left, fullChain)
 		}
 		// Resolve replacement bridge.
-		rightPath, err := resolveExtendsRef(rep.right, entryDir, resolver)
+		rightPath, err := bridge.ResolveExtendsRef(rep.right, entryDir, resolver)
 		if err != nil {
 			return "", nil, fmt.Errorf("resolve --replace %s=%s: %w", rep.left, rep.right, err)
 		}
@@ -585,24 +627,86 @@ func resolveChainWithReplacements(entryDir string, reps []replaceEntry, log *log
 	return newEntry, tail, nil
 }
 
-// resolveExtendsRef resolves one `extends` reference. For a registry ID it first
-// checks a local checkout next to the extending bridge (monorepo sibling) or
-// inside its directory (a CI checkout), so development works before the base
-// bridge is published; otherwise it falls through to the normal path/ID/
-// owner-repo resolution (cache + clone).
-func resolveExtendsRef(ref, fromDir string, resolver *bridge.Resolver) (string, error) {
-	if entry := bridge.Default().ByID(ref); entry != nil {
-		repo := filepath.Base(entry.GitHub)
-		for _, candidate := range []string{
-			filepath.Join(filepath.Dir(fromDir), repo), // sibling of the adapter (monorepo)
-			filepath.Join(fromDir, repo),               // inside the adapter's directory (CI checkout)
-		} {
-			if info, err := os.Stat(filepath.Join(candidate, "bridge.yaml")); err == nil && !info.IsDir() {
-				return candidate, nil
+// --- domaincraft.lock.json (Phase 0.4) ---
+//
+// The lock records the exact bridge chain that rendered a project, next to the
+// domain.yaml (not inside the output dir, not in the snapshot). It holds no
+// timestamps, so it is diff-friendly and reproducible. It answers "which
+// bridges rendered this project" — the snapshot answers "what did the model
+// look like".
+
+// lockBridge is one entry in domaincraft.lock.json.
+type lockBridge struct {
+	ID              string `json:"id"`
+	Path            string `json:"path,omitempty"`   // monorepo path under bridges/ when resolved locally from the monorepo
+	Source          string `json:"source,omitempty"` // GitHub owner/repo when resolved from the registry/cache
+	Version         string `json:"version,omitempty"`
+	ContractVersion int    `json:"contract_version"`
+}
+
+// domainLock is the on-disk shape of domaincraft.lock.json.
+type domainLock struct {
+	Bridges []lockBridge `json:"bridges"`
+}
+
+// writeDomainLock records the resolved bridge chain (top-first: entry, then its
+// bases) next to domainPath. It is best-effort: a failure to write the lock
+// must never break generation.
+func writeDomainLock(domainPath string, dirs []string) error {
+	reg := bridge.Default()
+	var out []lockBridge
+	seen := make(map[string]bool)
+	for _, dir := range dirs {
+		id, version, contractVersion, err := bridgeMetadata(dir)
+		if err != nil {
+			return err
+		}
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		b := lockBridge{ID: id, Version: version, ContractVersion: contractVersion}
+		if entry := reg.ByID(id); entry != nil {
+			if p := bridge.MonorepoRelPath(dir, entry.Path); p != "" {
+				b.Path = p
+			} else if entry.GitHub != "" {
+				b.Source = entry.GitHub
 			}
 		}
+		out = append(out, b)
 	}
-	return resolver.Resolve(ref)
+	slices.SortFunc(out, func(a, b lockBridge) int { return cmp.Compare(a.ID, b.ID) })
+
+	data, err := json.MarshalIndent(domainLock{Bridges: out}, "", "  ")
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(domainPath)
+	if dir == "" {
+		dir = "."
+	}
+	return fsutil.AtomicWrite(filepath.Join(dir, "domaincraft.lock.json"), data)
+}
+
+// bridgeMetadata reads the identifying fields out of a bridge directory's
+// bridge.yaml for the lock file.
+func bridgeMetadata(dir string) (id, version string, contractVersion int, err error) {
+	data, err := os.ReadFile(filepath.Join(dir, "bridge.yaml"))
+	if err != nil {
+		return "", "", 0, err
+	}
+	var cfg struct {
+		Name            string `yaml:"name"`
+		Version         string `yaml:"version"`
+		ContractVersion int    `yaml:"contract_version"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return "", "", 0, err
+	}
+	if cfg.ContractVersion == 0 {
+		cfg.ContractVersion = 1
+	}
+	return cfg.Name, cfg.Version, cfg.ContractVersion, nil
 }
 
 // bridgeEnsureOptions builds the bridge caching/update policy from the CLI
@@ -685,6 +789,12 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 		return nil
 	}
 	out := cmd.OutOrStdout()
+	// The resolved command lines are printed before they run, so the developer
+	// always sees exactly what will be executed (Phase 3.5 safety).
+	fmt.Fprintf(out, "  Applying %d database migration command(s):\n", len(cfg.Commands))
+	for i, command := range cfg.Commands {
+		fmt.Fprintf(out, "    %d) %s\n", i+1, command)
+	}
 	for i, command := range cfg.Commands {
 		log.Info("Migration %d/%d: %s", i+1, len(cfg.Commands), command)
 		var argv []string

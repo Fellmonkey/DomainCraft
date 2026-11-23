@@ -1,0 +1,77 @@
+{{ template "banner" . }}
+{{- $proj := .Project }}
+
+import type {
+{{- range $e := .Project.Entities }}
+  {{ $e.Name }}Include,
+{{- end }}
+} from "./query";
+
+// Enums: wire values (snake_case) are the contract — they are what the API
+// serializes and what filters match. The const object maps the declared name
+// to the wire value; the union type is the wire-value type.
+{{ range $enumName := .Project.EnumOrder }}
+export const {{ $enumName }} = {
+{{- range $v := ($proj.EnumValues $enumName) }}
+  "{{ $v.Name }}": {{ jsonValue $v.WireValue }},
+{{- end }}
+} as const;
+export type {{ $enumName }} = (typeof {{ $enumName }})[keyof typeof {{ $enumName }}];
+
+{{ end }}
+// A list response (spec/query.md). In offset mode `hasNextPage`/`totalPages` are
+// present; in keyset (cursor) mode the client reads `nextCursor` (null = end).
+export interface ListResult<T> {
+  items: T[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+  nextCursor?: string | number | null;
+  hasNextPage?: boolean;
+  hasPreviousPage?: boolean;
+  totalPages?: number;
+}
+
+// Read projections. The core emits the field surface once; three shapes are
+// derived from it:
+//   XListItem — a list row: [many] relations are OPTIONAL (the API omits them
+//               unless the list call requests `include`; nulls are dropped).
+//   XWith<I>  — a list row narrowed to require the [many] relations in I.
+//   XDetail   — the get-by-id row: every [many] relation eager-loaded.
+//   X         — alias of XDetail (the fully-loaded row).
+// to-one relations always expose their foreign-key id (the API never nests a
+// to-one object); [many] relations are arrays of the target entity.
+{{ range $e := .Project.Entities }}
+export interface {{ $e.Name }}ListItem {
+{{- range $e.ReadFields }}{{ template "readFieldLine" . }}{{- end }}
+}
+
+export type {{ $e.Name }}With<I extends {{ $e.Name }}Include = never> = {{ $e.Name }}ListItem & {
+  [K in I]: NonNullable<{{ $e.Name }}ListItem[K]>;
+};
+
+export type {{ $e.Name }}Detail = {{ $e.Name }}With<{{ $e.Name }}Include>;
+
+export type {{ $e.Name }} = {{ $e.Name }}Detail;
+
+{{ end }}
+{{ if .Project.HasAuth }}
+// Auth contract (IRProject.AuthEndpoints) — only enabled endpoints get types.
+{{ if .Project.Auth.Endpoints.HasLogin }}
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface AuthResponse {
+  token: string;
+}
+{{ end }}
+{{ if or .Project.Auth.Endpoints.HasRegister .Project.Auth.Endpoints.HasSetup }}
+// Shared by `register` and the one-shot bootstrap `setup`.
+export interface RegisterRequest {
+  email: string;
+  password: string;
+}
+{{ end }}
+{{ end }}

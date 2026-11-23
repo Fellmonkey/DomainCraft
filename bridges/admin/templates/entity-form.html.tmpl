@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  {{ template "head" (printf "%s - %s Admin" .Entity.Name (.Project.Name | pascalcase)) }}
+  <script>
+    document.addEventListener('alpine:init', () => {
+      Alpine.data('entityForm', () => ({
+        isEditing: false, itemId: null, loading: false, saving: false,
+        form: {}, relatedData: {}, alert: { show: false, message: '', type: 'success' },
+
+        async init() {
+          {{- if .Project.HasAuth }}
+          if (!Alpine.store('auth').token) { window.location.href = 'login.html'; return; }
+          {{- end }}
+          const p = new URLSearchParams(window.location.search);
+          this.itemId = p.get('id'); this.isEditing = !!this.itemId;
+          {{- range .Entity.Fields }}
+          {{- if and (not (.IsFeatureField)) (not .IsPrimary) (not .IsHidden) (not (and .IsRelation .IsMany)) }}
+          {{- if .IsRelation }}this.form.{{ .Name }} = '';
+          {{- else if .IsBoolean }}this.form.{{ .Name }} = false;
+          {{- else }}this.form.{{ .Name }} = '';
+          {{- end }}{{- end }}{{- end }}
+          await this.loadRelated();
+          if (this.isEditing) await this.loadItem();
+        },
+
+        async loadRelated() {
+          const deps = [{{ range $i, $r := .Entity.RelationsOut }}{{ if $i }},{{ end }}{ e: '{{ $r.TargetEntity.Name | lowercase }}', url: '/{{ $r.TargetEntity.NamePlural | lowercase }}' }{{ end }}];
+          for (const d of deps) {
+            try { const r = await Alpine.store('auth').api(window.API_BASE_URL || 'http://{{ .Project.Deploy.Domain }}:{{ .Project.Deploy.Port }}/api' + d.url);
+              if (r && r.ok) { const data = await r.json(); this.relatedData[d.e] = (Array.isArray(data) ? data : data.items || []).map(i => ({ id: i.id || i.Id, name: i.name || i.Name || i.title || i.Title || i.id || i.Id })); }
+            } catch(e) { this.relatedData[d.e] = []; }
+          }
+        },
+
+        async loadItem() {
+          this.loading = true;
+          try { const r = await Alpine.store('auth').api((window.API_BASE_URL || 'http://{{ .Project.Deploy.Domain }}:{{ .Project.Deploy.Port }}/api') + '/{{ .Entity.NamePlural | lowercase }}/' + this.itemId);
+            if (r && r.ok) { const item = await r.json();
+              {{- range .Entity.Fields }}
+              {{- if and (not (.IsFeatureField)) (not .IsPrimary) (not .IsHidden) (not (and .IsRelation .IsMany)) }}
+              {{- if .IsArray }}this.form.{{ .Name }} = Array.isArray(item.{{ .Name }}) ? item.{{ .Name }}.join(', ') : (item.{{ .Name }} || '');
+              {{- else if .IsJson }}this.form.{{ .Name }} = item.{{ .Name }} ? JSON.stringify(item.{{ .Name }}, null, 2) : '';
+              {{- else }}this.form.{{ .Name }} = item.{{ .Name }} ?? '';
+              {{- end }}{{- end }}{{- end }}
+            }
+          } catch(e) { this.alert = { show: true, message: e.message, type: 'error' }; }
+          this.loading = false;
+        },
+
+        async save() {
+          this.saving = true; this.alert.show = false;
+          const p = {};
+          {{- range .Entity.Fields }}
+          {{- if and (not (.IsFeatureField)) (not .IsPrimary) (not .IsHidden) (not (and .IsRelation .IsMany)) }}
+          {{- if .IsBoolean }}p['{{ .Name }}'] = !!this.form.{{ .Name }};
+          {{- else if .IsArray }}p['{{ .Name }}'] = String(this.form.{{ .Name }} || '').split(',').map(s => s.trim()).filter(Boolean).map({{ if or (eq (.ArrayElementType) "int") (eq (.ArrayElementType) "bigint") (eq (.ArrayElementType) "float") (eq (.ArrayElementType) "decimal") }}Number{{ else if eq (.ArrayElementType) "boolean" }}v => v === 'true'{{ else }}s => s{{ end }});
+          {{- else if .IsJson }}try { p['{{ .Name }}'] = this.form.{{ .Name }} ? JSON.parse(this.form.{{ .Name }}) : null; } catch(e) { this.alert = { show: true, message: 'Invalid JSON for {{ humanize .Name }}', type: 'error' }; this.saving = false; return; }
+          {{- else }}p['{{ .Name }}'] = this.form.{{ .Name }} || null;
+          {{- end }}{{- end }}{{- end }}
+          try {
+            const base = window.API_BASE_URL || 'http://{{ .Project.Deploy.Domain }}:{{ .Project.Deploy.Port }}/api';
+            const url = this.isEditing ? base + '/{{ .Entity.NamePlural | lowercase }}/' + this.itemId : base + '/{{ .Entity.NamePlural | lowercase }}';
+            const r = await Alpine.store('auth').api(url, { method: this.isEditing ? 'PUT' : 'POST', body: JSON.stringify(p) });
+            if (r && r.ok) { const d = await r.json(); this.alert = { show: true, message: 'Saved', type: 'success' };
+              if (!this.isEditing && d && (d.id || d.Id)) setTimeout(() => location.href = '{{ lower .Entity.NamePlural }}-form.html?id=' + (d.id || d.Id), 1000);
+            } else { const e = r ? await r.json().catch(() => ({})) : {}; this.alert = { show: true, message: e.message || 'Save failed', type: 'error' }; }
+          } catch(e) { this.alert = { show: true, message: e.message, type: 'error' }; }
+          this.saving = false;
+        }
+      }));
+    });
+  </script>
+</head>
+<body class="bg color" style="--bg: var(--z-bg); --color: var(--z-bg-f)">
+  <div x-data style="display: flex; min-height: 100vh;">
+    {{ template "sidebar" (dict "Project" .Project "Active" .Entity.Name) }}
+
+    <main class="main-content" x-data="entityForm" x-init="init()">
+      <div class="page-header">
+        <div>
+          <a href="{{ lower .Entity.NamePlural }}.html" style="font-size: 0.8125rem; color: var(--z-muted-f); text-decoration: none; display: inline-flex; align-items: center; gap: 0.375rem; margin-bottom: 0.5rem; transition: color 0.15s;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+            Back to {{ .Entity.NamePlural }}
+          </a>
+          <h1 class="page-title" x-text="isEditing ? 'Edit {{ .Entity.Name }}' : 'Create {{ .Entity.Name }}'"></h1>
+        </div>
+      </div>
+
+      {{ template "alert" . }}
+
+      <template x-if="loading">
+        <div class="data-card" style="padding: 3rem; text-align: center;">
+          <span style="color: var(--z-muted-f);">Loading...</span>
+        </div>
+      </template>
+
+      <template x-if="!loading">
+        <div class="data-card" style="padding: 2rem; max-width: 720px;">
+          <form @submit.prevent="save()" class="z-form-stacked">
+            {{ template "formFields" . }}
+            <div style="display: flex; gap: 0.625rem; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--z-border);">
+              <a href="{{ lower .Entity.NamePlural }}.html" class="z-button btn-ghost">Cancel</a>
+              <button type="submit" class="z-button btn-primary" :disabled="saving">
+                <span x-show="saving">Saving...</span>
+                <span x-show="!saving" x-text="isEditing ? 'Update' : 'Create'"></span>
+              </button>
+            </div>
+          </form>
+        </div>
+      </template>
+    </main>
+  </div>
+  {{ template "scripts" }}
+</body>
+</html>

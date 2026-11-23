@@ -1,0 +1,43 @@
+{{ template "banner" . }}
+import { z } from "zod";
+
+// Flatten a ZodError into one message per field (nested paths joined with "."),
+// matching the shape of `ApiError.fieldErrors()` so a form can render client-
+// and server-side validation through the same `applyFieldErrors` helper.
+export function zodFieldErrors(error: z.ZodError): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const issue of error.issues) {
+    const field = issue.path.length > 0 ? issue.path.join(".") : "(form)";
+    if (!(field in out)) out[field] = issue.message;
+  }
+  return out;
+}
+
+// Zod schemas generated from the SAME validation rules the server enforces
+// (required, email, url, ipv4, min/max length, gte/gt/lte/lt, regex). The input
+// types are inferred from these schemas, so a create/update payload is validated
+// before it leaves the client and the request/response shapes cannot drift.
+{{ range $e := .Project.Entities }}
+export const {{ $e.Name }}CreateSchema = z.object({
+{{- range $e.CreateFields }}{{ if not (and .IsRelation .IsMany) }}
+  {{ camelcase .Name }}: {{ template "zodField" (dict "Field" . "Project" $.Project) }}{{ if .IsNullable }}.optional(){{ end }},
+{{- end }}{{- end }}
+});
+
+export const {{ $e.Name }}UpdateSchema = z.object({
+{{- range $e.UpdateFields }}{{ if not (and .IsRelation .IsMany) }}
+  {{ camelcase .Name }}: {{ template "zodField" (dict "Field" . "Project" $.Project) }}.optional(),
+{{- end }}{{- end }}
+});
+
+export const {{ $e.Name }}PatchSchema = z.object({
+{{- range $e.PatchFields }}
+  {{ camelcase .Name }}: {{ template "zodField" (dict "Field" . "Project" $.Project) }}.optional(),
+{{- end }}
+});
+
+export type {{ $e.Name }}Create = z.infer<typeof {{ $e.Name }}CreateSchema>;
+export type {{ $e.Name }}Update = z.infer<typeof {{ $e.Name }}UpdateSchema>;
+export type {{ $e.Name }}Patch = z.infer<typeof {{ $e.Name }}PatchSchema>;
+
+{{ end }}

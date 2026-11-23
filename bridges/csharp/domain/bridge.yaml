@@ -1,0 +1,89 @@
+name: csharp-domain
+description: Domain + Application layer for C# — services, Generation Gap, ports. Extends language core.
+version: "1.0.0"
+layer: domain
+extends: csharp-core
+registry_url: "https://api.nuget.org/v3-flatcontainer/{id}/index.json"
+registry_packages:
+  json_serialization: System.Text.Json
+  di_abstractions: Microsoft.Extensions.DependencyInjection.Abstractions
+templates:
+  - for: project
+    source: templates/mock-data.cs.tmpl
+    target: "src/Domain/MockData.g.cs"
+    when: hasMockData
+  - for: project
+    source: templates/IPermissionService.cs.tmpl
+    target: "src/Application/Security/IPermissionService.g.cs"
+  - for: project
+    source: templates/PermissionService.cs.tmpl
+    target: "src/Application/Security/PermissionService.g.cs"
+  - for: project
+    source: templates/IOwnerResolver.cs.tmpl
+    target: "src/Application/Security/IOwnerResolver.g.cs"
+  - for: project
+    source: templates/OwnerResolver.cs.tmpl
+    target: "src/Application/Security/OwnerResolver.g.cs"
+  - for: project
+    source: templates/IPasswordHasher.cs.tmpl
+    target: "src/Application/Security/IPasswordHasher.g.cs"
+    when: hasAuth
+  - for: project
+    source: templates/service-hooks.cs.tmpl
+    target: "src/Application/Services/ServiceHooks.g.cs"
+  - for: entity
+    source: templates/irepository.cs.tmpl
+    target: "src/Application/Repositories/I{{ .Entity.Name }}Repository.g.cs"
+  - for: project
+    source: templates/irepository-base.cs.tmpl
+    target: "src/Application/Repositories/IRepository.g.cs"
+  - for: entity
+    source: templates/iservice.cs.tmpl
+    target: "src/Application/Services/I{{ .Entity.Name }}Service.g.cs"
+  - for: entity
+    source: templates/generated-service.cs.tmpl
+    target: "src/Application/Generated/{{ .Entity.Name }}Service.g.cs"
+  - for: entity
+    source: templates/custom-service.cs.tmpl
+    target: "src/Application/Services/{{ .Entity.Name }}Service.cs"
+    overwrite: false
+  - for: project
+    source: templates/service-registration.cs.tmpl
+    target: "src/Application/DependencyInjection.g.cs"
+  - for: project
+    source: templates/iauth-service.cs.tmpl
+    target: "src/Application/Services/IAuthService.g.cs"
+    when: hasAuth
+  - for: project
+    source: templates/generated-auth-service.cs.tmpl
+    target: "src/Application/Generated/AuthService.g.cs"
+    when: hasAuth
+  - for: project
+    source: templates/custom-auth-service.cs.tmpl
+    target: "src/Application/Services/AuthService.cs"
+    when: hasAuth
+    overwrite: false
+  - for: project
+    source: templates/icache-service.cs.tmpl
+    target: "src/Application/Caching/ICacheService.g.cs"
+  - for: project
+    source: templates/IEmailService.cs.tmpl
+    target: "src/Application/Email/IEmailService.g.cs"
+  - for: project
+    source: templates/IStorageService.cs.tmpl
+    target: "src/Application/Storage/IStorageService.g.cs"
+  - for: project
+    source: templates/IEventPublisher.cs.tmpl
+    target: "src/Application/Events/IEventPublisher.g.cs"
+  - for: project
+    source: templates/domain.csproj.tmpl
+    target: "src/Domain/Domain.csproj"
+  - for: project
+    source: templates/application.csproj.tmpl
+    target: "src/Application/Application.csproj"
+  - for: entity
+    source: templates/entity-summary.md.tmpl
+    target: "docs/Entities/{{ .Entity.Name }}.md"
+  - for: project
+    source: templates/project-summary.md.tmpl
+    target: "docs/ProjectSummary.md"

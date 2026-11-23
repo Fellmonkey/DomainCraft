@@ -1,0 +1,260 @@
+{{ template "banner" . }}
+{{- $hasCursor := false }}{{ range .Project.Entities }}{{ if .CursorField }}{{ $hasCursor = true }}{{ end }}{{ end }}
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,{{ if $hasCursor }}
+  useInfiniteQuery,{{ end }}
+  type InfiniteData,
+  type QueryClient,
+  type QueryKey,
+  type UseMutationOptions,
+  type UseQueryOptions,{{ if $hasCursor }}
+  type UseInfiniteQueryOptions,{{ end }}
+} from "@tanstack/react-query";
+import type { ListResult } from "./types";
+{{ range $e := .Project.Entities }}import {
+  list{{ $e.NamePlural }},
+  get{{ $e.Name }},
+  create{{ $e.Name }},
+  update{{ $e.Name }},
+  patch{{ $e.Name }},
+  delete{{ $e.Name }},
+} from "./api";
+import type { {{ $e.Name }}, {{ $e.Name }}With } from "./types";
+import type { {{ $e.Name }}Create, {{ $e.Name }}Update, {{ $e.Name }}Patch } from "./schemas";
+import type { {{ $e.Name }}Query, {{ $e.Name }}Include } from "./query";
+{{ end }}
+// ---- optimistic update helpers ----
+
+/** Extra options accepted by the generated mutation hooks. */
+export interface OptimisticOptions {
+  /** Apply an optimistic cache update and roll back on error (default true). */
+  optimistic?: boolean;
+}
+
+type CacheSnapshot = [QueryKey, unknown][];
+
+// Maps each item of a list result (offset or keyset/infinite) through `patch`,
+// dropping the items `patch` returns as undefined. Used by optimistic updates
+// and deletes to rewrite cached list rows in place without a refetch.
+function mapListItems<T>(
+  data: ListResult<T> | InfiniteData<ListResult<T>> | undefined,
+  patch: (item: T) => T | undefined,
+): ListResult<T> | InfiniteData<ListResult<T>> | undefined {
+  if (!data) return data;
+  const infinite = data as InfiniteData<ListResult<T>>;
+  if (Array.isArray(infinite.pages)) {
+    return {
+      ...infinite,
+      pages: infinite.pages.map((page) => ({
+        ...page,
+        items: page.items.map(patch).filter((item): item is T => item !== undefined),
+      })),
+    };
+  }
+  const page = data as ListResult<T>;
+  return {
+    ...page,
+    items: page.items.map(patch).filter((item): item is T => item !== undefined),
+  };
+}
+
+// Restores every query captured by an optimistic `onMutate` snapshot.
+function restoreSnapshot(queryClient: QueryClient, snapshot: CacheSnapshot | undefined): void {
+  if (!snapshot) return;
+  for (const [key, data] of snapshot) queryClient.setQueryData(key, data);
+}
+
+// Apply a field→message map to a React Hook Form-style setter. Works with any
+// form that exposes `setError(field, { type, message })`; wire it to
+// `zodFieldErrors(zodError)` or `err.fieldErrors()`.
+export function applyFieldErrors(
+  errors: Record<string, string>,
+  setError: (field: string, error: { type: string; message: string }) => void,
+): void {
+  for (const [field, message] of Object.entries(errors)) setError(field, { type: "server", message });
+}
+
+{{ range $e := .Project.Entities }}
+// ---- {{ $e.Name }} ----
+
+{{- /* Cross-entity invalidation: parents embedding this entity via include=
+       ([many] relations pointing at it from RelationsIn) hold stale rows after
+       any mutation here, so their caches are invalidated alongside ours. */ -}}
+{{- $refs := list -}}
+{{- range $other := $.Project.Entities }}{{ if ne $other.Name $e.Name }}
+{{- range $rel := $other.RelationsOut }}{{ if and $rel.TargetEntity $rel.IsMany (eq $rel.TargetEntity.Name $e.Name) }}
+{{- $refs = append $refs (printf "%q" (lower $other.NamePlural)) }}
+{{- end }}{{ end }}
+{{ end }}{{ end }}
+
+export const {{ camelcase $e.Name }}Keys = {
+  all: ["{{ lower $e.NamePlural }}"] as const,
+  list: (query: {{ $e.Name }}Query = {}) => ["{{ lower $e.NamePlural }}", "list", query] as const,
+  detail: (id: {{ template "pkType" $e }}) => ["{{ lower $e.NamePlural }}", "detail", id] as const,
+};
+
+function optimisticUpdate{{ $e.Name }}(queryClient: QueryClient, id: {{ template "pkType" $e }}, patch: Partial<{{ $e.Name }}>): CacheSnapshot {
+  const previous = queryClient.getQueriesData({ queryKey: {{ camelcase $e.Name }}Keys.all });
+  queryClient.setQueryData({{ camelcase $e.Name }}Keys.detail(id), (old: {{ $e.Name }} | undefined) =>
+    old ? { ...old, ...patch } : old,
+  );
+  queryClient.setQueriesData<ListResult<{{ $e.Name }}> | InfiniteData<ListResult<{{ $e.Name }}>>>(
+    { queryKey: {{ camelcase $e.Name }}Keys.all, predicate: (q) => q.queryKey[1] === "list" },
+    (old) => mapListItems(old, (item) => (item.{{ camelcase $e.PrimaryKey.Name }} === id ? { ...item, ...patch } : item)),
+  );
+  return previous;
+}
+
+function optimisticDelete{{ $e.Name }}(queryClient: QueryClient, id: {{ template "pkType" $e }}): CacheSnapshot {
+  const previous = queryClient.getQueriesData({ queryKey: {{ camelcase $e.Name }}Keys.all });
+  queryClient.setQueryData({{ camelcase $e.Name }}Keys.detail(id), undefined);
+  queryClient.setQueriesData<ListResult<{{ $e.Name }}> | InfiniteData<ListResult<{{ $e.Name }}>>>(
+    { queryKey: {{ camelcase $e.Name }}Keys.all, predicate: (q) => q.queryKey[1] === "list" },
+    (old) => mapListItems(old, (item) => (item.{{ camelcase $e.PrimaryKey.Name }} === id ? undefined : item)),
+  );
+  return previous;
+}
+
+export function use{{ $e.NamePlural }}<I extends {{ $e.Name }}Include = never>(
+  query: Omit<{{ $e.Name }}Query, "include"> & { include?: I[] } = {},
+  options?: Omit<UseQueryOptions<ListResult<{{ $e.Name }}With<I>>>, "queryKey" | "queryFn">,
+) {
+  return useQuery({
+    queryKey: {{ camelcase $e.Name }}Keys.list(query),
+    queryFn: () => list{{ $e.NamePlural }}<I>(query),
+    ...options,
+  });
+}
+
+export function use{{ $e.Name }}(
+  id: {{ template "pkType" $e }},
+  options?: Omit<UseQueryOptions<{{ $e.Name }}>, "queryKey" | "queryFn">,
+) {
+  return useQuery({
+    queryKey: {{ camelcase $e.Name }}Keys.detail(id),
+    queryFn: () => get{{ $e.Name }}(id),
+    ...options,
+  });
+}
+
+// Create is NOT optimistic: the server assigns the primary key, so there is no
+// stable id to write into the cache before the response arrives. The cache is
+// invalidated on success instead.
+export function useCreate{{ $e.Name }}(
+  options?: Omit<UseMutationOptions<{{ $e.Name }}, Error, {{ $e.Name }}Create>, "mutationFn">,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {{ $e.Name }}Create) => create{{ $e.Name }}(input),
+    ...options,
+    onSuccess: (...args) => {
+      void queryClient.invalidateQueries({ queryKey: {{ camelcase $e.Name }}Keys.all });
+{{- range $ref := $refs }}
+      void queryClient.invalidateQueries({ queryKey: [{{ $ref }}] });
+{{- end }}
+      options?.onSuccess?.(...args);
+    },
+  });
+}
+
+export function useUpdate{{ $e.Name }}(
+  id: {{ template "pkType" $e }},
+  options?: Omit<UseMutationOptions<{{ $e.Name }}, Error, {{ $e.Name }}Update>, "mutationFn"> & OptimisticOptions,
+) {
+  const queryClient = useQueryClient();
+  const optimistic = options?.optimistic !== false;
+  return useMutation({
+    mutationFn: (input: {{ $e.Name }}Update) => update{{ $e.Name }}(id, input),
+    ...options,
+    onMutate: async (input, mutationContext) => {
+      const snapshot = optimistic ? optimisticUpdate{{ $e.Name }}(queryClient, id, input) : undefined;
+      await options?.onMutate?.(input, mutationContext);
+      return snapshot;
+    },
+    onError: (err, input, onMutateResult, mutationContext) => {
+      restoreSnapshot(queryClient, onMutateResult);
+      options?.onError?.(err, input, onMutateResult, mutationContext);
+    },
+    onSuccess: (...args) => {
+      void queryClient.invalidateQueries({ queryKey: {{ camelcase $e.Name }}Keys.all });
+{{- range $ref := $refs }}
+      void queryClient.invalidateQueries({ queryKey: [{{ $ref }}] });
+{{- end }}
+      options?.onSuccess?.(...args);
+    },
+  });
+}
+
+export function usePatch{{ $e.Name }}(
+  id: {{ template "pkType" $e }},
+  options?: Omit<UseMutationOptions<{{ $e.Name }}, Error, {{ $e.Name }}Patch>, "mutationFn"> & OptimisticOptions,
+) {
+  const queryClient = useQueryClient();
+  const optimistic = options?.optimistic !== false;
+  return useMutation({
+    mutationFn: (input: {{ $e.Name }}Patch) => patch{{ $e.Name }}(id, input),
+    ...options,
+    onMutate: async (input, mutationContext) => {
+      const snapshot = optimistic ? optimisticUpdate{{ $e.Name }}(queryClient, id, input) : undefined;
+      await options?.onMutate?.(input, mutationContext);
+      return snapshot;
+    },
+    onError: (err, input, onMutateResult, mutationContext) => {
+      restoreSnapshot(queryClient, onMutateResult);
+      options?.onError?.(err, input, onMutateResult, mutationContext);
+    },
+    onSuccess: (...args) => {
+      void queryClient.invalidateQueries({ queryKey: {{ camelcase $e.Name }}Keys.all });
+{{- range $ref := $refs }}
+      void queryClient.invalidateQueries({ queryKey: [{{ $ref }}] });
+{{- end }}
+      options?.onSuccess?.(...args);
+    },
+  });
+}
+
+export function useDelete{{ $e.Name }}(
+  options?: Omit<UseMutationOptions<void, Error, {{ template "pkType" $e }}>, "mutationFn"> & OptimisticOptions,
+) {
+  const queryClient = useQueryClient();
+  const optimistic = options?.optimistic !== false;
+  return useMutation({
+    mutationFn: (id: {{ template "pkType" $e }}) => delete{{ $e.Name }}(id),
+    ...options,
+    onMutate: async (id, mutationContext) => {
+      const snapshot = optimistic ? optimisticDelete{{ $e.Name }}(queryClient, id) : undefined;
+      await options?.onMutate?.(id, mutationContext);
+      return snapshot;
+    },
+    onError: (err, id, onMutateResult, mutationContext) => {
+      restoreSnapshot(queryClient, onMutateResult);
+      options?.onError?.(err, id, onMutateResult, mutationContext);
+    },
+    onSuccess: (...args) => {
+      void queryClient.invalidateQueries({ queryKey: {{ camelcase $e.Name }}Keys.all });
+{{- range $ref := $refs }}
+      void queryClient.invalidateQueries({ queryKey: [{{ $ref }}] });
+{{- end }}
+      options?.onSuccess?.(...args);
+    },
+  });
+}
+{{- if $e.CursorField }}
+
+export function useInfinite{{ $e.NamePlural }}(
+  query: Omit<{{ $e.Name }}Query, "cursor"> = {},
+  options?: Omit<UseInfiniteQueryOptions<ListResult<{{ $e.Name }}>>, "queryKey" | "queryFn" | "initialPageParam" | "getNextPageParam">,
+) {
+  return useInfiniteQuery({
+    queryKey: {{ camelcase $e.Name }}Keys.list(query),
+    queryFn: ({ pageParam }) => list{{ $e.NamePlural }}({ ...query, cursor: pageParam as {{ template "pkType" $e }} | undefined }),
+    initialPageParam: undefined as {{ template "pkType" $e }} | undefined,
+    getNextPageParam: (last) => (last.nextCursor ?? undefined) as {{ template "pkType" $e }} | undefined,
+    ...options,
+  });
+}
+{{- end }}
+
+{{ end }}

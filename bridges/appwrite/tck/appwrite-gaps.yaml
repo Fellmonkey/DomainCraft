@@ -1,0 +1,62 @@
+# DomainCraft → Appwrite bridge — gaps model (TCK, plan §8).
+#
+# Deliberately NOT kitchen-sink (that model is shared by all bridges): this one
+# exercises the Appwrite-specific mapping contracts that kitchen-sink lacks:
+#
+#   Widget (old_name: Gadget)  — entity rename: the table keeps the pinned $id
+#                                "gadgets" while its name becomes "Widgets"
+#                                (plan §3.2). Also: bigint with gte/lte bounds
+#                                and seed on an @Owner entity.
+#   Bundle                     — relation to the renamed Widget: relatedTable
+#                                must point at the pinned id "gadgets".
+#   PublicNote                 — NO permissions block → all 4 ops "any".
+#   LockedNote                 — empty permission lists → deny (no grants).
+#
+# Pushed by `tck/verify.js --gaps` into its own project so table/team counts
+# are exact.
+project:
+  name: AppwriteGaps
+  version: 1.0.0
+database: appwrite
+auth:
+  type: jwt
+  entity: User
+  roles: [Admin, User]
+entities:
+  User:
+    fields:
+      id: uuid [primary]
+      email: string [required, unique]
+      password: string [required]
+  Widget:
+    old_name: Gadget
+    fields:
+      id: uuid [primary]
+      sku: string [required, unique]
+      stock: bigint [required, gte:1, lte:1000000]
+    permissions:
+      read: [Admin, "@Owner"]
+      create: [User]
+      update: ["@Owner"]
+      delete: [Admin]
+    seed:
+      - { id: "550e8400-e29b-41d4-a716-446655440111", sku: "GAP-1", stock: 42 }
+      - { id: "550e8400-e29b-41d4-a716-446655440222", sku: "GAP-2", stock: 7 }
+  Bundle:
+    fields:
+      id: uuid [primary]
+      widgetId: relation(Widget) [required, on_delete:cascade]
+      label: string
+  PublicNote:
+    fields:
+      id: uuid [primary]
+      body: string
+  LockedNote:
+    fields:
+      id: uuid [primary]
+      body: string
+    permissions:
+      read: []
+      create: []
+      update: []
+      delete: []

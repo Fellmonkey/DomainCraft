@@ -1,0 +1,36 @@
+name: appwrite
+description: Appwrite bridge for DomainCraft — TablesDB schema + role teams + project settings in one appwrite.config.json, deployed with the Appwrite CLI v26 (itself the migration engine).
+version: "1.0.0"
+output_dir: generated
+
+# Database migrations are executed BY the Appwrite CLI (v26 is a full migration
+# engine: diff plan, previousKey renames, deletions with confirmation). The
+# bridge never writes migration scripts — it generates a correct config and
+# delegates the diff to `appwrite push all --force` (settings → teams → tables,
+# one call, no prompts).
+migrations:
+  enabled: true
+  commands:
+    - "appwrite push all --force"
+
+templates:
+  # ===== SCHEMA (the only artifact the bridge owns) =====
+  - for: project
+    source: templates/appwrite.config.json.tmpl
+    target: "appwrite.config.json"
+
+  # ===== RUNTIME HELPERS (data-driven, schema-shaped) =====
+  - for: project
+    source: templates/permissions.js.tmpl
+    target: "helpers/permissions.js"
+    when: hasOwnerTokens
+
+  - for: project
+    source: templates/seed.js.tmpl
+    target: "scripts/seed.js"
+    when: hasSeed
+
+  # ===== DOCUMENTATION =====
+  - for: project
+    source: templates/README.md.tmpl
+    target: "README.md"

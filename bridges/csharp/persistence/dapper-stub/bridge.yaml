@@ -1,0 +1,9 @@
+name: csharp-dapper-stub
+description: Stub Dapper persistence (proof of replace)
+version: "0.1.0"
+layer: persistence
+extends: csharp-domain
+templates:
+  - for: project
+    source: templates/README.md.tmpl
+    target: "README_DAPPER.md"

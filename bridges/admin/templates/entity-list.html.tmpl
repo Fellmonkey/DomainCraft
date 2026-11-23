@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+<head>
+  {{ template "head" (printf "%s - %s Admin" .Entity.NamePlural (.Project.Name | pascalcase)) }}
+  <script>
+    document.addEventListener('alpine:init', () => {
+      Alpine.data('entityList', () => ({
+        items: [], loading: true, showModal: false, editingItem: null, form: {}, saving: false,
+        alert: { show: false, message: '', type: 'success' }, relatedData: {},
+        scrollPos: 0, scrollMax: 0, selectedIds: [], viewItem: null,
+
+        isSelected(item) { return this.selectedIds.includes(item.id || item.Id); },
+
+        toggleSelect(item) {
+          const id = item.id || item.Id;
+          this.selectedIds = this.selectedIds.includes(id) ? this.selectedIds.filter(i => i !== id) : [...this.selectedIds, id];
+        },
+
+        toggleAll() {
+          this.selectedIds = this.allSelected() ? [] : this.items.map(i => i.id || i.Id);
+        },
+
+        allSelected() { return this.items.length > 0 && this.selectedIds.length === this.items.length; },
+
+        async init() {
+          {{- if .Project.HasAuth }}
+          if (!Alpine.store('auth').token) { window.location.href = 'login.html'; return; }
+          {{- end }}
+          await this.loadRelated(); await this.load();
+        },
+
+        updateScroll() {
+          const el = this.$refs.tableWrap;
+          if (!el) return;
+          this.scrollPos = el.scrollLeft;
+          this.scrollMax = el.scrollWidth - el.clientWidth;
+        },
+
+        scrollLeft() {
+          const el = this.$refs.tableWrap;
+          if (el) { el.scrollBy({ left: -300, behavior: 'smooth' }); setTimeout(() => this.updateScroll(), 350); }
+        },
+
+        scrollRight() {
+          const el = this.$refs.tableWrap;
+          if (el) { el.scrollBy({ left: 300, behavior: 'smooth' }); setTimeout(() => this.updateScroll(), 350); }
+        },
+
+        async loadRelated() {
+          const deps = [{{ range $i, $r := .Entity.RelationsOut }}{{ if $i }},{{ end }}{ e: '{{ $r.TargetEntity.Name | lowercase }}', url: '/{{ $r.TargetEntity.NamePlural | lowercase }}' }{{ end }}];
+          for (const d of deps) {
+            try { const r = await Alpine.store('auth').api(window.API_BASE_URL || 'http://{{ .Project.Deploy.Domain }}:{{ .Project.Deploy.Port }}/api' + d.url);
+              if (r && r.ok) { const data = await r.json(); this.relatedData[d.e] = (Array.isArray(data) ? data : data.items || []).map(i => ({ id: i.id || i.Id, name: i.name || i.Name || i.title || i.Title || i.id || i.Id })); }
+            } catch(e) { this.relatedData[d.e] = []; }
+          }
+        },
+
+        async load() {
+          this.loading = true;
+          try { const r = await Alpine.store('auth').api(window.API_BASE_URL || 'http://{{ .Project.Deploy.Domain }}:{{ .Project.Deploy.Port }}/api/{{ .Entity.NamePlural | lowercase }}');
+            if (r && r.ok) { const d = await r.json(); this.items = Array.isArray(d) ? d : d.items || []; }
+          } catch(e) { this.alert = { show: true, message: e.message, type: 'error' }; }
+          this.loading = false;
+          this.$nextTick(() => this.updateScroll());
+        },
+
+        openCreate() {
+          this.editingItem = null; this.form = {};
+          {{- range .Entity.Fields }}
+          {{- if and (not (.IsFeatureField)) (not .IsPrimary) (not .IsHidden) (not (and .IsRelation .IsMany)) }}
+          {{- if .IsRelation }}this.form.{{ .Name }} = '';
+          {{- else if .IsBoolean }}this.form.{{ .Name }} = false;
+          {{- else if .IsArray }}this.form.{{ .Name }} = '';
+          {{- else if .IsJson }}this.form.{{ .Name }} = '';
+          {{- else if .DefaultValue }}this.form.{{ .Name }} = '{{ .DefaultValue }}';
+          {{- else }}this.form.{{ .Name }} = '';
+          {{- end }}{{- end }}{{- end }}
+          this.showModal = true;
+          this.$nextTick(() => zUIkit.modal(document.getElementById('modal')).show());
+        },
+
+        openEdit(item) {
+          this.editingItem = item; this.form = {};
+          {{- range .Entity.Fields }}
+          {{- if and (not (.IsFeatureField)) (not .IsPrimary) (not .IsHidden) (not (and .IsRelation .IsMany)) }}
+          {{- if .IsArray }}this.form.{{ .Name }} = Array.isArray(item.{{ .Name }}) ? item.{{ .Name }}.join(', ') : (item.{{ .Name }} || '');
+          {{- else if .IsJson }}this.form.{{ .Name }} = item.{{ .Name }} ? JSON.stringify(item.{{ .Name }}, null, 2) : '';
+          {{- else }}this.form.{{ .Name }} = item.{{ .Name }} ?? '';
+          {{- end }}{{- end }}{{- end }}
+          this.showModal = true;
+          this.$nextTick(() => zUIkit.modal(document.getElementById('modal')).show());
+        },
+
+        close() {
+          this.showModal = false; this.editingItem = null; this.form = {};
+          const el = document.getElementById('modal');
+          if (el) { const m = zUIkit.modal(el); if (m) m.hide(); }
+        },
+
+        closeView() {
+          this.viewItem = null;
+          const el = document.getElementById('viewModal');
+          if (el) { const m = zUIkit.modal(el); if (m) m.hide(); }
+        },
+
+        openView(item) {
+          this.viewItem = item;
+          this.$nextTick(() => zUIkit.modal(document.getElementById('viewModal')).show());
+        },
+
+        viewDefs() {
+          const esc = (v) => { v = (v == null ? '' : String(v)); return v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
+          return [
+            {{- range .Entity.Fields }}
+            {{- if and (not (.IsFeatureField)) (not .IsHidden) (not (and .IsRelation .IsMany)) }}
+            {{- if .IsRelation }}
+            { label: '{{ humanize .NavigationName }}', html: (it) => it.{{ .Name }}Name || it.{{ .Name }} ? esc(it.{{ .Name }}Name || it.{{ .Name }}) : '&mdash;' },
+            {{- else if .IsBoolean }}
+            { label: '{{ humanize .Name }}', html: (it) => it.{{ .Name }} ? '<span class="z-label z-label-success">Yes</span>' : '<span class="z-label">No</span>' },
+            {{- else if .IsArray }}
+            { label: '{{ humanize .Name }}', html: (it) => Array.isArray(it.{{ .Name }}) && it.{{ .Name }}.length ? it.{{ .Name }}.map(v => '<span class="z-label" style="margin: 2px;">' + esc(v) + '</span>').join('') : '&mdash;' },
+            {{- else if .IsJson }}
+            { label: '{{ humanize .Name }}', html: (it) => it.{{ .Name }} ? '<pre style="margin:0; white-space:pre-wrap; word-break:break-word; background:var(--z-bg-muted); padding:0.5rem; border-radius:0.375rem; font-size:0.8rem;">' + esc(JSON.stringify(it.{{ .Name }}, null, 2)) + '</pre>' : '&mdash;' },
+            {{- else }}
+            { label: '{{ humanize .Name }}', html: (it) => it.{{ .Name }} != null && it.{{ .Name }} !== '' ? esc(it.{{ .Name }}) : '&mdash;' },
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if .Entity.HasAudit }}
+            { label: 'Created', html: (it) => it.createdAt ? esc(new Date(it.createdAt).toLocaleString()) : '&mdash;' },
+            { label: 'Updated', html: (it) => it.updatedAt ? esc(new Date(it.updatedAt).toLocaleString()) : '&mdash;' },
+            {{- end }}
+          ];
+        },
+
+        exportCsv() {
+          if (!this.items.length) return;
+          const esc = (v) => { v = (v == null ? '' : String(v)); return '"' + v.replace(/"/g, '""') + '"'; };
+          const cols = [
+            {{- range .Entity.Fields }}
+            {{- if and (not (.IsFeatureField)) (not .IsHidden) (not (and .IsRelation .IsMany)) }}
+            {{- if .IsRelation }}
+            { label: '{{ humanize .NavigationName }}', val: (it) => it.{{ .Name }}Name || it.{{ .Name }} || '' },
+            {{- else if .IsArray }}
+            { label: '{{ humanize .Name }}', val: (it) => Array.isArray(it.{{ .Name }}) ? it.{{ .Name }}.join('; ') : (it.{{ .Name }} ?? '') },
+            {{- else if .IsJson }}
+            { label: '{{ humanize .Name }}', val: (it) => it.{{ .Name }} ? JSON.stringify(it.{{ .Name }}) : '' },
+            {{- else }}
+            { label: '{{ humanize .Name }}', val: (it) => it.{{ .Name }} ?? '' },
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if .Entity.HasAudit }}
+            { label: 'Created', val: (it) => it.createdAt ? new Date(it.createdAt).toLocaleString() : '' },
+            { label: 'Updated', val: (it) => it.updatedAt ? new Date(it.updatedAt).toLocaleString() : '' },
+            {{- end }}
+          ];
+          const csv = '\uFEFF' + cols.map(c => esc(c.label)).join(',') + '\n' + this.items.map(it => cols.map(c => esc(c.val(it))).join(',')).join('\n');
+          const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url; a.download = '{{ .Entity.NamePlural | lowercase }}.csv'; a.click();
+          URL.revokeObjectURL(url);
+        },
+
+        async bulkDelete() {
+          if (!this.selectedIds.length) return;
+          if (!confirm('Delete ' + this.selectedIds.length + ' selected {{ .Entity.Name | lowercase }}?')) return;
+          const base = window.API_BASE_URL || 'http://{{ .Project.Deploy.Domain }}:{{ .Project.Deploy.Port }}/api';
+          const results = await Promise.allSettled(this.selectedIds.map(id => Alpine.store('auth').api(base + '/{{ .Entity.NamePlural | lowercase }}/' + id, { method: 'DELETE' })));
+          let ok = 0, fail = 0;
+          for (const r of results) { if (r.status === 'fulfilled' && r.value && r.value.ok) ok++; else fail++; }
+          this.selectedIds = [];
+          this.alert = { show: true, message: fail ? 'Deleted ' + ok + ', failed ' + fail : 'Deleted ' + ok, type: fail ? 'error' : 'success' };
+          await this.load();
+          setTimeout(() => this.alert.show = false, 3000);
+        },
+
+        async save() {
+          this.saving = true;
+          const p = {};
+          {{- range .Entity.Fields }}
+          {{- if and (not (.IsFeatureField)) (not .IsPrimary) (not .IsHidden) (not (and .IsRelation .IsMany)) }}
+          {{- if .IsBoolean }}p['{{ .Name }}'] = !!this.form.{{ .Name }};
+          {{- else if .IsArray }}p['{{ .Name }}'] = String(this.form.{{ .Name }} || '').split(',').map(s => s.trim()).filter(Boolean).map({{ if or (eq (.ArrayElementType) "int") (eq (.ArrayElementType) "bigint") (eq (.ArrayElementType) "float") (eq (.ArrayElementType) "decimal") }}Number{{ else if eq (.ArrayElementType) "boolean" }}v => v === 'true'{{ else }}s => s{{ end }});
+          {{- else if .IsJson }}try { p['{{ .Name }}'] = this.form.{{ .Name }} ? JSON.parse(this.form.{{ .Name }}) : null; } catch(e) { this.alert = { show: true, message: 'Invalid JSON for {{ humanize .Name }}', type: 'error' }; this.saving = false; return; }
+          {{- else }}p['{{ .Name }}'] = this.form.{{ .Name }} || null;
+          {{- end }}{{- end }}{{- end }}
+          try {
+            const base = window.API_BASE_URL || 'http://{{ .Project.Deploy.Domain }}:{{ .Project.Deploy.Port }}/api';
+            const url = this.editingItem ? base + '/{{ .Entity.NamePlural | lowercase }}/' + (this.editingItem.id || this.editingItem.Id) : base + '/{{ .Entity.NamePlural | lowercase }}';
+            const r = await Alpine.store('auth').api(url, { method: this.editingItem ? 'PUT' : 'POST', body: JSON.stringify(p) });
+            if (r && r.ok) { this.alert = { show: true, message: 'Saved', type: 'success' }; this.close(); await this.load(); setTimeout(() => this.alert.show = false, 3000); }
+            else { const e = r ? await r.json().catch(() => ({})) : {}; this.alert = { show: true, message: e.message || 'Save failed', type: 'error' }; }
+          } catch(e) { this.alert = { show: true, message: e.message, type: 'error' }; }
+          this.saving = false;
+        },
+
+        async remove(item) {
+          if (!confirm('Delete {{ .Entity.Name }} "' + (item.name || item.Name || item.id || item.Id) + '"?')) return;
+          try { const r = await Alpine.store('auth').api((window.API_BASE_URL || 'http://{{ .Project.Deploy.Domain }}:{{ .Project.Deploy.Port }}/api') + '/{{ .Entity.NamePlural | lowercase }}/' + (item.id || item.Id), { method: 'DELETE' });
+            if (r && r.ok) { this.alert = { show: true, message: 'Deleted', type: 'success' }; await this.load(); setTimeout(() => this.alert.show = false, 3000); }
+          } catch(e) { this.alert = { show: true, message: e.message, type: 'error' }; }
+        }
+      }));
+    });
+  </script>
+  <style>
+    .table-scroll-wrap {
+      position: relative;
+    }
+    .table-scroll-inner {
+      overflow-x: auto;
+      scroll-behavior: smooth;
+      scrollbar-width: thin;
+    }
+    .table-scroll-inner::-webkit-scrollbar { height: 6px; }
+    .table-scroll-inner::-webkit-scrollbar-track { background: var(--z-bg-muted); border-radius: 3px; }
+    .table-scroll-inner::-webkit-scrollbar-thumb { background: var(--z-border); border-radius: 3px; }
+    .scroll-arrows {
+      display: flex;
+      align-items: center;
+      gap: 0.375rem;
+      padding: 0.5rem 0;
+    }
+    .scroll-arrow {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 2rem;
+      height: 2rem;
+      border: 1px solid var(--z-border);
+      border-radius: 0.375rem;
+      background: var(--z-bg);
+      color: var(--z-muted-f);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .scroll-arrow:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--z-bg-f) 8%, transparent);
+      color: var(--z-bg-f);
+      border-color: var(--z-primary);
+    }
+    .scroll-arrow:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+    .scroll-info {
+      font-size: 0.75rem;
+      color: var(--z-muted-f);
+      min-width: 5rem;
+      text-align: center;
+    }
+    .table-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--z-border);
+    }
+    .select-all {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      cursor: pointer;
+      font-size: 0.8125rem;
+      color: var(--z-muted-f);
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body class="bg color" style="--bg: var(--z-bg); --color: var(--z-bg-f)">
+  <div x-data style="display: flex; min-height: 100vh;">
+    {{ template "sidebar" (dict "Project" .Project "Active" .Entity.Name) }}
+
+    <main class="main-content" x-data="entityList" x-init="init()">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">{{ .Entity.NamePlural }}</h1>
+          <p class="page-subtitle">Manage {{ .Entity.Name | lowercase }}</p>
+        </div>
+        <button @click="openCreate()" class="z-button btn-primary">Create {{ .Entity.Name }}</button>
+      </div>
+
+      {{ template "alert" . }}
+
+      <template x-if="loading">
+        <div class="data-card" style="padding: 3rem; text-align: center;">
+          <span style="color: var(--z-muted-f);">Loading...</span>
+        </div>
+      </template>
+
+      <template x-if="!loading">
+        <div class="data-card">
+          <div class="table-toolbar">
+            <label class="select-all">
+              <input type="checkbox" :checked="allSelected()" @change="toggleAll()">
+              <span x-text="selectedIds.length ? selectedIds.length + ' selected' : 'Select all'"></span>
+            </label>
+            <div style="display: flex; gap: 0.5rem;">
+              <button @click="exportCsv()" class="z-button z-button-small btn-ghost" :disabled="!items.length" style="display: inline-flex; align-items: center; gap: 0.375rem;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                Export CSV
+              </button>
+              <button @click="bulkDelete()" class="z-button z-button-small z-button-danger" :disabled="!selectedIds.length" style="display: inline-flex; align-items: center; gap: 0.375rem;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                Delete <span x-text="selectedIds.length"></span>
+              </button>
+            </div>
+          </div>
+          <div class="table-scroll-wrap">
+            <div class="scroll-arrows" style="padding: 0.5rem 1rem 0;">
+              <button class="scroll-arrow" @click="scrollLeft()" :disabled="scrollPos <= 0">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+              </button>
+              <span class="scroll-info" x-text="scrollMax > 0 ? Math.round((scrollPos / scrollMax) * 100) + '% scroll' : 'all visible'"></span>
+              <button class="scroll-arrow" @click="scrollRight()" :disabled="scrollPos >= scrollMax">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+              </button>
+            </div>
+            <div x-ref="tableWrap" class="table-scroll-inner" @scroll="updateScroll()">
+              <table class="z-table z-table-hover z-table-divider" style="min-width: 100%;">
+                <thead>
+                  <tr>
+                    <th class="z-table-shrink"><input type="checkbox" :checked="allSelected()" @change="toggleAll()" style="cursor: pointer;"></th>
+                    {{- range .Entity.Fields }}
+                    {{- if and (not (.IsFeatureField)) (not .IsPrimary) (not .IsHidden) (not (and .IsRelation .IsMany)) }}
+                    {{- if .IsRelation }}
+                    <th>{{ .NavigationName }}</th>
+                    {{- else }}
+                    <th>{{ humanize .Name }}</th>
+                    {{- end }}
+                    {{- end }}{{- end }}
+                    {{- if .Entity.HasAudit }}<th>Created</th><th>Updated</th>{{- end }}
+                    <th class="z-table-shrink" style="text-align: right; position: sticky; right: 0; background: var(--z-bg); z-index: 1;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-if="items.length === 0">
+                    <tr><td colspan="99" class="text-center text-muted" style="padding: 3rem;">No records found</td></tr>
+                  </template>
+                  <template x-for="item in items" :key="item.id || item.Id">
+                    <tr>
+                      <td class="z-table-shrink"><input type="checkbox" :checked="isSelected(item)" @change="toggleSelect(item)" style="cursor: pointer;"></td>
+                      {{- range .Entity.Fields }}
+                      {{- if and (not (.IsFeatureField)) (not .IsPrimary) (not .IsHidden) (not (and .IsRelation .IsMany)) }}
+                      {{- if .IsRelation }}
+                      <td x-text="item.{{ .Name }}Name || item.{{ .Name }}"></td>
+                      {{- else if .IsBoolean }}
+                      <td><span x-show="item.{{ .Name }}" class="z-label z-label-success">Yes</span><span x-show="!item.{{ .Name }}" class="z-label">No</span></td>
+                      {{- else if .IsArray }}
+                      <td x-text="Array.isArray(item.{{ .Name }}) ? item.{{ .Name }}.join(', ') : (item.{{ .Name }} ?? '')"></td>
+                      {{- else if .IsJson }}
+                      <td x-text="item.{{ .Name }} ? JSON.stringify(item.{{ .Name }}) : ''" style="max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></td>
+                      {{- else }}
+                      <td x-text="item.{{ .Name }}"></td>
+                      {{- end }}
+                      {{- end }}{{- end }}
+                      {{- if .Entity.HasAudit }}<td x-text="item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '\u2014'"></td><td x-text="item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : '\u2014'"></td>{{- end }}
+                      <td style="text-align: right; position: sticky; right: 0; background: var(--z-bg); z-index: 1;">
+                        <div style="display: flex; gap: 0.375rem; justify-content: flex-end;">
+                          <button @click="openView(item)" class="z-button z-button-small btn-ghost">View</button>
+                          <button @click="openEdit(item)" class="z-button z-button-small btn-ghost">Edit</button>
+                          <button @click="remove(item)" class="z-button z-button-small z-button-danger">Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <div class="z-modal" id="modal" data-z-modal>
+        <div class="z-modal-dialog z-modal-body" style="border-radius: 1rem;">
+          <div class="z-modal-header" style="padding: 1.5rem 1.5rem 0;">
+            <h2 class="z-modal-title" style="font-size: 1.125rem; font-weight: 650;" x-text="editingItem ? 'Edit {{ .Entity.Name }}' : 'Create {{ .Entity.Name }}'"></h2>
+            <button class="z-modal-close" type="button" @click="close()"></button>
+          </div>
+          <div class="z-modal-body" style="padding: 1.5rem;">
+            <form @submit.prevent="save()" class="z-form-stacked">
+              {{ template "formFields" . }}
+              <div style="display: flex; gap: 0.625rem; justify-content: flex-end; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--z-border);">
+                <button type="button" class="z-button btn-ghost" @click="close()">Cancel</button>
+                <button type="submit" class="z-button btn-primary" :disabled="saving">
+                  <span x-show="saving">Saving...</span>
+                  <span x-show="!saving" x-text="editingItem ? 'Update' : 'Create'"></span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <div class="z-modal" id="viewModal" data-z-modal>
+        <div class="z-modal-dialog z-modal-body" style="border-radius: 1rem; max-width: 760px;">
+          <div class="z-modal-header" style="padding: 1.5rem 1.5rem 0;">
+            <h2 class="z-modal-title" style="font-size: 1.125rem; font-weight: 650;" x-text="viewItem ? (viewItem.name || viewItem.Name || viewItem.email || viewItem.title || viewItem.Title || viewItem.id || viewItem.Id) : ''"></h2>
+            <button class="z-modal-close" type="button" @click="closeView()"></button>
+          </div>
+          <div class="z-modal-body" style="padding: 1.5rem;">
+            <template x-if="viewItem">
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem 2rem;">
+                <template x-for="def in viewDefs()" :key="def.label">
+                  <div>
+                    <div class="text-small text-muted" style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.25rem;" x-text="def.label"></div>
+                    <div x-html="def.html(viewItem)"></div>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+  {{ template "scripts" }}
+</body>
+</html>
