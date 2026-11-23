@@ -1,0 +1,95 @@
+name: csharp-efcore
+description: EF Core persistence layer for DomainCraft C#.
+version: "1.0.0"
+layer: persistence
+extends: csharp-domain
+registry_url: "https://api.nuget.org/v3-flatcontainer/{id}/index.json"
+registry_packages:
+  ef_core: Microsoft.EntityFrameworkCore
+  ef_core_design: Microsoft.EntityFrameworkCore.Design
+  ef_core_relational: Microsoft.EntityFrameworkCore.Relational
+  npgsql_ef: Npgsql.EntityFrameworkCore.PostgreSQL
+  logging_abstractions: Microsoft.Extensions.Logging.Abstractions
+  bcrypt: BCrypt.Net-Next
+  dapr: Dapr.AspNetCore
+migrations:
+  enabled: true
+  commands:
+    - "dotnet ef migrations add InitialCreate --project src/Infrastructure --startup-project src/WebApi --output-dir Persistence/Migrations"
+    - "dotnet ef database update --project src/Infrastructure --startup-project src/WebApi"
+templates:
+  - for: project
+    source: templates/dbcontext.cs.tmpl
+    target: "src/Infrastructure/Persistence/DomainDbContext.g.cs"
+  - for: entity
+    source: templates/entity-configuration.cs.tmpl
+    target: "src/Infrastructure/Persistence/Configurations/{{ .Entity.Name }}Configuration.g.cs"
+  - for: project
+    source: templates/seed-seeder.cs.tmpl
+    target: "src/Infrastructure/Persistence/Seeders/DomainSeeder.g.cs"
+    when: hasSeed
+  - for: entity
+    source: templates/repository-impl.cs.tmpl
+    target: "src/Infrastructure/Repositories/{{ .Entity.Name }}Repository.g.cs"
+  - for: project
+    source: templates/infrastructure-di.cs.tmpl
+    target: "src/Infrastructure/DependencyInjection.g.cs"
+  - for: project
+    source: templates/schema-renames.cs.tmpl
+    target: "src/Infrastructure/Persistence/Migrations/SchemaRenames.g.cs"
+    when: hasMigration
+  - for: project
+    source: templates/BcryptPasswordHasher.cs.tmpl
+    target: "src/Infrastructure/Security/BcryptPasswordHasher.g.cs"
+    when: hasAuth
+  - for: project
+    source: templates/InMemoryCacheService.cs.tmpl
+    target: "src/Infrastructure/Caching/InMemoryCacheService.g.cs"
+    when: notHasAddon:dapr
+  - for: project
+    source: templates/DaprCacheService.cs.tmpl
+    target: "src/Infrastructure/Caching/DaprCacheService.g.cs"
+    when: hasAddon:dapr
+  - for: project
+    source: templates/InMemoryEmailService.cs.tmpl
+    target: "src/Infrastructure/Email/InMemoryEmailService.g.cs"
+    when: notHasAddon:dapr
+  - for: project
+    source: templates/DaprEmailService.cs.tmpl
+    target: "src/Infrastructure/Email/DaprEmailService.g.cs"
+    when: hasAddon:dapr
+  - for: project
+    source: templates/LocalFileStorageService.cs.tmpl
+    target: "src/Infrastructure/Storage/LocalFileStorageService.g.cs"
+    when: notHasAddon:dapr
+  - for: project
+    source: templates/DaprStorageService.cs.tmpl
+    target: "src/Infrastructure/Storage/DaprStorageService.g.cs"
+    when: hasAddon:dapr
+  - for: project
+    source: templates/InMemoryEventPublisher.cs.tmpl
+    target: "src/Infrastructure/Events/InMemoryEventPublisher.g.cs"
+    when: notHasAddon:dapr
+  - for: project
+    source: templates/DaprEventPublisher.cs.tmpl
+    target: "src/Infrastructure/Events/DaprEventPublisher.g.cs"
+    when: hasAddon:dapr
+  - for: project
+    source: templates/dapr-components/pubsub.yaml.tmpl
+    target: "dapr/components/pubsub.yaml"
+    when: hasAddon:dapr
+  - for: project
+    source: templates/dapr-components/statestore.yaml.tmpl
+    target: "dapr/components/statestore.yaml"
+    when: hasAddon:dapr
+  - for: project
+    source: templates/dapr-components/email.yaml.tmpl
+    target: "dapr/components/email.yaml"
+    when: hasAddon:dapr
+  - for: project
+    source: templates/dapr-components/storage.yaml.tmpl
+    target: "dapr/components/storage.yaml"
+    when: hasAddon:dapr
+  - for: project
+    source: templates/infrastructure.csproj.tmpl
+    target: "src/Infrastructure/Infrastructure.csproj"

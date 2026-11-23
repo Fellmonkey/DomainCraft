@@ -1,0 +1,30 @@
+<!-- DomainCraft - GENERATED: DO NOT EDIT. Regenerated on every `domaincraft generate`. Make model changes in domain.yaml. -->
+
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>{{ or .Project.Platform "net10.0" }}</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>{{ .Project.Name | pascalcase }}.Infrastructure</RootNamespace>
+    <AssemblyName>{{ .Project.Name | pascalcase }}.Infrastructure</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Domain/Domain.csproj" />
+    <ProjectReference Include="../Application/Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="{{ index .Packages "ef_core" }}" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="{{ index .Packages "ef_core_design" }}" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="{{ index .Packages "ef_core_relational" }}" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="{{ index .Packages "npgsql_ef" }}" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="{{ index .Packages "logging_abstractions" }}" />
+{{- if .Project.HasAddon "dapr" }}
+    <PackageReference Include="Dapr.Client" Version="{{ index .Packages "dapr" }}" />
+{{- end }}
+{{- if .Project.HasAuth }}
+    <PackageReference Include="BCrypt.Net-Next" Version="{{ index .Packages "bcrypt" }}" />
+{{- end }}
+  </ItemGroup>
+</Project>
