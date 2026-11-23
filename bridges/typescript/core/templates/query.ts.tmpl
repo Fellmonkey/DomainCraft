@@ -1,0 +1,172 @@
+{{ template "banner" . }}
+{{- $proj := .Project }}
+
+// Typed query DSL compiled from the core's filter grammar (spec/query.md).
+// The operator vocabulary below is ITERATED from the core
+// (`IRProject.AllFilterOperators`) so adding an operator to the grammar
+// updates this client on the next generate instead of drifting.
+//
+// The `filter` object's keys are restricted to the entity's filterable surface
+// (scalar fields, one-hop to-one relation paths and JSON roots), and each key's
+// allowed operators are restricted by the field's type — so an invalid filter
+// is a compile-time error, not a runtime 400.
+
+export type FilterOperator =
+{{- range $op := $proj.AllFilterOperators }}
+  | "{{ $op }}"
+{{- end }};
+
+interface Eq<V> { eq?: V }
+interface Ne<V> { ne?: V }
+interface In<V> { in?: V[] }
+interface Cmp { gt?: number; gte?: number; lt?: number; lte?: number }
+
+// A condition is either a bare value (shorthand for `eq`) or an object whose
+// keys are operators. `in` takes an array; everything else takes a scalar.
+export type TextCondition = string | (Eq<string> & Ne<string> & In<string> & {
+  contains?: string; startsWith?: string; endsWith?: string;
+});
+export type NumberCondition = number | (Eq<number> & Ne<number> & In<number> & Cmp);
+export type DateCondition = string | (Eq<string> & Ne<string> & In<string> & {
+  gt?: string; gte?: string; lt?: string; lte?: string;
+});
+export type BoolCondition = boolean | (Eq<boolean> & Ne<boolean>);
+export type IdCondition = string | (Eq<string> & Ne<string> & In<string>);
+// JSON leaves are dynamic: values keep their string form on the wire. The two
+// JSON namespaces mirror the core's operator rules exactly:
+//   `json`  — opaque document, TEXT-semantics operators only;
+//   `jsonb` — typed document, adds ordered operators (gt/gte/lt/lte), which
+//             carry numeric semantics (the server casts the extracted value).
+export type JsonCondition = string | (Eq<string> & Ne<string> & In<string> & {
+  contains?: string; startsWith?: string; endsWith?: string;
+});
+export type JsonbCondition = string | (Eq<string> & Ne<string> & In<string> & Cmp & {
+  contains?: string; startsWith?: string; endsWith?: string;
+});
+
+export interface Query<F, S extends string = string, I extends string = string> {
+  filter?: F;
+  search?: string;
+  sort?: S[];
+  page?: number;
+  pageSize?: number;
+  /** Alias for pageSize; when both are given, `limit` wins (spec/query.md). */
+  limit?: number;
+  /** Keyset cursor — only honored by entities with an int/bigint primary key. */
+  cursor?: string | number;
+  /** Restricts which [many] collections are eager-loaded. */
+  include?: I[];
+}
+
+// ---- Serialization: typed object -> path:op:value grammar ----
+
+function encodeTerm(path: string, op: string, value: unknown): string {
+  if (Array.isArray(value)) {
+    return `${path}:${op}:(${value.map((v) => String(v)).join(",")})`;
+  }
+  return `${path}:${op}:${String(value)}`;
+}
+
+function encodeCondition(path: string, cond: unknown): string[] {
+  if (cond === null || cond === undefined) return [];
+  if (typeof cond !== "object") {
+    return [encodeTerm(path, "eq", cond)];
+  }
+  const terms: string[] = [];
+  for (const [op, value] of Object.entries(cond)) {
+    if (value === undefined || value === null) continue;
+    terms.push(encodeTerm(path, op, value));
+  }
+  return terms;
+}
+
+// NOTE: the grammar forbids `:,|()` inside bare values. Free text containing
+// those characters belongs to the separate `search` parameter, not `filter`.
+export function encodeFilter(filter: object | undefined): string | undefined {
+  if (!filter) return undefined;
+  const terms: string[] = [];
+  for (const [path, cond] of Object.entries(filter)) {
+    // Both JSON namespaces flatten into plain `path:op:value` terms — the
+    // namespace exists only to keep open-ended leaf keys type-safe.
+    if (path === "json" || path === "jsonb") {
+      const json = cond as Record<string, unknown>;
+      for (const [jsonPath, jsonCond] of Object.entries(json)) {
+        terms.push(...encodeCondition(jsonPath, jsonCond));
+      }
+      continue;
+    }
+    terms.push(...encodeCondition(path, cond));
+  }
+  return terms.length ? terms.join(",") : undefined;
+}
+
+function encodeSort(sort: string[] | undefined): string | undefined {
+  return sort && sort.length ? sort.join(",") : undefined;
+}
+
+export function buildQueryParams<F, S extends string, I extends string>(q: Query<F, S, I>): URLSearchParams {
+  const params = new URLSearchParams();
+  const filter = encodeFilter(q.filter as object | undefined);
+  if (filter !== undefined) params.set("filter", filter);
+  if (q.search !== undefined) params.set("search", q.search);
+  const sort = encodeSort(q.sort as string[] | undefined);
+  if (sort !== undefined) params.set("sort", sort);
+  if (q.page !== undefined) params.set("page", String(q.page));
+  const size = q.limit ?? q.pageSize;
+  if (size !== undefined) params.set("pageSize", String(size));
+  if (q.cursor !== undefined) params.set("cursor", String(q.cursor));
+  if (q.include && q.include.length) params.set("include", q.include.join(","));
+  return params;
+}
+
+// ---- Per-entity filter / sort / search / include types ----
+{{ range $e := .Project.Entities }}
+{{- $hasJson := false }}{{ range $e.Fields }}{{ if and .IsJson (eq .DatabaseType "json") }}{{ $hasJson = true }}{{ end }}{{ end }}
+{{- $hasJsonb := false }}{{ range $e.Fields }}{{ if and .IsJson (eq .DatabaseType "jsonb") }}{{ $hasJsonb = true }}{{ end }}{{ end }}
+export interface {{ $e.Name }}Filter {
+{{- range $e.FilterableFields }}
+  {{ camelcase .Name }}?: {{ template "conditionType" (dict "Field" .) }};
+{{- end }}
+{{- range $rel := $e.RelationsOut }}{{ if not $rel.IsMany }}{{ if $rel.TargetEntity }}{{ range $tf := $rel.TargetEntity.FilterableFields }}
+  "{{ camelcase $rel.NavigationName }}.{{ camelcase $tf.Name }}"?: {{ template "conditionType" (dict "Field" $tf) }};
+{{- end }}{{ end }}{{ end }}{{ end }}
+{{- if $hasJson }}
+  /** Plain-JSON roots (open-ended keys; TEXT-semantics operators only): e.g. { json: { "shippingAddress.city": { eq: "Berlin" } } }. */
+  json?: Record<string, JsonCondition>;
+{{- end }}
+{{- if $hasJsonb }}
+  /** JSONB roots (open-ended keys; ordered operators carry numeric semantics): e.g. { jsonb: { "metadata.score": { gte: 10 } } }. */
+  jsonb?: Record<string, JsonbCondition>;
+{{- end }}
+}
+
+{{- $sortKeys := list -}}
+{{- range $f := $e.SortableFields -}}
+{{- $sortKeys = append $sortKeys (printf "%q" (camelcase $f.Name)) -}}
+{{- $sortKeys = append $sortKeys (printf "%q" (printf "-%s" (camelcase $f.Name))) -}}
+{{- end -}}
+{{- if $sortKeys }}
+export type {{ $e.Name }}SortKey = {{ join " | " $sortKeys }};
+{{- else }}
+export type {{ $e.Name }}SortKey = string;
+{{- end }}
+
+{{- $incKeys := list -}}
+{{- range $rel := $e.RelationsOut }}{{ if $rel.IsMany }}{{ $incKeys = append $incKeys (printf "%q" (camelcase $rel.FieldName)) }}{{ end }}{{ end -}}
+{{- if $incKeys }}
+export type {{ $e.Name }}Include = {{ join " | " $incKeys }};
+{{- else }}
+export type {{ $e.Name }}Include = never;
+{{- end }}
+
+{{- /* Searchable surface (fix: surfaced from IRProject.SearchableFields) —
+       lets a UI show "searches over title, description" without guessing. */ -}}
+{{- $searchKeys := list -}}
+{{- range $f := $e.SearchableFields -}}{{- $searchKeys = append $searchKeys (printf "%q" (camelcase $f.Name)) -}}{{- end }}
+/** Free-text `search` runs case-insensitive `contains` over exactly these fields. */
+export const {{ camelcase $e.Name }}SearchableKeys = [{{ join ", " $searchKeys }}] as const;
+export type {{ $e.Name }}SearchKey = (typeof {{ camelcase $e.Name }}SearchableKeys)[number];
+
+export type {{ $e.Name }}Query = Query<{{ $e.Name }}Filter, {{ $e.Name }}SortKey, {{ $e.Name }}Include>;
+
+{{ end }}
