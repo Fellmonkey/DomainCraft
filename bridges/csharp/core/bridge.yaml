@@ -1,0 +1,19 @@
+name: csharp-core
+description: C# language core — enum wire values, entity types, query schema, permission matrix. Certified once per language.
+version: "1.0.0"
+layer: core
+helpers: templates/_helpers.cs.tmpl
+templates:
+  - for: entity
+    source: templates/entity.cs.tmpl
+    target: "src/Domain/Entities/{{ .Entity.Name }}.g.cs"
+  - for: project
+    source: templates/enums.cs.tmpl
+    target: "src/Domain/Shared/Enums.g.cs"
+    when: hasEnums
+  - for: project
+    source: templates/PagedResult.cs.tmpl
+    target: "src/Domain/Shared/PagedResult.g.cs"
+  - for: project
+    source: templates/query.cs.tmpl
+    target: "src/Application/Query/Query.g.cs"

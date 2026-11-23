@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <!-- Generated sources carry `?` annotations without a #nullable directive;
+         that is by design (the bridge targets nullable-disabled consumers). -->
+    <NoWarn>$(NoWarn);CS8669</NoWarn>
+  </PropertyGroup>
+
+  <!--
+    The generated sources are compiled INTO this test project by the SDK's
+    default compile glob (they live under ./generated). The bridge ships no
+    csproj for the thin core (csproj live in csharp-domain). Compiling the
+    generated files here is itself part of the contract: a template that emits
+    invalid C# fails `dotnet build` immediately.
+  -->
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>
