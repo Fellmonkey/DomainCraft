@@ -156,24 +156,13 @@ WASM_OUTPUT ?= bin/validate.wasm
 WASM_GUI_DIR ?= ../domaincraft-studio/public/wasm
 WASM_LDFLAGS := -X main.version=$(VERSION)
 
-ifeq ($(OS),Windows_NT)
-build-wasm:
-	@echo "Building WASM validator ($(VERSION))..."
-	@cmd /c "set GOOS=js&& set GOARCH=wasm&& go build "-ldflags=$(WASM_LDFLAGS)" -o $(WASM_OUTPUT) ./cmd/wasm-validator/"
-	@echo "Built $(WASM_OUTPUT)"
-build-wasm-gui: build-wasm
-	@echo "Copying WASM to GUI public directory..."
-	@if not exist "$(subst /,\,$(WASM_GUI_DIR))" mkdir "$(subst /,\,$(WASM_GUI_DIR))"
-	@copy "$(subst /,\,$(WASM_OUTPUT))" "$(subst /,\,$(WASM_GUI_DIR))\validate.wasm" >nul
-	@echo "Copied to $(WASM_GUI_DIR)/validate.wasm"
-else
 build-wasm:
 	@echo "Building WASM validator ($(VERSION))..."
 	@GOOS=js GOARCH=wasm go build -ldflags "$(WASM_LDFLAGS)" -o $(WASM_OUTPUT) ./cmd/wasm-validator/
 	@echo "Built $(WASM_OUTPUT)"
+
 build-wasm-gui: build-wasm
 	@echo "Copying WASM to GUI public directory..."
 	@mkdir -p $(WASM_GUI_DIR)
 	@cp $(WASM_OUTPUT) $(WASM_GUI_DIR)/validate.wasm
 	@echo "Copied to $(WASM_GUI_DIR)/validate.wasm"
-endif

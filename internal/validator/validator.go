@@ -505,7 +505,7 @@ func (v *Validator) validateEntity(entityName string, entity *parser.ParsedEntit
 
 		// DB column collision.
 		col := field.DatabaseColumnName
-		if prev, exists := columnNames[col]; exists {
+		if prev, exists := columnNames[col]; exists && prev != fieldName {
 			errs = append(errs, ValidationError{
 				Entity:  entityName,
 				Field:   fieldName,
@@ -518,7 +518,7 @@ func (v *Validator) validateEntity(entityName string, entity *parser.ParsedEntit
 		// navigation property would produce duplicate properties in generated code.
 		if field.IsRelation() {
 			nav := field.NavigationName()
-			if prev, exists := navigationNames[nav]; exists {
+			if prev, exists := navigationNames[nav]; exists && prev != fieldName {
 				errs = append(errs, ValidationError{
 					Entity:  entityName,
 					Field:   fieldName,

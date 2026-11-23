@@ -190,6 +190,9 @@ func (e *RawEntity) UnmarshalYAML(value *yaml.Node) error {
 			e.FieldOrder = make([]string, 0, len(valNode.Content)/2)
 			for j := 0; j < len(valNode.Content)-1; j += 2 {
 				fKey := valNode.Content[j].Value
+				if _, dup := e.Fields[fKey]; dup {
+					return fmt.Errorf("duplicate field %q in entity fields", fKey)
+				}
 				var fVal string
 				if err := valNode.Content[j+1].Decode(&fVal); err != nil {
 					return err

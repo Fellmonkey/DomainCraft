@@ -2148,3 +2148,31 @@ func TestValidateDefaultUuidInvalid(t *testing.T) {
 		t.Fatalf("expected warning about invalid uuid default, got %v", errs)
 	}
 }
+
+// TestValidateColumnSelfCollisionGuard verifies that a field appearing twice
+// in FieldOrder (e.g. a duplicate slipped past the parser) does not produce a
+// spurious "collides with field '<itself>'" error. Self-collisions are silently
+// ignored; only genuine collisions between two different fields are reported.
+func TestValidateColumnSelfCollisionGuard(t *testing.T) {
+	schema := &parser.ParsedSchema{
+		Project:     parser.ProjectConfig{Name: "Test"},
+		EntityOrder: []string{"User"},
+		Entities: map[string]*parser.ParsedEntity{
+			"User": {
+				Name:       "User",
+				FieldOrder: []string{"id", "isSystemTag", "isSystemTag"}, // duplicate entry
+				Fields: map[string]*parser.ParsedField{
+					"id":          mustParsedField(t, "id", "uuid [primary]"),
+					"isSystemTag": mustParsedField(t, "isSystemTag", "boolean [default:false]"),
+				},
+			},
+		},
+	}
+
+	errs := New(schema).Validate()
+	for _, e := range errs {
+		if strings.Contains(e.Message, "collides with field 'isSystemTag'") {
+			t.Fatalf("unexpected self-collision error: %s", e.Message)
+		}
+	}
+}

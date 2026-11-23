@@ -31,5 +31,6 @@ go.work.sum
 # .idea/
 # .vscode/
 /Generated
-/bin
+*/bin
 /.gocache
+/generated-kitchen-sink

@@ -660,3 +660,59 @@ entities:
 		t.Errorf("OldName = %q, want Product", entity.OldName)
 	}
 }
+
+func TestParseDuplicateField(t *testing.T) {
+	yamlData := []byte(`
+project:
+  name: Test
+entities:
+  User:
+    features: [audit]
+    fields:
+      id: uuid [primary]
+      email: string [required, unique]
+      isSystemTag: boolean [default:false]
+      isSystemTag: boolean [default:true]
+`)
+	_, err := ParseYAML(yamlData)
+	if err == nil {
+		t.Fatal("expected error for duplicate field 'isSystemTag'")
+	}
+	if !strings.Contains(err.Error(), `duplicate field "isSystemTag"`) {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestParseDuplicateEntity verifies that a duplicate entity key in the
+// `entities` mapping is rejected by the YAML decoder (gopkg.in/yaml.v3 reports
+// "mapping key ... already defined") rather than silently overwriting the
+// earlier definition. Unlike field keys (decoded by the custom RawEntity
+// UnmarshalYAML, which used to drop duplicates into FieldOrder), entity keys
+// are decoded into a plain map[string]RawEntity and the library enforces
+// uniqueness itself — this test pins that contract so a future refactor of
+// RawSchema decoding cannot silently reintroduce the overwrite-on-duplicate
+// behaviour.
+func TestParseDuplicateEntity(t *testing.T) {
+	yamlData := []byte(`
+project:
+  name: Test
+entities:
+  User:
+    features: [audit]
+    fields:
+      id: uuid [primary]
+      email: string [required, unique]
+      password: string [required, hidden]
+  User:
+    fields:
+      id: int [primary]
+      name: string [required]
+`)
+	_, err := ParseYAML(yamlData)
+	if err == nil {
+		t.Fatal("expected error for duplicate entity 'User'")
+	}
+	if !strings.Contains(err.Error(), `"User" already defined`) {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
