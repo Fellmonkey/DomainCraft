@@ -95,6 +95,48 @@ func TestResolveExtendsRefPrefersLocalCheckout(t *testing.T) {
 	}
 }
 
+func TestResolveExtendsRefPrefersMonorepoLayout(t *testing.T) {
+	root := t.TempDir()
+	resolver := bridge.NewResolver(bridge.Default())
+
+	// Monorepo layout: <root>/bridges/csharp/core for the csharp-core bridge.
+	mp := writeBridgeDir(t, filepath.Join(root, "bridges", "csharp", "core"), "")
+
+	// Distractor sibling checkout with the legacy repo name — must NOT win now.
+	writeBridgeDir(t, filepath.Join(root, "domaincraft-bridge-csharp-core"), "")
+
+	got, err := resolveExtendsRef("csharp-core", filepath.Join(root, "adapter"), resolver)
+	if err != nil {
+		t.Fatalf("resolveExtendsRef: %v", err)
+	}
+	if abs, _ := filepath.Abs(got); abs != mp {
+		t.Errorf("resolved = %q, want the monorepo bridge %q", got, mp)
+	}
+
+	// A bridge with a multi-segment path: csharp-efcore → csharp/persistence/efcore.
+	ef := writeBridgeDir(t, filepath.Join(root, "bridges", "csharp", "persistence", "efcore"), "")
+	got, err = resolveExtendsRef("csharp-efcore", filepath.Join(root, "adapter"), resolver)
+	if err != nil {
+		t.Fatalf("resolveExtendsRef(efcore): %v", err)
+	}
+	if abs, _ := filepath.Abs(got); abs != ef {
+		t.Errorf("resolved = %q, want %q", got, ef)
+	}
+}
+
+func TestResolveExtendsRefFallsBackWhenNoMonorepo(t *testing.T) {
+	root := t.TempDir()
+	resolver := bridge.NewResolver(bridge.Default())
+	sibling := writeBridgeDir(t, filepath.Join(root, "domaincraft-bridge-csharp"), "")
+	got, err := resolveExtendsRef("csharp-restful", filepath.Join(root, "adapter"), resolver)
+	if err != nil {
+		t.Fatalf("resolveExtendsRef: %v", err)
+	}
+	if abs, _ := filepath.Abs(got); abs != sibling {
+		t.Errorf("resolved = %q, want legacy sibling %q", got, sibling)
+	}
+}
+
 func TestVersionDelta(t *testing.T) {
 	cases := []struct {
 		name string

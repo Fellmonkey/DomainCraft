@@ -1,6 +1,8 @@
 package main
 
 import (
+	"cmp"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/DomainCraft/DomainCraft/internal/bridge"
+	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 	"github.com/DomainCraft/DomainCraft/internal/interactive"
 	"github.com/DomainCraft/DomainCraft/internal/ir"
 	"github.com/DomainCraft/DomainCraft/internal/parser"
@@ -24,6 +27,7 @@ import (
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -296,6 +300,11 @@ func newGenerateCmd() *cobra.Command {
 			if bridgeName != "" {
 				bridgeID = bridgeName
 			}
+			// Record the resolved bridge chain next to domain.yaml (Phase 0.4).
+			// Best-effort: a lock-write failure must never abort generation.
+			if err := writeDomainLock(domainFile, append([]string{bridgePath}, basePaths...)); err != nil {
+				log.Warn("could not write domaincraft.lock.json: %v", err)
+			}
 			if err := snapshot.Save(snapPath, snapshot.New(bridgeID, irProject, manifest)); err != nil {
 				return fmt.Errorf("save schema snapshot: %w", err)
 			}
@@ -354,7 +363,11 @@ func newBridgesCmd() *cobra.Command {
 						}
 					}
 				}
-				fmt.Fprintf(out, "%-20s %-10s %-26s %s\n", e.ID, e.Language, status, e.Description)
+				desc := e.Description
+				if e.Deprecated {
+					desc += " (deprecated)"
+				}
+				fmt.Fprintf(out, "%-20s %-10s %-26s %s\n", e.ID, e.Language, status, desc)
 			}
 
 			if checkUpdates {
@@ -379,6 +392,15 @@ func resolveBridgeInteractive(log *logger.Logger) (string, string, error) {
 	resolver := bridge.NewResolver(bridge.Default()).WithEnsureOptions(bridgeEnsureOptions(log))
 
 	if bridgePath != "" {
+		// Monorepo-first: an official bridge ID resolves to the local
+		// <root>/bridges/<path> copy when it exists (same order as `extends`).
+		if entry := bridge.Default().ByID(bridgePath); entry != nil && entry.Path != "" {
+			if wd, err := os.Getwd(); err == nil {
+				if p := findMonorepoBridge(wd, entry.Path); p != "" {
+					return p, "", nil
+				}
+			}
+		}
 		resolved, err := resolver.Resolve(bridgePath)
 		return resolved, "", err
 	}
@@ -585,13 +607,120 @@ func resolveChainWithReplacements(entryDir string, reps []replaceEntry, log *log
 	return newEntry, tail, nil
 }
 
-// resolveExtendsRef resolves one `extends` reference. For a registry ID it first
-// checks a local checkout next to the extending bridge (monorepo sibling) or
-// inside its directory (a CI checkout), so development works before the base
-// bridge is published; otherwise it falls through to the normal path/ID/
-// owner-repo resolution (cache + clone).
+// --- domaincraft.lock.json (Phase 0.4) ---
+//
+// The lock records the exact bridge chain that rendered a project, next to the
+// domain.yaml (not inside the output dir, not in the snapshot). It holds no
+// timestamps, so it is diff-friendly and reproducible. It answers "which
+// bridges rendered this project" — the snapshot answers "what did the model
+// look like".
+
+// lockBridge is one entry in domaincraft.lock.json.
+type lockBridge struct {
+	ID              string `json:"id"`
+	Path            string `json:"path,omitempty"`   // monorepo path under bridges/ when resolved locally from the monorepo
+	Source          string `json:"source,omitempty"` // GitHub owner/repo when resolved from the registry/cache
+	Version         string `json:"version,omitempty"`
+	ContractVersion int    `json:"contract_version"`
+}
+
+// domainLock is the on-disk shape of domaincraft.lock.json.
+type domainLock struct {
+	Bridges []lockBridge `json:"bridges"`
+}
+
+// writeDomainLock records the resolved bridge chain (top-first: entry, then its
+// bases) next to domainPath. It is best-effort: a failure to write the lock
+// must never break generation.
+func writeDomainLock(domainPath string, dirs []string) error {
+	reg := bridge.Default()
+	var out []lockBridge
+	seen := make(map[string]bool)
+	for _, dir := range dirs {
+		id, version, contractVersion, err := bridgeMetadata(dir)
+		if err != nil {
+			return err
+		}
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		b := lockBridge{ID: id, Version: version, ContractVersion: contractVersion}
+		if entry := reg.ByID(id); entry != nil {
+			if p := monorepoRelPath(dir, entry.Path); p != "" {
+				b.Path = p
+			} else if entry.GitHub != "" {
+				b.Source = entry.GitHub
+			}
+		}
+		out = append(out, b)
+	}
+	slices.SortFunc(out, func(a, b lockBridge) int { return cmp.Compare(a.ID, b.ID) })
+
+	data, err := json.MarshalIndent(domainLock{Bridges: out}, "", "  ")
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(domainPath)
+	if dir == "" {
+		dir = "."
+	}
+	return fsutil.AtomicWrite(filepath.Join(dir, "domaincraft.lock.json"), data)
+}
+
+// bridgeMetadata reads the identifying fields out of a bridge directory's
+// bridge.yaml for the lock file.
+func bridgeMetadata(dir string) (id, version string, contractVersion int, err error) {
+	data, err := os.ReadFile(filepath.Join(dir, "bridge.yaml"))
+	if err != nil {
+		return "", "", 0, err
+	}
+	var cfg struct {
+		Name            string `yaml:"name"`
+		Version         string `yaml:"version"`
+		ContractVersion int    `yaml:"contract_version"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return "", "", 0, err
+	}
+	if cfg.ContractVersion == 0 {
+		cfg.ContractVersion = 1
+	}
+	return cfg.Name, cfg.Version, cfg.ContractVersion, nil
+}
+
+// monorepoRelPath reports whether dir is the monorepo location for an official
+// bridge (i.e. it ends with `bridges/<entryPath>`) and returns that relative
+// path, or "" when the bridge was resolved from elsewhere.
+func monorepoRelPath(dir, entryPath string) string {
+	if entryPath == "" {
+		return ""
+	}
+	suffix := filepath.Join("bridges", filepath.FromSlash(entryPath))
+	if strings.HasSuffix(filepath.Clean(dir), suffix) {
+		return filepath.ToSlash(suffix)
+	}
+	return ""
+}
+
+// resolveExtendsRef resolves one `extends` reference. It shares the loader
+// order with the top-level `--bridge` entry (see resolveBridgeInteractive),
+// from most to least preferred:
+//
+// First, the monorepo layout: walk up from the extending bridge looking for
+// <root>/bridges/<entry.Path>. The ID→path mapping is registry data, never
+// inferred from the directory name.
+//
+// Second, the legacy layouts: a repo-named checkout next to the extending
+// bridge (monorepo sibling) or inside its directory (a CI checkout), so
+// development works before the base bridge is published.
+//
+// Finally, the normal path/ID/owner-repo resolution (cache + clone).
 func resolveExtendsRef(ref, fromDir string, resolver *bridge.Resolver) (string, error) {
 	if entry := bridge.Default().ByID(ref); entry != nil {
+		if p := findMonorepoBridge(fromDir, entry.Path); p != "" {
+			return p, nil
+		}
 		repo := filepath.Base(entry.GitHub)
 		for _, candidate := range []string{
 			filepath.Join(filepath.Dir(fromDir), repo), // sibling of the adapter (monorepo)
@@ -603,6 +732,29 @@ func resolveExtendsRef(ref, fromDir string, resolver *bridge.Resolver) (string, 
 		}
 	}
 	return resolver.Resolve(ref)
+}
+
+// findMonorepoBridge walks up from dir looking for <root>/bridges/<relPath>
+// containing a bridge.yaml. It returns the bridge directory, or "" when relPath
+// is empty or no such bridge exists anywhere up the tree. The walk stops at the
+// filesystem root; the upward search is safe because an unrelated
+// `<root>/bridges` higher up is the explicit, documented monorepo convention.
+func findMonorepoBridge(dir, relPath string) string {
+	if relPath == "" {
+		return ""
+	}
+	cur := dir
+	for {
+		candidate := filepath.Join(cur, "bridges", filepath.FromSlash(relPath))
+		if info, err := os.Stat(filepath.Join(candidate, "bridge.yaml")); err == nil && !info.IsDir() {
+			return candidate
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return ""
+		}
+		cur = parent
+	}
 }
 
 // bridgeEnsureOptions builds the bridge caching/update policy from the CLI

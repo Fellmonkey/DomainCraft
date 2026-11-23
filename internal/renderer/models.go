@@ -8,6 +8,8 @@ import (
 type BridgeConfig struct {
 	Name             string            `yaml:"name"`
 	Description      string            `yaml:"description"`
+	Version          string            `yaml:"version"`          // Bridge semantic version (e.g. "1.0.0"). Parsed and recorded in domaincraft.lock.json.
+	ContractVersion  int               `yaml:"contract_version"` // Bridge contract version; 0 = absent → treated as 1.
 	OutputDir        string            `yaml:"output_dir"`
 	Layer            string            `yaml:"layer"`             // Optional open layer identifier [a-z][a-z0-9_]* (e.g. domain/persistence/transport or core/framework/offline)
 	Extends          string            `yaml:"extends"`           // Optional base bridge (path / registry ID / owner-repo) this bridge composes on top of
