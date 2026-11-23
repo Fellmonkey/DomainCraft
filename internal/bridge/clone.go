@@ -68,6 +68,12 @@ func EnsureBridge(entry RegistryEntry, opts *EnsureOptions) (string, error) {
 
 	cacheDir := CachePath(entry)
 	if !IsCached(entry) {
+		// Offline fallback: materialize the embedded copy before cloning.
+		if ok, err := TryMaterializeEmbedded(entry, opts); err != nil {
+			return "", err
+		} else if ok {
+			return cacheDir, nil
+		}
 		if err := CloneBridge(entry); err != nil {
 			return "", err
 		}
