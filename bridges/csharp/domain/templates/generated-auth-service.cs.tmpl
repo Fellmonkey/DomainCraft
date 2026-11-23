@@ -1,0 +1,158 @@
+{{- $proj := .Project.Name | pascalcase }}
+{{- $auth := .Project.Auth.Entity }}
+{{- $authEntity := .Project.AuthEntity }}
+{{- $authPk := "Id" }}
+{{- $authPkType := "Guid" }}
+{{- $roleProp := "" }}
+
+{{- $firstRole := "" }}
+{{- range .Project.Auth.Roles }}
+{{- if eq (lower .) "admin" }}{{ $firstRole = . }}{{ end }}
+{{- end }}
+{{- if not $firstRole }}{{ $firstRole = (index .Project.Auth.Roles 0) | pascalcase }}{{ end }}
+{{- if $authEntity }}
+{{- if $authEntity.PrimaryKey }}{{ $authPk = $authEntity.PrimaryKey.Name | pascalcase }}{{ $authPkType = languageType $authEntity.PrimaryKey.DatabaseType false }}{{ end }}
+{{- range $authEntity.Fields }}
+{{- if and (not .IsPrimary) (not .IsRelation) (eq (.Name | lower) "role") }}{{ $roleProp = .Name | pascalcase }}{{ end }}
+{{- end }}
+{{- end }}
+using {{ $proj }}.Application.Repositories;
+using {{ $proj }}.Application.Security;
+using {{ $proj }}.Application.Services;
+using {{ $proj }}.Domain.Entities;
+using {{ $proj }}.Domain.Shared;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace {{ $proj }}.Application.Services;
+
+// AUTO-GENERATED — DO NOT EDIT. Regenerated on every `domaincraft generate`.
+// Implement the hooks in src/Application/Services/AuthService.cs
+// (overwrite: false) to customize behavior without losing your changes.
+#nullable enable
+public partial class AuthService : IAuthService
+{
+    private readonly I{{ $auth }}Repository _repository;
+    private readonly IPasswordHasher _passwordHasher;
+    private readonly IServiceProvider _services;
+
+    public AuthService(I{{ $auth }}Repository repository, IPasswordHasher passwordHasher, IServiceProvider services)
+    {
+        _repository = repository ?? throw new ArgumentNullException(nameof(repository));
+        _passwordHasher = passwordHasher ?? throw new ArgumentNullException(nameof(passwordHasher));
+        _services = services ?? throw new ArgumentNullException(nameof(services));
+    }
+
+    /// <summary>
+    /// Resolves any registered service from inside a hook (see the custom partial).
+    /// </summary>
+    protected IServiceProvider Services => _services;
+
+    // Business hook — override in the custom partial
+    // (src/Application/Services/AuthService.cs). Return HookResult.Fail("reason")
+    // to reject a registration (mapped to HTTP 400).
+    protected virtual Task<HookResult> OnBeforeRegisterAsync({{ $auth }} entity, CancellationToken ct)
+        => Task.FromResult(HookResult.Success());
+
+    public async Task<{{ $auth }}?> LoginAsync(string email, string password, CancellationToken cancellationToken = default)
+    {
+        var matches = await _repository.FindAsync(e => e.Email == email, cancellationToken);
+        var entity = matches.FirstOrDefault();
+        if (entity == null)
+        {
+            // Anti-enumeration: run a full bcrypt hash even when the email is
+            // unknown, so response time does not reveal whether an account exists.
+            _ = _passwordHasher.HashPassword(password);
+            return null;
+        }
+        if (!_passwordHasher.VerifyPassword(entity.Password, password))
+        {
+            return null;
+        }
+        return entity;
+    }
+
+    public async Task<bool> EmailExistsAsync(string email, CancellationToken cancellationToken = default)
+    {
+        return await _repository.AnyAsync(e => e.Email == email, cancellationToken);
+    }
+
+    public async Task<{{ $auth }}> RegisterAsync(string email, string password, CancellationToken cancellationToken = default)
+    {
+        var entity = new {{ $auth }}
+        {
+{{- if eq $authPkType "Guid" }}
+            {{ $authPk }} = Guid.NewGuid(),
+{{- end }}
+            Email = email,
+            Password = _passwordHasher.HashPassword(password),
+{{- range .Project.Entities }}
+{{- if eq .Name $auth }}
+{{- range .Fields }}
+            {{- if and (not .IsPrimary) (not .IsRelation) (not (.IsFeatureField)) (not (eq (.Name | lower) "email")) (not (eq (.Name | lower) "password")) }}
+            {{- if or .DefaultValue (not .IsNullable) }}
+            {{ .Name | pascalcase }} = {{ template "defaultValueExpression" . }},
+            {{- end }}
+            {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+        };
+
+        var hookResult = await OnBeforeRegisterAsync(entity, cancellationToken);
+        if (hookResult.IsSuccess is false)
+        {
+            throw new HookException(hookResult.Error ?? "Registration was rejected.");
+        }
+        await _repository.AddAsync(entity, cancellationToken);
+        await _repository.SaveChangesAsync(cancellationToken);
+        return entity;
+    }
+
+    public async Task<{{ $auth }}?> GetByIdAsync(object id, CancellationToken cancellationToken = default)
+    {
+        return await _repository.GetByIdAsync(id, cancellationToken);
+    }
+
+    /// <summary>
+    /// Bootstrap the first admin in one atomic operation: only succeeds while no
+    /// {{ $auth | lowercase }} exists yet (returns null once anyone does), creates
+    /// the user with the Admin role (or the first declared role). Safe to expose
+    /// publicly — once any account exists it permanently refuses the request.
+    /// </summary>
+    public async Task<{{ $auth }}?> SetupFirstAdminAsync(string email, string password, CancellationToken cancellationToken = default)
+    {
+        if (await _repository.AnyAsync(e => true, cancellationToken))
+            return null;
+
+        var entity = new {{ $auth }}
+        {
+{{- if eq $authPkType "Guid" }}
+            {{ $authPk }} = Guid.NewGuid(),
+{{- end }}
+            Email = email,
+            Password = _passwordHasher.HashPassword(password),
+{{- range .Project.Entities }}
+{{- if eq .Name $auth }}
+{{- range .Fields }}
+            {{- if and (not .IsPrimary) (not .IsRelation) (not (.IsFeatureField)) (not (eq (.Name | lower) "email")) (not (eq (.Name | lower) "password")) }}
+            {{- if eq (.Name | lower) "role" }}
+            {{ .Name | pascalcase }} = {{ if .IsEnum }}{{ .EnumTypeName }}.{{ $firstRole }}{{ else }}"{{ $firstRole }}"{{ end }},
+            {{- else if or .DefaultValue (not .IsNullable) }}
+            {{ .Name | pascalcase }} = {{ template "defaultValueExpression" . }},
+            {{- end }}
+            {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+        };
+
+        var hookResult = await OnBeforeRegisterAsync(entity, cancellationToken);
+        if (hookResult.IsSuccess is false)
+        {
+            throw new HookException(hookResult.Error ?? "Registration was rejected.");
+        }
+        await _repository.AddAsync(entity, cancellationToken);
+        await _repository.SaveChangesAsync(cancellationToken);
+        return entity;
+    }
+}

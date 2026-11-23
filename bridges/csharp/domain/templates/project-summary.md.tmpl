@@ -1,0 +1,180 @@
+<!-- DomainCraft - GENERATED: DO NOT EDIT. Regenerated on every `domaincraft generate`. Make model changes in domain.yaml. -->
+# {{ .Project.Name | pascalcase }} Project Summary
+
+Generated on: `{{ now }}`
+
+## Project Configuration
+
+| Setting | Value |
+|---------|-------|
+| **Project Name** | {{ .Project.Name }} |
+| **Database** | {{ .Project.Database }} |
+| **API Style** | {{ .Project.APIStyle }} |
+| **Authentication** | {{ if .Project.HasAuth }}{{ .Project.Auth.Type }}{{ else }}None{{ end }} |
+| **Multi-Tenancy** | None |
+
+## Architecture Overview
+
+This is a **clean architecture** C# REST API project with the following layers:
+
+- **Domain** (`src/Domain/`) - Core business logic, entities, and rules
+- **Application** (`src/Application/`) - Use cases, service interfaces, repositories, business logic
+- **Infrastructure** (`src/Infrastructure/`) - Data access, database configuration, external services
+- **WebApi** (`src/WebApi/`) - REST endpoints, controllers, API configuration
+
+### Generation Gap (Day-2 safety)
+
+Business logic lives in per-entity **partial service classes** split into two files:
+
+- `src/Application/Generated/<Entity>Service.g.cs` — **regenerated on every run**. Contains
+  CRUD logic, soft-delete handling, and async hooks: `OnBefore*Async` (validate/mutate, return
+  `HookResult.Fail("reason")` to abort) + `OnAfter*Async` (post-commit, for side effects) +
+  `On*OverrideAsync` (return `HookResult.Handled()` to replace the flow).
+- `src/Application/Services/<Entity>Service.cs` — **generated once** (`overwrite: false`) and
+  owned by the developer. Override the hooks here to add custom business logic.
+
+When you add fields to `domain.yaml` and regenerate, only the generated part is rewritten — your
+custom hook code is preserved. Controllers talk to `I<Entity>Service`, which DI resolves to the
+merged partial class.
+
+## Entities ({{ len .Project.Entities }})
+
+{{- range .Project.Entities }}
+### {{ .Name }}
+- **Plural:** {{ .NamePlural }}
+- **Table:** `{{ .TableName }}`
+- **Fields:** {{ len .Fields }}
+- **Features:** {{ if .HasAudit }}Audit{{ end }}{{ if .HasSoftDelete }}{{ if .HasAudit }}, {{ end }}Soft Delete{{ end }}{{ if .HasOptimisticLock }}{{ if or .HasAudit .HasSoftDelete }}, {{ end }}Optimistic Lock{{ end }}
+- **Seed Records:** {{ len .Seed }}
+
+{{- end }}
+
+## Data Types
+
+Domain types are mapped to C# types:
+- `string` / `text` → `string`
+- `int` → `int`
+- `bigint` → `long`
+- `float` / `decimal` → `double` / `decimal`
+- `boolean` → `bool`
+- `date` / `datetime` → `DateTime`
+- `uuid` → `Guid`
+- `json` / `jsonb` → `JsonDocument`
+
+## Enumerations ({{ len .Project.Enums }})
+
+{{- range $name, $values := .Project.Enums }}
+### {{ $name }}
+{{- range $value := $values }}
+- `{{ $value }}`
+{{- end }}
+
+{{- end }}
+
+## REST API Endpoints
+
+All entities get standard RESTful endpoints:
+
+```
+GET    /api/{entities}          - Get all
+GET    /api/{entities}/{id}     - Get by ID
+POST   /api/{entities}          - Create
+PUT    /api/{entities}/{id}     - Update
+DELETE /api/{entities}/{id}     - Delete
+```
+
+{{- if .Project.HasAuth }}
+Authentication: **JWT Bearer Token**
+{{- else }}
+Authentication: **None**
+{{- end }}
+
+## Getting Started
+
+### 1. Install Dependencies
+```bash
+dotnet restore
+```
+
+### 2. Setup Database
+```bash
+# Create PostgreSQL database
+dotnet ef database update --startup-project src/WebApi
+```
+
+### 3. Run Application
+```bash
+dotnet run --project src/WebApi
+```
+
+The API will be available at `https://localhost:5001`
+Swagger documentation: `https://localhost:5001/swagger`
+
+## JWT Configuration
+
+Configure JWT in `appsettings.json`:
+```json
+{
+	"Jwt": {
+		"Secret": "your-secret-key-min-32-chars",
+		"Issuer": "{{ .Project.Name }}-api",
+		"Audience": "{{ .Project.Name }}-client",
+		"ExpirationMinutes": 60
+	}
+}
+```
+
+## Database Connection
+
+PostgreSQL connection string in `appsettings.json`:
+```
+Host=localhost;Port=5432;Database={{ .Project.Name | snakecase }}_db;Username=postgres;Password=postgres
+```
+
+## Project Structure
+
+```
+src/
+├── Domain/                  # Domain entities and interfaces
+│   ├── Entities/           # Entity classes
+│   └── Shared/             # Shared types and enums
+├── Application/            # Business logic layer
+│   ├── Services/           # Service interfaces + custom (overwrite: false) partials
+│   ├── Generated/          # Regenerated service partials (DO NOT EDIT)
+│   ├── Repositories/       # Data access patterns
+│   └── Security/           # Permission policies
+├── Infrastructure/         # Data access implementations
+│   ├── Persistence/        # DbContext and configurations
+│   ├── Repositories/       # EF Core repository implementations
+│   └── Seeders/            # Database seeders
+└── WebApi/                 # ASP.NET Core API
+		├── Controllers/        # REST endpoints
+		├── Program.cs         # Startup configuration
+		└── appsettings.json   # Configuration
+```
+
+## Features Enabled
+
+{{- if .Project.Entities }}
+{{- range .Project.Entities }}
+{{- if .HasAudit }}
+- ✓ Audit (CreatedAt, UpdatedAt)
+{{- end }}
+{{- if .HasSoftDelete }}
+- ✓ Soft Delete (DeletedAt)
+{{- end }}
+{{- if .HasOptimisticLock }}
+- ✓ Optimistic Locking (Version)
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if .Project.HasAuth }}
+- ✓ JWT Authentication
+- ✓ Role-Based Access Control (RBAC)
+{{- end }}
+- ✓ Entity Framework Core with PostgreSQL
+- ✓ Swagger/OpenAPI Documentation
+
+---
+
+Generated by DomainCraft Bridge for C#
