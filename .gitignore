@@ -34,3 +34,8 @@ go.work.sum
 */bin
 /.gocache
 /generated-kitchen-sink
+
+# Bridge build artifacts (imported from upstream repos)
+bridges/**/bin
+bridges/**/obj
+
