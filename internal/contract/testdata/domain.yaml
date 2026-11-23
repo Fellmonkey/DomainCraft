@@ -1,0 +1,18 @@
+project:
+  name: Golden
+database: postgresql
+api_style: rest
+enums:
+  UserRole:
+    - Admin
+    - User
+entities:
+  User:
+    fields:
+      id: uuid [primary]
+      email: string [required, unique, email]
+      password: string [required, hidden]
+      role: enum(UserRole) [default:User]
+    permissions:
+      read: [Admin, "*"]
+      create: ["*"]

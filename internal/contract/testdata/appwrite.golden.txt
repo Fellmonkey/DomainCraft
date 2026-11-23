@@ -1,0 +1,2 @@
+README.md	00d506dec789f1fe2588baa7cf52eb7f5164defcbc58c9ffb62bfd9167fc7d6a
+appwrite.config.json	06c858e4d2623f36441eff202c0d5c9b6dd0edd52296301bb8f5511fe3f8b0a5
