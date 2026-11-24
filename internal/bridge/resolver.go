@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -39,15 +40,14 @@ func (r *Resolver) Resolve(input string) (string, error) {
 	}
 
 	// 1. Local path — use directly. Bare names that exist in the CWD count too.
-	if info, err := os.Stat(input); err == nil {
-		if info.IsDir() {
-			bridgeFile := filepath.Join(input, "bridge.yaml")
-			if _, err := os.Stat(bridgeFile); err == nil {
-				return input, nil
-			}
-			return "", fmt.Errorf("directory %q does not contain bridge.yaml", input)
-		}
-		return filepath.Dir(input), nil
+	dir, _, err := LocalBridgePaths(input)
+	if err == nil {
+		return dir, nil
+	}
+	if _, ok := errors.AsType[*missingBridgeConfigError](err); ok {
+		// The path exists but is not a bridge. That is a hard error, never a
+		// registry ID or GitHub shorthand.
+		return "", err
 	}
 
 	// Path-like inputs ("../x", "./x", "/x", "~/x", "C:\\x") that do not
@@ -100,6 +100,35 @@ func (r *Resolver) Resolve(input string) (string, error) {
 	}
 
 	return "", fmt.Errorf("bridge %q not found: not a local path, registry ID, or owner/repo", input)
+}
+
+// missingBridgeConfigError marks an existing directory that has no bridge.yaml.
+// Resolve surfaces it verbatim instead of falling through to registry/GitHub
+// resolution; the renderer fails closed on the same error.
+type missingBridgeConfigError struct{ dir string }
+
+func (e *missingBridgeConfigError) Error() string {
+	return fmt.Sprintf("directory %q does not contain bridge.yaml", e.dir)
+}
+
+// LocalBridgePaths validates a local bridge reference and returns its directory
+// and bridge.yaml path. A directory must contain bridge.yaml; a file is treated
+// as the config itself and yields its parent directory. Missing or unreadable
+// paths are errors. This is the single normalization used by both the resolver
+// and the renderer, so a path accepted by one is accepted by the other.
+func LocalBridgePaths(input string) (dir, configFile string, err error) {
+	info, err := os.Stat(input)
+	if err != nil {
+		return "", "", fmt.Errorf("bridge path %q: %w", input, err)
+	}
+	if !info.IsDir() {
+		return filepath.Dir(input), input, nil
+	}
+	config := filepath.Join(input, "bridge.yaml")
+	if _, err := os.Stat(config); err != nil {
+		return "", "", &missingBridgeConfigError{dir: input}
+	}
+	return input, config, nil
 }
 
 // splitPinRef splits a `owner/repo@ref` shorthand into the repository and the

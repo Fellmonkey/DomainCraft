@@ -3,12 +3,12 @@ package renderer
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"text/template"
 
+	"github.com/DomainCraft/DomainCraft/internal/bridge"
 	"github.com/DomainCraft/DomainCraft/internal/ir"
 	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
@@ -113,7 +113,10 @@ func validateWhenConditions(bridgeName string, templates []TemplateSpec) error {
 
 // loadSource loads a single bridge directory (its bridge.yaml).
 func loadSource(bridgePath string) (sourceConfig, error) {
-	bridgeDir, configPath := resolveBridgePath(bridgePath)
+	bridgeDir, configPath, err := resolveBridgePath(bridgePath)
+	if err != nil {
+		return sourceConfig{}, err
+	}
 	data, err := os.ReadFile(configPath) //nolint:gosec // resolved from validated bridge refs by resolveBridgePath
 	if err != nil {
 		return sourceConfig{}, fmt.Errorf("read bridge config: %w", err)
@@ -231,14 +234,9 @@ func (r *Renderer) applyDelimiters(t *template.Template) *template.Template {
 	return t
 }
 
-func resolveBridgePath(bridgePath string) (string, string) {
-	info, err := os.Stat(bridgePath)
-	if err != nil {
-		// Path does not exist or is not accessible — treat as file path.
-		return filepath.Dir(bridgePath), bridgePath
-	}
-	if info.IsDir() {
-		return bridgePath, filepath.Join(bridgePath, "bridge.yaml")
-	}
-	return filepath.Dir(bridgePath), bridgePath
+// resolveBridgePath normalizes a local bridge reference through the shared
+// bridge-package helper. It is fail-closed: a missing path or a directory
+// without bridge.yaml is an error, never a guessed config path to read.
+func resolveBridgePath(bridgePath string) (string, string, error) {
+	return bridge.LocalBridgePaths(bridgePath)
 }
