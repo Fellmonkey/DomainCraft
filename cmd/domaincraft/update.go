@@ -103,9 +103,7 @@ func newUpdateCmd() *cobra.Command {
 		Short: "Update the domaincraft core to the latest release",
 		Long:  "Check the GitHub releases for a newer domaincraft version and, if available, download and replace the current executable.\nUse --check to only report whether a newer version exists, without downloading.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := logger.New()
-			log.SetWriter(cmd.OutOrStdout())
-			return runCoreUpdate(log, checkOnly)
+			return runCoreUpdate(commandLogger(cmd), checkOnly)
 		},
 	}
 	cmd.Flags().BoolVar(&checkOnly, "check", false, "only report whether a newer version exists (no download)")

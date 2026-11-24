@@ -77,6 +77,81 @@ func SelectBridge(registry *bridge.Registry) (*bridge.RegistryEntry, error) {
 	return selected, nil
 }
 
+// Option is one choice in SelectOption.
+type Option struct {
+	Label       string
+	Description string
+}
+
+// SelectOption shows a numbered menu and returns the index of the chosen
+// option. ↑/↓ or 1-9 moves, Enter picks, Esc aborts. The first option is the
+// default. Unlike SelectBridge it carries no bridge-specific types, so CLI
+// commands can use it for their own choices.
+func SelectOption(title, description string, options []Option) (int, error) {
+	if len(options) == 0 {
+		return 0, fmt.Errorf("no options available")
+	}
+
+	cursor := 0
+	build := func() []string {
+		lines := []string{lineField(ansiBold + title)}
+		if description != "" {
+			lines = append(lines, lineField("  "+description))
+		}
+		for i, o := range options {
+			s := fmt.Sprintf("  %2d) %s", i+1, o.Label)
+			if o.Description != "" {
+				s += " — " + o.Description
+			}
+			if i == cursor {
+				lines = append(lines, lineFocus(s))
+			} else {
+				lines = append(lines, lineField(s))
+			}
+		}
+		lines = append(lines, lineField(ansiDim+"  ↑/↓ or 1-9 to move, Enter to confirm"))
+		return lines
+	}
+
+	f := &field{}
+	f.draw(build())
+	err := rawMode(func() error {
+		for {
+			k, err := readKey()
+			if err != nil {
+				return err
+			}
+			switch k.kind {
+			case keyUp:
+				if cursor > 0 {
+					cursor--
+					f.draw(build())
+				}
+			case keyDown:
+				if cursor < len(options)-1 {
+					cursor++
+					f.draw(build())
+				}
+			case keyEnter:
+				return nil
+			case keyEsc:
+				return errAborted
+			case keyRune:
+				if k.r >= '1' && k.r <= '9' {
+					if n := int(k.r - '1'); n < len(options) && n != cursor {
+						cursor = n
+						f.draw(build())
+					}
+				}
+			}
+		}
+	})
+	if err != nil {
+		return 0, err
+	}
+	return cursor, nil
+}
+
 // PromptGenerateAdmin asks whether to generate an admin panel alongside the backend.
 func PromptGenerateAdmin() (bool, error) {
 	return confirm(
@@ -94,6 +169,11 @@ func PromptBridgeUpdate(entry bridge.RegistryEntry, update *bridge.Update) (bool
 		description = fmt.Sprintf("A newer version is available for the cached bridge (v%s). Update the cached copy?", update.LocalVersion)
 	}
 	return confirm(fmt.Sprintf("Update bridge %q?", entry.ID), description)
+}
+
+// PromptYesNo asks a yes/no question with the default focus on "No".
+func PromptYesNo(title, description string) (bool, error) {
+	return confirm(title, description)
 }
 
 // confirm asks a yes/no question with two buttons. ←/→ switches the green

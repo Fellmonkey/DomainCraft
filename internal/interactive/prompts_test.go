@@ -97,6 +97,38 @@ func TestSelectBridge(t *testing.T) {
 	}
 }
 
+func TestSelectOption(t *testing.T) {
+	options := []Option{
+		{Label: "shop", Description: "products and orders"},
+		{Label: "saas", Description: "workspaces"},
+		{Label: "crm"},
+	}
+
+	setInput("2\n")
+	if got, err := SelectOption("?", "", options); err != nil || got != 1 {
+		t.Fatalf("SelectOption(2) = %d, %v; want 1, nil", got, err)
+	}
+	setInput("\n")
+	if got, err := SelectOption("?", "", options); err != nil || got != 0 {
+		t.Fatalf("SelectOption(default) = %d, %v; want 0, nil", got, err)
+	}
+	setInput("\x1b[B\n")
+	if got, err := SelectOption("?", "", options); err != nil || got != 1 {
+		t.Fatalf("SelectOption(down) = %d, %v; want 1, nil", got, err)
+	}
+	setInput("\x1b")
+	if _, err := SelectOption("?", "", options); !errors.Is(err, errAborted) {
+		t.Fatalf("SelectOption(esc) error = %v, want errAborted", err)
+	}
+}
+
+func TestPromptYesNo(t *testing.T) {
+	setInput("\x1b[D\n")
+	if got, err := PromptYesNo("?", ""); err != nil || !got {
+		t.Fatalf("PromptYesNo(yes) = %v, %v; want true, nil", got, err)
+	}
+}
+
 func TestMultiSelect(t *testing.T) {
 	files := []FileChoice{
 		{Path: "p1", Label: "f1"},

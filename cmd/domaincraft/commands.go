@@ -1,3 +1,15 @@
+// Command domaincraft compiles domain.yaml into code through pluggable bridges.
+//
+// Commands:
+//   init     — write a starter domain.yaml from a scenario, then generate
+//   generate — parse and validate the model, build IR, render code via a bridge
+//   validate — validate domain.yaml without generating
+//   bridges  — list known bridges with cache and update status
+//   update   — update the core to the latest GitHub release
+//
+// Global flags: --domain/-d, --bridge/-b, --output/-o, --non-interactive,
+// --addons, --update-bridges, --version. Command flags live with their
+// constructors below.
 package main
 
 import (
@@ -109,11 +121,23 @@ func newRootCommand() *cobra.Command {
 		maybeNotifyUpdate(cmd)
 	}
 
-	rootCmd.AddCommand(newValidateCmd())
-	rootCmd.AddCommand(newGenerateCmd())
-	rootCmd.AddCommand(newBridgesCmd())
-	rootCmd.AddCommand(newUpdateCmd())
+	for _, cmd := range []*cobra.Command{
+		newValidateCmd(),
+		newInitCmd(),
+		newGenerateCmd(),
+		newBridgesCmd(),
+		newUpdateCmd(),
+	} {
+		rootCmd.AddCommand(cmd)
+	}
 	return rootCmd
+}
+
+// commandLogger returns a logger writing to the command's output stream.
+func commandLogger(cmd *cobra.Command) *logger.Logger {
+	log := logger.New()
+	log.SetWriter(cmd.OutOrStdout())
+	return log
 }
 
 // --- validate ---
@@ -123,8 +147,7 @@ func newValidateCmd() *cobra.Command {
 		Use:   "validate",
 		Short: "Validate domain.yaml",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			log := logger.New()
-			log.SetWriter(cmd.OutOrStdout())
+			log := commandLogger(cmd)
 			log.Info("Validating %s", domainFile)
 			schema, err := loadAndValidate(cmd.OutOrStdout())
 			if err != nil {
@@ -143,194 +166,7 @@ func newGenerateCmd() *cobra.Command {
 		Use:   "generate",
 		Short: "Generate code from domain.yaml",
 		Long:  "Parse domain.yaml, build IR, and render code via the selected bridge.\nIf --bridge is omitted, an interactive selection menu is shown.\nUse --admin to also generate an admin panel (optionally specify a bridge ID).",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			log := logger.New()
-			log.SetWriter(cmd.OutOrStdout())
-
-			log.Info("Parsing %s", domainFile)
-			schema, err := loadAndValidate(cmd.OutOrStdout())
-			if err != nil {
-				return err
-			}
-			log.Success("Schema valid (%d entities)", len(schema.Entities))
-
-			resolvedPath, bridgeName, err := resolveBridgeInteractive(log)
-			if err != nil {
-				return err
-			}
-			bridgePath = resolvedPath
-
-			log.Info("Building IR")
-			irProject, err := ir.Build(schema)
-			if err != nil {
-				return err
-			}
-			applyAddons(irProject)
-
-			// --- Schema snapshot / migration diff ---
-			snapPath := snapshot.SnapshotPath(outputDir)
-			oldSnapshot, err := snapshot.Load(snapPath)
-			if err != nil {
-				return fmt.Errorf("load schema snapshot: %w", err)
-			}
-			migrationDiff := snapshot.ComputeDiff(oldSnapshot, irProject, outputDir)
-
-			// --- Abstract schema migration plan (smart core / dumb bridge) ---
-			// The core compares the previous model against the current one and
-			// emits a language-agnostic migration tree the bridge renders.
-			migrationPlan := snapshot.ComputeMigrationPlan(oldSnapshot, irProject)
-
-			// --- Seed data (smart core / dumb bridge) ---
-			// Two producers share one typed shape (ir.SeedRecord): the developer's
-			// explicit `seed:` rows (Normalize) and deterministic generated mock
-			// seed (Generate). A bridge serializes both through one code path.
-			seedData := seed.Normalize(irProject)
-			mockDataset := seed.Generate(irProject, seed.Options{})
-
-			// Parse --replace flags (layer|bridgeId=bridgeRef).
-			replacements, err := parseReplaceFlags(replaceFlags)
-			if err != nil {
-				return err
-			}
-			// Resolve extends chain with optional node replacements.
-			newBridgePath, basePaths, err := resolveChainWithReplacements(bridgePath, replacements, log)
-			if err != nil {
-				return err
-			}
-			bridgePath = newBridgePath
-			// Phase 3.5: a community bridge (not a bundled official bridge) must
-			// never have migrations auto-run — that would execute arbitrary shell
-			// lines from an untrusted bridge.yaml during a code-generation run.
-			chainHasCommunity := false
-			for _, p := range append([]string{bridgePath}, basePaths...) {
-				if !bridge.IsOfficialBundled(p) {
-					chainHasCommunity = true
-					break
-				}
-			}
-			log.Info("Rendering via %s", bridgePath)
-			rendererInstance, err := renderer.New(bridgePath, log)
-			if err != nil {
-				return err
-			}
-			if err := rendererInstance.AttachBases(basePaths); err != nil {
-				return err
-			}
-			rendererInstance.SetMigration(migrationPlan)
-			rendererInstance.SetSeedData(seedData)
-			rendererInstance.SetMockData(mockDataset)
-
-			writtenFiles, manifest, err := rendererInstance.Render(irProject, outputDir)
-			if err != nil {
-				return err
-			}
-
-			log.Success("Generated %d file(s) into %s", len(writtenFiles), outputDir)
-
-			// --- Admin panel generation ---
-			// pflag's NoOptDefVal makes `--admin <id>` stop consuming the next
-			// argument (it lands in args), so reclaim it here. This keeps both
-			// `--admin <path>` and `--admin=<path>` working while `--admin` alone
-			// still means the default admin-alpine bridge.
-			if cmd.Flags().Changed("admin") && adminBridge == "admin-alpine" && len(args) > 0 {
-				adminBridge = args[0]
-			}
-			if adminBridge == "" && !cmd.Flags().Changed("admin") && nonInteractive {
-				// In non-interactive mode, skip admin prompt — admin not requested.
-			} else if adminBridge == "" && !cmd.Flags().Changed("admin") && interactive.IsTerminal() {
-				generate, _ := interactive.PromptGenerateAdmin()
-				if generate {
-					adminBridge = "admin-alpine"
-				}
-			}
-			if adminBridge != "" {
-				adminManifest, err := generateAdminPanel(irProject, seedData, mockDataset, log)
-				if err != nil {
-					return err
-				}
-				manifest = append(manifest, adminManifest...)
-			}
-
-			// --- Migration actions: clean up orphaned / renamed files ---
-			// Files written from this run must never be touched by cleanup.
-			fresh := make(map[string]bool)
-			for _, f := range manifest {
-				if f.Written {
-					fresh[f.Path] = true
-				}
-			}
-			applied, err := applyMigrationActions(migrationDiff, fresh, log, cmd)
-			if err != nil {
-				return err
-			}
-
-			// --- Database migrations ---
-			// Run the bridge's declared migration commands so the developer never
-			// has to think about SQL schemas. Triggered explicitly via --migrate, or
-			// automatically in --prune mode when the diff detected renames/deletions
-			// that must reach the database (skipped when cleanup was deferred).
-			autoMigrate := prune && migrationDiff.HasSchemaChanges()
-			if autoMigrate && chainHasCommunity {
-				log.Warn("community bridge(s) in the resolved chain — not auto-running database migrations; use --migrate explicitly")
-				autoMigrate = false
-			}
-			shouldMigrate := migrateFlag || autoMigrate
-			if applied && shouldMigrate && rendererInstance.MigrationConfig() != nil && rendererInstance.MigrationConfig().Enabled {
-				if err := runDatabaseMigrations(rendererInstance.MigrationConfig(), outputDir, cmd, log); err != nil {
-					if migrateFlag {
-						// Explicit --migrate: a failed migration is a hard error.
-						return err
-					}
-					// Auto-migration under --prune is best-effort. In a docker/CI
-					// workflow the API container applies pending migrations at startup
-					// (Database:SchemaMode=migrate → MigrateAsync), so a host without
-					// the dotnet SDK or an unreachable database must not abort generation.
-					log.Warn("Database migration was not applied by --prune: %v", err)
-					log.Warn("In docker, set Database:SchemaMode=migrate — the container applies pending migrations on startup.")
-				}
-			}
-
-			// --- Smart warning for type changes (manual refactoring report) ---
-			if report := migrationDiff.TypeChangeReport(); report != "" {
-				log.Warn("ACTION REQUIRED — manual refactoring may be needed")
-				fmt.Fprint(cmd.OutOrStdout(), report)
-			}
-
-			// --- Smart warning for field renames (data-preserving column rename) ---
-			if report := migrationDiff.FieldRenameReport(); report != "" {
-				log.Warn("ACTION REQUIRED — fields were renamed; apply a safe column rename to avoid data loss")
-				fmt.Fprint(cmd.OutOrStdout(), report)
-			}
-
-			// --- Project-rename warning: custom files with a stale root namespace ---
-			if report := migrationDiff.NamespaceRenameReport(); report != "" {
-				log.Warn("ACTION REQUIRED — project was renamed; custom files reference the old namespace")
-				fmt.Fprint(cmd.OutOrStdout(), report)
-			}
-
-			// --- Persist the new snapshot ---
-			if !applied {
-				// Cleanup was deferred (non-interactive without --prune). Keep the
-				// previous snapshot so a later --prune run can still find the
-				// orphaned/renamed files.
-				log.Info("Snapshot kept — cleanup pending (re-run with --prune to finish)")
-				return nil
-			}
-			bridgeID := bridgePath
-			if bridgeName != "" {
-				bridgeID = bridgeName
-			}
-			// Record the resolved bridge chain next to domain.yaml (Phase 0.4).
-			// Best-effort: a lock-write failure must never abort generation.
-			if err := writeDomainLock(domainFile, append([]string{bridgePath}, basePaths...)); err != nil {
-				log.Warn("could not write domaincraft.lock.json: %v", err)
-			}
-			if err := snapshot.Save(snapPath, snapshot.New(bridgeID, irProject, manifest)); err != nil {
-				return fmt.Errorf("save schema snapshot: %w", err)
-			}
-
-			return nil
-		},
+		RunE:  runGenerate,
 	}
 
 	// --admin [bridge-id] — optional value, defaults to "admin-alpine" when flag
@@ -346,6 +182,196 @@ func newGenerateCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&replaceFlags, "replace", nil, "replace a bridge in the extends chain: layer=bridgeRef or bridgeId=bridgeRef (repeatable)")
 
 	return cmd
+}
+
+// runGenerate is shared by `generate` and `init --bridge` so both paths go
+// through the same validation, rendering and migration pipeline.
+func runGenerate(cmd *cobra.Command, args []string) error {
+	log := commandLogger(cmd)
+
+	log.Info("Parsing %s", domainFile)
+	schema, err := loadAndValidate(cmd.OutOrStdout())
+	if err != nil {
+		return err
+	}
+	log.Success("Schema valid (%d entities)", len(schema.Entities))
+
+	resolvedPath, bridgeName, err := resolveBridgeInteractive(log)
+	if err != nil {
+		return err
+	}
+	bridgePath = resolvedPath
+
+	log.Info("Building IR")
+	irProject, err := ir.Build(schema)
+	if err != nil {
+		return err
+	}
+	applyAddons(irProject)
+
+	// --- Schema snapshot / migration diff ---
+	snapPath := snapshot.SnapshotPath(outputDir)
+	oldSnapshot, err := snapshot.Load(snapPath)
+	if err != nil {
+		return fmt.Errorf("load schema snapshot: %w", err)
+	}
+	migrationDiff := snapshot.ComputeDiff(oldSnapshot, irProject, outputDir)
+
+	// --- Abstract schema migration plan (smart core / dumb bridge) ---
+	// The core compares the previous model against the current one and
+	// emits a language-agnostic migration tree the bridge renders.
+	migrationPlan := snapshot.ComputeMigrationPlan(oldSnapshot, irProject)
+
+	// --- Seed data (smart core / dumb bridge) ---
+	// Two producers share one typed shape (ir.SeedRecord): the developer's
+	// explicit `seed:` rows (Normalize) and deterministic generated mock
+	// seed (Generate). A bridge serializes both through one code path.
+	seedData := seed.Normalize(irProject)
+	mockDataset := seed.Generate(irProject, seed.Options{})
+
+	// Parse --replace flags (layer|bridgeId=bridgeRef).
+	replacements, err := parseReplaceFlags(replaceFlags)
+	if err != nil {
+		return err
+	}
+	// Resolve extends chain with optional node replacements.
+	newBridgePath, basePaths, err := resolveChainWithReplacements(bridgePath, replacements, log)
+	if err != nil {
+		return err
+	}
+	bridgePath = newBridgePath
+	// Phase 3.5: a community bridge (not a bundled official bridge) must
+	// never have migrations auto-run — that would execute arbitrary shell
+	// lines from an untrusted bridge.yaml during a code-generation run.
+	chainHasCommunity := false
+	for _, p := range append([]string{bridgePath}, basePaths...) {
+		if !bridge.IsOfficialBundled(p) {
+			chainHasCommunity = true
+			break
+		}
+	}
+	log.Info("Rendering via %s", bridgePath)
+	rendererInstance, err := renderer.New(bridgePath, log)
+	if err != nil {
+		return err
+	}
+	if err := rendererInstance.AttachBases(basePaths); err != nil {
+		return err
+	}
+	rendererInstance.SetMigration(migrationPlan)
+	rendererInstance.SetSeedData(seedData)
+	rendererInstance.SetMockData(mockDataset)
+
+	writtenFiles, manifest, err := rendererInstance.Render(irProject, outputDir)
+	if err != nil {
+		return err
+	}
+
+	log.Success("Generated %d file(s) into %s", len(writtenFiles), outputDir)
+
+	// --- Admin panel generation ---
+	// pflag's NoOptDefVal makes `--admin <id>` stop consuming the next
+	// argument (it lands in args), so reclaim it here. This keeps both
+	// `--admin <path>` and `--admin=<path>` working while `--admin` alone
+	// still means the default admin-alpine bridge.
+	if cmd.Flags().Changed("admin") && adminBridge == "admin-alpine" && len(args) > 0 {
+		adminBridge = args[0]
+	}
+	if adminBridge == "" && !cmd.Flags().Changed("admin") && nonInteractive {
+		// In non-interactive mode, skip admin prompt — admin not requested.
+	} else if adminBridge == "" && !cmd.Flags().Changed("admin") && interactive.IsTerminal() {
+		generate, _ := interactive.PromptGenerateAdmin()
+		if generate {
+			adminBridge = "admin-alpine"
+		}
+	}
+	if adminBridge != "" {
+		adminManifest, err := generateAdminPanel(irProject, seedData, mockDataset, log)
+		if err != nil {
+			return err
+		}
+		manifest = append(manifest, adminManifest...)
+	}
+
+	// --- Migration actions: clean up orphaned / renamed files ---
+	// Files written from this run must never be touched by cleanup.
+	fresh := make(map[string]bool)
+	for _, f := range manifest {
+		if f.Written {
+			fresh[f.Path] = true
+		}
+	}
+	applied, err := applyMigrationActions(migrationDiff, fresh, log, cmd)
+	if err != nil {
+		return err
+	}
+
+	// --- Database migrations ---
+	// Run the bridge's declared migration commands so the developer never
+	// has to think about SQL schemas. Triggered explicitly via --migrate, or
+	// automatically in --prune mode when the diff detected renames/deletions
+	// that must reach the database (skipped when cleanup was deferred).
+	autoMigrate := prune && migrationDiff.HasSchemaChanges()
+	if autoMigrate && chainHasCommunity {
+		log.Warn("community bridge(s) in the resolved chain — not auto-running database migrations; use --migrate explicitly")
+		autoMigrate = false
+	}
+	shouldMigrate := migrateFlag || autoMigrate
+	if applied && shouldMigrate && rendererInstance.MigrationConfig() != nil && rendererInstance.MigrationConfig().Enabled {
+		if err := runDatabaseMigrations(rendererInstance.MigrationConfig(), outputDir, cmd, log); err != nil {
+			if migrateFlag {
+				// Explicit --migrate: a failed migration is a hard error.
+				return err
+			}
+			// Auto-migration under --prune is best-effort. In a docker/CI
+			// workflow the API container applies pending migrations at startup
+			// (Database:SchemaMode=migrate → MigrateAsync), so a host without
+			// the dotnet SDK or an unreachable database must not abort generation.
+			log.Warn("Database migration was not applied by --prune: %v", err)
+			log.Warn("In docker, set Database:SchemaMode=migrate — the container applies pending migrations on startup.")
+		}
+	}
+
+	// --- Smart warning for type changes (manual refactoring report) ---
+	if report := migrationDiff.TypeChangeReport(); report != "" {
+		log.Warn("ACTION REQUIRED — manual refactoring may be needed")
+		fmt.Fprint(cmd.OutOrStdout(), report)
+	}
+
+	// --- Smart warning for field renames (data-preserving column rename) ---
+	if report := migrationDiff.FieldRenameReport(); report != "" {
+		log.Warn("ACTION REQUIRED — fields were renamed; apply a safe column rename to avoid data loss")
+		fmt.Fprint(cmd.OutOrStdout(), report)
+	}
+
+	// --- Project-rename warning: custom files with a stale root namespace ---
+	if report := migrationDiff.NamespaceRenameReport(); report != "" {
+		log.Warn("ACTION REQUIRED — project was renamed; custom files reference the old namespace")
+		fmt.Fprint(cmd.OutOrStdout(), report)
+	}
+
+	// --- Persist the new snapshot ---
+	if !applied {
+		// Cleanup was deferred (non-interactive without --prune). Keep the
+		// previous snapshot so a later --prune run can still find the
+		// orphaned/renamed files.
+		log.Info("Snapshot kept — cleanup pending (re-run with --prune to finish)")
+		return nil
+	}
+	bridgeID := bridgePath
+	if bridgeName != "" {
+		bridgeID = bridgeName
+	}
+	// Record the resolved bridge chain next to domain.yaml (Phase 0.4).
+	// Best-effort: a lock-write failure must never abort generation.
+	if err := writeDomainLock(domainFile, append([]string{bridgePath}, basePaths...)); err != nil {
+		log.Warn("could not write domaincraft.lock.json: %v", err)
+	}
+	if err := snapshot.Save(snapPath, snapshot.New(bridgeID, irProject, manifest)); err != nil {
+		return fmt.Errorf("save schema snapshot: %w", err)
+	}
+
+	return nil
 }
 
 // --- bridges ---
@@ -421,10 +447,45 @@ func newBridgesCmd() *cobra.Command {
 
 // --- helpers ---
 
+// newBridgeResolver builds a resolver with the CLI's bridge cache/update options.
+func newBridgeResolver(log *logger.Logger) *bridge.Resolver {
+	return bridge.NewResolver(bridge.Default()).WithEnsureOptions(bridgeEnsureOptions(log))
+}
+
+// walkBridgeChain resolves ref relative to fromDir and follows `extends` to the
+// deepest base. It returns absolute paths top-first: the resolved bridge first,
+// then its bases. Absolute paths make cycle detection path-based, not textual.
+func walkBridgeChain(ref, fromDir string, log *logger.Logger) ([]string, error) {
+	resolver := newBridgeResolver(log)
+	var chain []string
+	visited := make(map[string]bool)
+	for ref != "" {
+		path, err := bridge.ResolveExtendsRef(ref, fromDir, resolver)
+		if err != nil {
+			return nil, fmt.Errorf("resolve bridge `extends: %s`: %w", ref, err)
+		}
+		if abs, err := filepath.Abs(path); err == nil {
+			path = abs
+		}
+		if visited[path] {
+			return nil, fmt.Errorf("bridge `extends` cycle detected at %q", ref)
+		}
+		visited[path] = true
+		chain = append(chain, path)
+
+		base, err := renderer.New(path, log)
+		if err != nil {
+			return nil, fmt.Errorf("load bridge %s: %w", path, err)
+		}
+		ref, fromDir = base.Extends(), path
+	}
+	return chain, nil
+}
+
 // resolveBridgeInteractive resolves the bridge from the --bridge flag, or
 // prompts the user interactively. Returns (path, displayName, error).
 func resolveBridgeInteractive(log *logger.Logger) (string, string, error) {
-	resolver := bridge.NewResolver(bridge.Default()).WithEnsureOptions(bridgeEnsureOptions(log))
+	resolver := newBridgeResolver(log)
 
 	if bridgePath != "" {
 		// Monorepo-first: an official bridge ID resolves to the local
@@ -461,35 +522,12 @@ func resolveBridgeInteractive(log *logger.Logger) (string, string, error) {
 // paths, ordered outermost base first (so the deepest base renders first). Each
 // base is resolved the same way --bridge is: a path, registry ID or owner/repo.
 func resolveBaseChain(adapterDir, baseRef string, log *logger.Logger) ([]string, error) {
-	resolver := bridge.NewResolver(bridge.Default()).WithEnsureOptions(bridgeEnsureOptions(log))
-
-	var chain []string
-	visited := make(map[string]bool)
-	fromDir := adapterDir
-	cur := baseRef
-	for cur != "" {
-		path, err := bridge.ResolveExtendsRef(cur, fromDir, resolver)
-		if err != nil {
-			return nil, fmt.Errorf("resolve bridge `extends: %s`: %w", cur, err)
-		}
-		if abs, err := filepath.Abs(path); err == nil {
-			path = abs
-		}
-		if visited[path] {
-			return nil, fmt.Errorf("bridge `extends` cycle detected at %q", cur)
-		}
-		visited[path] = true
-		chain = append(chain, path)
-
-		baseRenderer, err := renderer.New(path, log)
-		if err != nil {
-			return nil, fmt.Errorf("load base bridge %s: %w", path, err)
-		}
-		cur = baseRenderer.Extends()
-		fromDir = path
+	chain, err := walkBridgeChain(baseRef, adapterDir, log)
+	if err != nil {
+		return nil, err
 	}
-
-	// Reverse so the outermost base comes first (it renders first).
+	// The walker returns the deepest chain top-first; bases must render with
+	// the outermost base first, so reverse it.
 	slices.Reverse(chain)
 	return chain, nil
 }
@@ -524,38 +562,7 @@ func bridgeLayerAndName(dir string, log *logger.Logger) (string, string, error) 
 
 // buildFullChainTopFirst builds the full chain top-first: [entry, base1, base2, ... deepest].
 func buildFullChainTopFirst(entryDir string, log *logger.Logger) ([]string, error) {
-	resolver := bridge.NewResolver(bridge.Default()).WithEnsureOptions(bridgeEnsureOptions(log))
-	var chain []string
-	visited := make(map[string]bool)
-	curDir := entryDir
-	for {
-		abs, err := filepath.Abs(curDir)
-		if err == nil {
-			curDir = abs
-		}
-		if visited[curDir] {
-			return nil, fmt.Errorf("bridge `extends` cycle detected at %q", curDir)
-		}
-		visited[curDir] = true
-		chain = append(chain, curDir)
-		r, err := renderer.New(curDir, log)
-		if err != nil {
-			return nil, err
-		}
-		ext := r.Extends()
-		if ext == "" {
-			break
-		}
-		next, err := bridge.ResolveExtendsRef(ext, curDir, resolver)
-		if err != nil {
-			return nil, fmt.Errorf("resolve bridge `extends: %s`: %w", ext, err)
-		}
-		if abs, err := filepath.Abs(next); err == nil {
-			next = abs
-		}
-		curDir = next
-	}
-	return chain, nil
+	return walkBridgeChain(entryDir, entryDir, log)
 }
 
 // resolveChainWithReplacements resolves the extends chain with --replace overrides.
@@ -569,7 +576,7 @@ func resolveChainWithReplacements(entryDir string, reps []replaceEntry, log *log
 		bases, err := resolveBaseChain(entryDir, r.Extends(), log)
 		return entryDir, bases, err
 	}
-	resolver := bridge.NewResolver(bridge.Default()).WithEnsureOptions(bridgeEnsureOptions(log))
+	resolver := newBridgeResolver(log)
 	fullChain, err := buildFullChainTopFirst(entryDir, log)
 	if err != nil {
 		return "", nil, err
@@ -914,34 +921,47 @@ func applyMigrationActions(diff *snapshot.Diff, fresh map[string]bool, log *logg
 	return applied, nil
 }
 
+// chooseMigrationFiles returns the files selected for cleanup. --prune takes
+// all of them; otherwise the caller's prompt decides. The non-interactive
+// fallback stays in the caller because its warning is operation-specific.
+func chooseMigrationFiles(files []snapshot.FileRef, prompt func([]interactive.FileChoice) ([]string, error)) (map[string]bool, error) {
+	selected := make(map[string]bool)
+	if prune {
+		for _, f := range files {
+			selected[f.Path] = true
+		}
+		return selected, nil
+	}
+	choices := make([]interactive.FileChoice, len(files))
+	for i, f := range files {
+		choices[i] = interactive.FileChoice{Path: f.Path, Label: fileLabel(f)}
+	}
+	picked, err := prompt(choices)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range picked {
+		selected[p] = true
+	}
+	return selected, nil
+}
+
 // handleDeletedEntity deletes generated files automatically and asks (or warns)
 // about custom files of a removed entity. Returns false when cleanup was
 // deferred (non-interactive without --prune).
 func handleDeletedEntity(del snapshot.DeletedEntity, fresh map[string]bool, log *logger.Logger, out io.Writer) (bool, error) {
-	selected := make(map[string]bool)
-
-	if prune {
-		for _, f := range del.Files {
-			selected[f.Path] = true
-		}
-	} else if interactive.IsTerminal() {
-		choices := make([]interactive.FileChoice, len(del.Files))
-		for i, f := range del.Files {
-			choices[i] = interactive.FileChoice{Path: f.Path, Label: fileLabel(f)}
-		}
-		picked, err := interactive.PromptDeleteFiles(del.Name, choices)
-		if err != nil {
-			return false, err
-		}
-		for _, p := range picked {
-			selected[p] = true
-		}
-	} else {
+	if !prune && !interactive.IsTerminal() {
 		log.Warn("Entity %q was removed from domain.yaml — orphaned files kept (re-run with --prune to delete):", del.Name)
 		for _, f := range del.Files {
 			fmt.Fprintf(out, "    - %s%s\n", f.Path, customMark(f))
 		}
 		return false, nil
+	}
+	selected, err := chooseMigrationFiles(del.Files, func(choices []interactive.FileChoice) ([]string, error) {
+		return interactive.PromptDeleteFiles(del.Name, choices)
+	})
+	if err != nil {
+		return false, err
 	}
 
 	for _, f := range del.Files {
@@ -963,30 +983,18 @@ func handleDeletedEntity(del snapshot.DeletedEntity, fresh map[string]bool, log 
 // identifiers), so the developer-owned file keeps compiling after the rename.
 // Returns false when cleanup was deferred (non-interactive without --prune).
 func handleRename(ren snapshot.Rename, d *snapshot.Diff, fresh map[string]bool, log *logger.Logger, out io.Writer) (bool, error) {
-	selected := make(map[string]bool)
-
-	if prune {
-		for _, f := range ren.Files {
-			selected[f.Path] = true
-		}
-	} else if interactive.IsTerminal() {
-		choices := make([]interactive.FileChoice, len(ren.Files))
-		for i, f := range ren.Files {
-			choices[i] = interactive.FileChoice{Path: f.Path, Label: fileLabel(f)}
-		}
-		picked, err := interactive.PromptRenameFiles(ren.OldName, ren.NewName, choices)
-		if err != nil {
-			return false, err
-		}
-		for _, p := range picked {
-			selected[p] = true
-		}
-	} else {
+	if !prune && !interactive.IsTerminal() {
 		log.Warn("Entity %q was renamed to %q — files kept (re-run with --prune to rename):", ren.OldName, ren.NewName)
 		for _, f := range ren.Files {
 			fmt.Fprintf(out, "    - %s -> %s\n", f.Path, snapshot.RenameRelPath(f.Path, ren.OldName, ren.NewName))
 		}
 		return false, nil
+	}
+	selected, err := chooseMigrationFiles(ren.Files, func(choices []interactive.FileChoice) ([]string, error) {
+		return interactive.PromptRenameFiles(ren.OldName, ren.NewName, choices)
+	})
+	if err != nil {
+		return false, err
 	}
 
 	for _, f := range ren.Files {
