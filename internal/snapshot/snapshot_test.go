@@ -58,6 +58,56 @@ func TestLoadMissingSnapshotReturnsNil(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsIncompatibleFormatVersion(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		version int
+		wantErr bool
+	}{
+		{name: "legacy zero", version: 0, wantErr: true},
+		{name: "future version", version: 2, wantErr: true},
+		{name: "negative version", version: -1, wantErr: true},
+		{name: "current version", version: FormatVersion, wantErr: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := Path(dir)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			data := []byte(fmt.Sprintf(`{"format_version":%d,"bridge":"demo","entities":{},"files":[]}`, tt.version))
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				t.Fatalf("write snapshot: %v", err)
+			}
+
+			loaded, err := Load(path)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Load() accepted format_version %d, want error", tt.version)
+				}
+				if loaded != nil {
+					t.Errorf("Load() returned a snapshot on error: %+v", loaded)
+				}
+				for _, want := range []string{path, fmt.Sprint(FormatVersion), fmt.Sprint(tt.version)} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("error %q missing %q", err.Error(), want)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if loaded == nil || loaded.FormatVersion != FormatVersion {
+				t.Fatalf("loaded snapshot = %+v, want format_version %d", loaded, FormatVersion)
+			}
+		})
+	}
+}
+
 func TestComputeDiffDeletedEntity(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

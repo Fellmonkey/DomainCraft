@@ -74,6 +74,15 @@ func Load(path string) (*Snapshot, error) {
 	if err := json.Unmarshal(data, &snap); err != nil {
 		return nil, fmt.Errorf("parse snapshot %s: %w", path, err)
 	}
+	// Fail closed on any version we did not write ourselves. A snapshot with
+	// format_version 0 predates the field: its shape is unknown, and treating
+	// it as current could make `--prune` delete custom files or run DB
+	// migrations against a model the developer never declared. Future versions
+	// (and negative values) are equally untrusted. Regenerating the project
+	// from scratch is the only safe recovery.
+	if snap.FormatVersion != FormatVersion {
+		return nil, fmt.Errorf("incompatible snapshot %s: expected format_version %d, got %d", path, FormatVersion, snap.FormatVersion)
+	}
 	return &snap, nil
 }
 
