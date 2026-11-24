@@ -43,6 +43,31 @@ func seedVersion(t *testing.T, bridgeID, key, version string, storedAt time.Time
 	}
 }
 
+// Different target frameworks must never share a cached version: a net10
+// generation after a net11 one still needs a 10.x package.
+func TestCachedVersionIsPerFramework(t *testing.T) {
+	resetCacheRoot(t)
+	old := resolveVersionForFrameworkFn
+	defer func() { resolveVersionForFrameworkFn = old }()
+	calls := 0
+	resolveVersionForFrameworkFn = func(_, _, framework string) (string, error) {
+		calls++
+		if framework == "net10.0" {
+			return "10.0.0", nil
+		}
+		return "11.0.0", nil
+	}
+
+	for _, framework := range []string{"net10.0", "net11.0", "net10.0"} {
+		if _, err := ResolveVersionCachedForFramework("csharp-rest", "https://reg.example/{id}", "ef", framework); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("resolver calls = %d, want 2 (one miss per framework)", calls)
+	}
+}
+
 func TestVersionStoreIsPerBridge(t *testing.T) {
 	resetCacheRoot(t)
 

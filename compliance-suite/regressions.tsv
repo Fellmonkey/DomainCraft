@@ -8,3 +8,4 @@
 # in the second, and one line on what broke in the third.
 internal/validator/validator_test.go::TestValidateReconciledWarningKeepsFKName	#3	FK field ending in Id got a second Id in the reconciliation warning
 internal/validator/validator_test.go::TestExampleDomainHasNoWarnings	#3	shipped example emitted a reconciliation warning
+internal/packages/registry_test.go::TestResolveVersionForFrameworkRespectsTargetFramework	#3	NuGet resolver picked a version above the generated net10.0 target

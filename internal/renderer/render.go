@@ -25,7 +25,9 @@ func (r *Renderer) Render(project *ir.IRProject, outputDir string) ([]string, []
 	}
 
 	// Resolve package versions once — avoids repeated HTTP requests per template.
-	pkgs := r.resolvePackages()
+	// The target framework constrains the major version (net10.0 cannot use
+	// packages that only ship for net11.0).
+	pkgs := r.resolvePackages(project)
 
 	// Parse shared helper templates from every bridge in the chain (base first,
 	// adapter last). They define named templates ({{ define "name" }}) that all
@@ -237,7 +239,15 @@ func (r *Renderer) shouldRenderContext(spec TemplateSpec, context RenderContext)
 // When the renderer is composed (extends chain), registry_packages from all
 // bridges are merged base-first so inner layers can declare their own
 // dependencies; the adapter's values win on conflicts.
-func (r *Renderer) resolvePackages() map[string]string {
+func (r *Renderer) resolvePackages(project *ir.IRProject) map[string]string {
+	framework := ""
+	if project != nil {
+		framework = project.Platform
+	}
+	if framework == "" {
+		framework = "net10.0" // same default as the C# csproj templates
+	}
+
 	// Merge registry_packages from all sources in the chain (base-first,
 	// adapter wins on conflicts — consistent with type_mappings merge).
 	merged := make(map[string]string)
@@ -267,7 +277,7 @@ func (r *Renderer) resolvePackages() map[string]string {
 
 	result := make(map[string]string, len(merged))
 	for key, packageID := range merged {
-		version, err := packages.ResolveVersionCached(r.cacheNamespace(), registryURL, packageID)
+		version, err := packages.ResolveVersionCachedForFramework(r.cacheNamespace(), registryURL, packageID, framework)
 		if err != nil {
 			r.log.Warn("failed to resolve package %s: %v", packageID, err)
 			continue

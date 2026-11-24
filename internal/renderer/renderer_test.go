@@ -351,7 +351,7 @@ func TestResolvePackagesNilLoggerDoesNotPanic(t *testing.T) {
 		RegistryURL:      server.URL + "/{id}/index.json",
 		RegistryPackages: map[string]string{"jwt_bearer": "Microsoft.AspNetCore.Authentication.JwtBearer"},
 	}}}}
-	got := r.resolvePackages()
+	got := r.resolvePackages(nil)
 	if len(got) != 0 {
 		t.Fatalf("resolvePackages() = %v, want no resolved versions on failure", got)
 	}

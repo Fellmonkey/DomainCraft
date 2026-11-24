@@ -53,6 +53,57 @@ func TestResolveVersionPicksHighestStable(t *testing.T) {
 	}
 }
 
+func TestMaxMajorForFramework(t *testing.T) {
+	cases := map[string]int{
+		"net10.0": 10, "net11.0": 11, "net9.0": 9,
+		"netstandard2.0": 0, "": 0, "java21": 0,
+	}
+	for framework, want := range cases {
+		if got := MaxMajorForFramework(framework); got != want {
+			t.Errorf("MaxMajorForFramework(%q) = %d, want %d", framework, got, want)
+		}
+	}
+}
+
+// Regression: the NuGet resolver used to return the newest stable version even
+// when the generated csproj targets an older runtime (efcore 11.x vs net10.0).
+func TestResolveVersionForFrameworkRespectsTargetFramework(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"versions":["9.0.9","11.0.0","10.0.0","12.0.0-rc1"]}`))
+	}))
+	defer srv.Close()
+
+	for _, tc := range []struct {
+		framework string
+		want      string
+	}{
+		{"net10.0", "10.0.0"},
+		{"net11.0", "11.0.0"},
+		{"netstandard2.0", "11.0.0"},
+		{"", "11.0.0"},
+	} {
+		got, err := ResolveVersionForFramework(srv.URL+"/{id}/index.json", "Microsoft.EntityFrameworkCore", tc.framework)
+		if err != nil {
+			t.Fatalf("framework %q: %v", tc.framework, err)
+		}
+		if got != tc.want {
+			t.Errorf("framework %q: version = %q, want %q", tc.framework, got, tc.want)
+		}
+	}
+}
+
+func TestResolveVersionForFrameworkFallsBackWhenNoCompatibleVersion(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"versions":["11.0.0"]}`))
+	}))
+	defer srv.Close()
+	got, err := ResolveVersionForFramework(srv.URL+"/{id}/index.json", "demo.pkg", "net10.0")
+	if err != nil || got != "11.0.0" {
+		t.Fatalf("version = %q, %v; want 11.0.0, nil", got, err)
+	}
+}
+
 func TestResolveVersionErrors(t *testing.T) {
 	cases := []struct {
 		name    string

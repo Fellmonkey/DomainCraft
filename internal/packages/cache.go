@@ -33,6 +33,10 @@ func cacheKey(registryURL, packageID string) string {
 // is a variable so tests can substitute a fake (avoiding a real network call).
 var resolveVersionFn = ResolveVersion
 
+// resolveVersionForFrameworkFn is the TFM-aware lookup used by renderers. It is
+// a separate seam so the version-filtering logic can be tested offline.
+var resolveVersionForFrameworkFn = ResolveVersionForFramework
+
 // versionStore loads (or initializes) the package-version cache file for a
 // single bridge. Every bridge keeps its own file
 // (~/.domaincraft/cache/<bridge>/packages.json), so with many bridges the
@@ -91,6 +95,32 @@ func ResolveVersionCached(bridgeID, registryURL, packageID string) (string, erro
 		return "", nil
 	}
 
+	entries[key] = versionEntry{Value: version, StoredAt: time.Now()}
+	persistVersionCache(bridgeID, entries)
+	return version, nil
+}
+
+// ResolveVersionCachedForFramework is the TFM-aware counterpart of
+// ResolveVersionCached. The framework is part of the cache key: the same bridge
+// regenerated for net10.0 and net11.0 must not reuse an incompatible version.
+func ResolveVersionCachedForFramework(bridgeID, registryURL, packageID, targetFramework string) (string, error) {
+	key := cacheKey(registryURL, packageID) + "\x00" + targetFramework
+
+	entries, err := versionStore(bridgeID)
+	if err != nil {
+		return resolveVersionForFrameworkFn(registryURL, packageID, targetFramework)
+	}
+	if e, ok := entries[key]; ok && e.Value != "" && time.Since(e.StoredAt) <= DefaultCacheTTL {
+		return e.Value, nil
+	}
+
+	version, err := resolveVersionForFrameworkFn(registryURL, packageID, targetFramework)
+	if err != nil {
+		return "", err
+	}
+	if version == "" {
+		return "", nil
+	}
 	entries[key] = versionEntry{Value: version, StoredAt: time.Now()}
 	persistVersionCache(bridgeID, entries)
 	return version, nil
