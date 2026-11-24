@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -57,6 +58,9 @@ var httpGetBodyFn = httpGetBody
 var (
 	executableFn        = os.Executable
 	replaceExecutableFn = replaceExecutable
+	chmodFn             = os.Chmod
+	renameFn            = os.Rename
+	removeFn            = os.Remove
 )
 
 // githubRelease is the subset of the GitHub releases/latest payload we need.
@@ -206,7 +210,8 @@ func runCoreUpdate(log *logger.Logger, checkOnly bool) error {
 	if err := replaceExecutableFn(tmp, exe); err != nil {
 		return err
 	}
-
+	// The new binary is in place only now: a failed rename above never reports
+	// success, even when the old executable had to be moved aside first.
 	log.Success("Updated to v%s (was v%s). Re-run the command to use the new version.", latest, current)
 	return nil
 }
@@ -395,7 +400,11 @@ func downloadBinary(rawURL string) (string, error) {
 		return "", err
 	}
 	if runtime.GOOS != "windows" {
-		_ = os.Chmod(tmp.Name(), 0o755) //nolint:gosec // the downloaded binary must be executable
+		// A non-executable download must never reach the install step.
+		if err := chmodFn(tmp.Name(), 0o755); err != nil { //nolint:gosec // the downloaded binary must be executable
+			_ = os.Remove(tmp.Name())
+			return "", fmt.Errorf("make downloaded update executable: %w", err)
+		}
 	}
 	return tmp.Name(), nil
 }
@@ -404,18 +413,34 @@ func downloadBinary(rawURL string) (string, error) {
 // first tries a direct rename; on platforms where the running binary is locked
 // (Windows), it moves the current one aside first.
 func replaceExecutable(tmp, exe string) error {
-	if err := os.Rename(tmp, exe); err == nil {
+	// Direct rename is the normal path. Its error is kept: on a locked binary
+	// it explains why the fallback was needed, and on a real failure it is the
+	// only cause reported to the user.
+	firstErr := renameFn(tmp, exe)
+	if firstErr == nil {
 		return nil
 	}
+
+	// Windows keeps the running executable locked, so move it aside first.
+	// Every failure mentions `old` — a human must be able to recover by hand.
 	old := exe + ".old"
-	_ = os.Remove(old)
-	if err := os.Rename(exe, old); err != nil {
-		return fmt.Errorf("update in place failed; replace %s manually or run go install: %w", exe, err)
+	if err := removeFn(old); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove previous backup %s: %w", old, err)
 	}
-	if err := os.Rename(tmp, exe); err != nil {
-		_ = os.Rename(old, exe) // restore the original
-		return fmt.Errorf("could not install update: %w", err)
+	if err := renameFn(exe, old); err != nil {
+		return fmt.Errorf("update in place failed; replace %s manually or run go install (backup path %s): %w",
+			exe, old, errors.Join(firstErr, fmt.Errorf("move %s to %s: %w", exe, old, err)))
 	}
-	_ = os.Remove(old)
+	if err := renameFn(tmp, exe); err != nil {
+		restoreErr := renameFn(old, exe)
+		return fmt.Errorf("could not install update to %s (backup at %s): %w", exe, old, errors.Join(
+			fmt.Errorf("initial rename: %w", firstErr),
+			fmt.Errorf("rename update into place: %w", err),
+			fmt.Errorf("restore %s from %s: %w", exe, old, restoreErr),
+		))
+	}
+	if err := removeFn(old); err != nil {
+		return fmt.Errorf("update installed to %s but could not remove backup %s: %w", exe, old, err)
+	}
 	return nil
 }

@@ -27,6 +27,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/DomainCraft/DomainCraft/internal/bridge"
 	"github.com/DomainCraft/DomainCraft/internal/fsutil"
@@ -380,22 +381,21 @@ func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// --- Smart warning for type changes (manual refactoring report) ---
-	if report := migrationDiff.TypeChangeReport(); report != "" {
-		log.Warn("ACTION REQUIRED — manual refactoring may be needed")
-		_, _ = fmt.Fprint(cmd.OutOrStdout(), report)
-	}
-
-	// --- Smart warning for field renames (data-preserving column rename) ---
-	if report := migrationDiff.FieldRenameReport(); report != "" {
-		log.Warn("ACTION REQUIRED — fields were renamed; apply a safe column rename to avoid data loss")
-		_, _ = fmt.Fprint(cmd.OutOrStdout(), report)
-	}
-
-	// --- Project-rename warning: custom files with a stale root namespace ---
-	if report := migrationDiff.NamespaceRenameReport(); report != "" {
-		log.Warn("ACTION REQUIRED — project was renamed; custom files reference the old namespace")
-		_, _ = fmt.Fprint(cmd.OutOrStdout(), report)
+	// --- Smart refactoring reports ---
+	// The warning goes to stderr; the multi-line report is command data and
+	// stays on stdout so it can be piped. Order is fixed for deterministic runs.
+	for _, r := range []struct {
+		report  func() string
+		warning string
+	}{
+		{migrationDiff.TypeChangeReport, "ACTION REQUIRED — manual refactoring may be needed"},
+		{migrationDiff.FieldRenameReport, "ACTION REQUIRED — fields were renamed; apply a safe column rename to avoid data loss"},
+		{migrationDiff.NamespaceRenameReport, "ACTION REQUIRED — project was renamed; custom files reference the old namespace"},
+	} {
+		if report := r.report(); report != "" {
+			log.Warn("%s", r.warning)
+			_, _ = fmt.Fprint(cmd.OutOrStdout(), report)
+		}
 	}
 
 	// --- Persist the new snapshot ---
@@ -770,7 +770,7 @@ func bridgeMetadata(dir string) (id, version string, contractVersion int, err er
 		return "", "", 0, err
 	}
 	if cfg.ContractVersion == 0 {
-		cfg.ContractVersion = 1
+		cfg.ContractVersion = specmeta.ContractVersion
 	}
 	return cfg.Name, cfg.Version, cfg.ContractVersion, nil
 }
@@ -861,13 +861,15 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 	}
 	out := cmd.OutOrStdout()
 	// The resolved command lines are printed before they run, so the developer
-	// always sees exactly what will be executed (Phase 3.5 safety).
+	// always sees exactly what will be executed (Phase 3.5 safety). Bridge YAML
+	// is untrusted input: strip terminal controls before showing or logging a
+	// command. Execution still uses the original line, unchanged.
 	_, _ = fmt.Fprintf(out, "  Applying %d database migration command(s):\n", len(cfg.Commands))
 	for i, command := range cfg.Commands {
-		_, _ = fmt.Fprintf(out, "    %d) %s\n", i+1, command)
+		_, _ = fmt.Fprintf(out, "    %d) %s\n", i+1, sanitizeCommandLine(command))
 	}
 	for i, command := range cfg.Commands {
-		log.Info("Migration %d/%d: %s", i+1, len(cfg.Commands), command)
+		log.Info("Migration %d/%d: %s", i+1, len(cfg.Commands), sanitizeCommandLine(command))
 		var argv []string
 		var shell string
 		if runtime.GOOS == "windows" {
@@ -889,6 +891,63 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 	return nil
 }
 
+// ansiSequenceRe matches complete ESC-led terminal sequences: CSI, OSC and
+// two-byte Fe controls. A bare ESC (no valid sequence) is dropped separately.
+var ansiSequenceRe = regexp.MustCompile(`\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|[@-_])`)
+
+// sanitizeCommandLine removes terminal control characters from a bridge-declared
+// command before it is displayed or logged. Tab and newline are kept; C0 (other
+// than those two), C1, CSI/OSC sequences, bare ESC and invalid UTF-8 bytes are
+// dropped. The command itself is never modified — only its presentation.
+func sanitizeCommandLine(s string) string {
+	s = ansiSequenceRe.ReplaceAllString(s, "")
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c == 0x1b { // ESC without a complete sequence
+			i++
+			continue
+		}
+		if c < utf8.RuneSelf {
+			if (c < 0x20 && c != '\t' && c != '\n') || c == 0x7f {
+				i++
+				continue
+			}
+			b.WriteByte(c)
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 { // invalid byte
+			i++
+			continue
+		}
+		if r >= 0x80 && r <= 0x9f { // C1 controls
+			i += size
+			continue
+		}
+		b.WriteString(s[i : i+size])
+		i += size
+	}
+	return b.String()
+}
+
+// migrationContext bundles the state shared by every cleanup handler.
+type migrationContext struct {
+	opts  *cliOptions
+	fresh map[string]bool
+	log   *logger.Logger
+	out   io.Writer // stdout: orphan lists are command data, progress goes to log
+}
+
+// cleanupDeferred reports whether a run must keep cleanup pending: non-interactive
+// (or no TTY) without --prune. The previous snapshot stays on disk so a later
+// --prune run can still find the orphaned files.
+func cleanupDeferred(opts *cliOptions) bool {
+	return !opts.prune && (opts.nonInteractive || !isTerminal())
+}
+
 // applyMigrationActions handles orphaned file cleanup for entities that were
 // removed or renamed since the last generation. In interactive mode the user
 // is prompted before touching custom (overwrite: false) files. With --prune
@@ -900,11 +959,16 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 // (non-interactive without --prune) it returns false so the caller keeps the
 // previous snapshot — otherwise orphaned files would be forgotten and a later
 // --prune run could no longer find them.
+//
+// Under --prune a failed rewrite, delete or rename is a hard error: the caller
+// must not advance the snapshot, or the failed cleanup becomes unrecoverable.
+// Without --prune the advisory warn-and-continue behavior is preserved.
 func applyMigrationActions(opts *cliOptions, diff *snapshot.Diff, fresh map[string]bool, log *logger.Logger, cmd *cobra.Command) (bool, error) {
 	if diff == nil || diff.IsEmpty() {
 		return true, nil
 	}
-	out := cmd.OutOrStdout()
+	mc := migrationContext{opts: opts, fresh: fresh, log: log, out: cmd.OutOrStdout()}
+	var failures []error
 
 	// In --prune mode the tool owns the whole cleanup, so it also rewrites
 	// identifier references in developer-owned files: the project's root
@@ -914,31 +978,33 @@ func applyMigrationActions(opts *cliOptions, diff *snapshot.Diff, fresh map[stri
 	if opts.prune {
 		if diff.NamespaceRename != nil {
 			for _, rel := range diff.NamespaceRename.Files {
-				if fresh[rel] {
+				if mc.fresh[rel] {
 					continue
 				}
 				rewrote, err := snapshot.RewriteFile(opts.outputDir, rel, snapshot.NamespaceTransform(diff.NamespaceRename))
 				if err != nil {
-					log.Warn("could not rewrite namespace in %s: %v", rel, err)
+					mc.log.Warn("could not rewrite namespace in %s: %v", rel, err)
+					failures = append(failures, fmt.Errorf("rewrite namespace in %s: %w", rel, err))
 					continue
 				}
 				if rewrote {
-					_, _ = fmt.Fprintf(out, "  ▸ updated namespace %s -> %s in %s\n", diff.NamespaceRename.OldNamespace, diff.NamespaceRename.NewNamespace, rel)
+					mc.log.Info("updated namespace %s -> %s in %s", diff.NamespaceRename.OldNamespace, diff.NamespaceRename.NewNamespace, rel)
 				}
 			}
 		}
 		for _, fr := range diff.FieldRenames {
 			for _, rel := range fr.CustomFiles {
-				if fresh[rel] {
+				if mc.fresh[rel] {
 					continue
 				}
 				rewrote, err := snapshot.RewriteFile(opts.outputDir, rel, snapshot.FieldTransform(fr))
 				if err != nil {
-					log.Warn("could not rewrite field references in %s: %v", rel, err)
+					mc.log.Warn("could not rewrite field references in %s: %v", rel, err)
+					failures = append(failures, fmt.Errorf("rewrite field references in %s: %w", rel, err))
 					continue
 				}
 				if rewrote {
-					_, _ = fmt.Fprintf(out, "  ▸ updated field %s -> %s in %s\n", fr.OldField, fr.NewField, rel)
+					mc.log.Info("updated field %s -> %s in %s", fr.OldField, fr.NewField, rel)
 				}
 			}
 		}
@@ -949,9 +1015,14 @@ func applyMigrationActions(opts *cliOptions, diff *snapshot.Diff, fresh map[stri
 		if len(del.Files) == 0 {
 			continue
 		}
-		done, err := handleDeletedEntity(opts, del, fresh, log, out)
+		done, err := handleDeletedEntity(mc, del)
 		if err != nil {
-			return false, err
+			if !opts.prune {
+				return false, err
+			}
+			failures = append(failures, err)
+			applied = false
+			continue
 		}
 		applied = applied && done
 	}
@@ -960,11 +1031,19 @@ func applyMigrationActions(opts *cliOptions, diff *snapshot.Diff, fresh map[stri
 		if len(ren.Files) == 0 {
 			continue
 		}
-		done, err := handleRename(opts, ren, diff, fresh, log, out)
+		done, err := handleRename(mc, ren, diff)
 		if err != nil {
-			return false, err
+			if !opts.prune {
+				return false, err
+			}
+			failures = append(failures, err)
+			applied = false
+			continue
 		}
 		applied = applied && done
+	}
+	if err := errors.Join(failures...); err != nil {
+		return false, err
 	}
 	return applied, nil
 }
@@ -996,31 +1075,39 @@ func chooseMigrationFiles(opts *cliOptions, files []snapshot.FileRef, prompt fun
 
 // handleDeletedEntity deletes generated files automatically and asks (or warns)
 // about custom files of a removed entity. Returns false when cleanup was
-// deferred (non-interactive without --prune).
-func handleDeletedEntity(opts *cliOptions, del snapshot.DeletedEntity, fresh map[string]bool, log *logger.Logger, out io.Writer) (bool, error) {
-	if !opts.prune && (opts.nonInteractive || !isTerminal()) {
-		log.Warn("Entity %q was removed from domain.yaml — orphaned files kept (re-run with --prune to delete):", del.Name)
+// deferred (non-interactive without --prune). Under --prune, delete failures are
+// returned so the snapshot is not advanced past an unrecoverable cleanup.
+func handleDeletedEntity(mc migrationContext, del snapshot.DeletedEntity) (bool, error) {
+	if cleanupDeferred(mc.opts) {
+		mc.log.Warn("Entity %q was removed from domain.yaml — orphaned files kept (re-run with --prune to delete):", del.Name)
 		for _, f := range del.Files {
-			_, _ = fmt.Fprintf(out, "    - %s%s\n", f.Path, customMark(f))
+			_, _ = fmt.Fprintf(mc.out, "    - %s%s\n", f.Path, customMark(f))
 		}
 		return false, nil
 	}
-	selected, err := chooseMigrationFiles(opts, del.Files, func(choices []interactive.FileChoice) ([]string, error) {
+	selected, err := chooseMigrationFiles(mc.opts, del.Files, func(choices []interactive.FileChoice) ([]string, error) {
 		return interactive.PromptDeleteFiles(del.Name, choices)
 	})
 	if err != nil {
 		return false, err
 	}
 
+	var failures []error
 	for _, f := range del.Files {
-		if !selected[f.Path] || fresh[f.Path] {
+		if !selected[f.Path] || mc.fresh[f.Path] {
 			continue
 		}
-		if err := snapshot.DeleteFile(opts.outputDir, f.Path); err != nil {
-			log.Warn("could not delete %s: %v", f.Path, err)
+		if err := snapshot.DeleteFile(mc.opts.outputDir, f.Path); err != nil {
+			mc.log.Warn("could not delete %s: %v", f.Path, err)
+			if mc.opts.prune {
+				failures = append(failures, fmt.Errorf("delete %s: %w", f.Path, err))
+			}
 			continue
 		}
-		_, _ = fmt.Fprintf(out, "  ▸ deleted %s\n", f.Path)
+		mc.log.Info("deleted %s", f.Path)
+	}
+	if err := errors.Join(failures...); err != nil {
+		return false, err
 	}
 	return true, nil
 }
@@ -1030,58 +1117,74 @@ func handleDeletedEntity(opts *cliOptions, del snapshot.DeletedEntity, fresh map
 // the renamed files' contents are rewritten too (entity, namespace and field
 // identifiers), so the developer-owned file keeps compiling after the rename.
 // Returns false when cleanup was deferred (non-interactive without --prune).
-func handleRename(opts *cliOptions, ren snapshot.Rename, d *snapshot.Diff, fresh map[string]bool, log *logger.Logger, out io.Writer) (bool, error) {
-	if !opts.prune && (opts.nonInteractive || !isTerminal()) {
-		log.Warn("Entity %q was renamed to %q — files kept (re-run with --prune to rename):", ren.OldName, ren.NewName)
+func handleRename(mc migrationContext, ren snapshot.Rename, d *snapshot.Diff) (bool, error) {
+	if cleanupDeferred(mc.opts) {
+		mc.log.Warn("Entity %q was renamed to %q — files kept (re-run with --prune to rename):", ren.OldName, ren.NewName)
 		for _, f := range ren.Files {
-			_, _ = fmt.Fprintf(out, "    - %s -> %s\n", f.Path, snapshot.RenameRelPath(f.Path, ren.OldName, ren.NewName))
+			_, _ = fmt.Fprintf(mc.out, "    - %s -> %s\n", f.Path, snapshot.RenameRelPath(f.Path, ren.OldName, ren.NewName))
 		}
 		return false, nil
 	}
-	selected, err := chooseMigrationFiles(opts, ren.Files, func(choices []interactive.FileChoice) ([]string, error) {
+	selected, err := chooseMigrationFiles(mc.opts, ren.Files, func(choices []interactive.FileChoice) ([]string, error) {
 		return interactive.PromptRenameFiles(ren.OldName, ren.NewName, choices)
 	})
 	if err != nil {
 		return false, err
 	}
 
+	var failures []error
 	for _, f := range ren.Files {
-		if !selected[f.Path] || fresh[f.Path] {
+		if !selected[f.Path] || mc.fresh[f.Path] {
 			continue
 		}
 		if f.Custom {
 			newRel := snapshot.RenameRelPath(f.Path, ren.OldName, ren.NewName)
-			if fresh[newRel] {
+			if mc.fresh[newRel] {
 				// The destination was scaffolded this run by the custom
 				// (overwrite: false) template. Replace it with the developer's
 				// existing custom file so custom hooks survive the rename.
-				if err := os.Remove(filepath.Join(opts.outputDir, filepath.FromSlash(newRel))); err != nil {
-					log.Warn("could not replace scaffolded %s: %v", newRel, err)
+				if err := os.Remove(filepath.Join(mc.opts.outputDir, filepath.FromSlash(newRel))); err != nil {
+					mc.log.Warn("could not replace scaffolded %s: %v", newRel, err)
+					if mc.opts.prune {
+						failures = append(failures, fmt.Errorf("replace scaffolded %s: %w", newRel, err))
+					}
 					continue
 				}
 			}
-			newRel, renamed, err := snapshot.RenameEntityFile(opts.outputDir, f.Path, ren.OldName, ren.NewName)
+			newRel, renamed, err := snapshot.RenameEntityFile(mc.opts.outputDir, f.Path, ren.OldName, ren.NewName)
 			if err != nil {
-				log.Warn("could not rename %s: %v", f.Path, err)
+				mc.log.Warn("could not rename %s: %v", f.Path, err)
+				if mc.opts.prune {
+					failures = append(failures, fmt.Errorf("rename %s: %w", f.Path, err))
+				}
 				continue
 			}
 			if renamed {
-				if rewrote, rerr := snapshot.RewriteFile(opts.outputDir, newRel, snapshot.RenameTransforms(ren.OldName, ren.NewName, d)...); rerr != nil {
-					log.Warn("could not rewrite content of %s: %v", newRel, rerr)
+				if rewrote, rerr := snapshot.RewriteFile(mc.opts.outputDir, newRel, snapshot.RenameTransforms(ren.OldName, ren.NewName, d)...); rerr != nil {
+					mc.log.Warn("could not rewrite content of %s: %v", newRel, rerr)
+					if mc.opts.prune {
+						failures = append(failures, fmt.Errorf("rewrite content of %s: %w", newRel, rerr))
+					}
 				} else if rewrote {
-					_, _ = fmt.Fprintf(out, "  ▸ renamed %s -> %s (content updated)\n", f.Path, newRel)
+					mc.log.Info("renamed %s -> %s (content updated)", f.Path, newRel)
 					continue
 				}
-				_, _ = fmt.Fprintf(out, "  ▸ renamed %s -> %s\n", f.Path, newRel)
+				mc.log.Info("renamed %s -> %s", f.Path, newRel)
 			}
 			continue
 		}
 		// Generated files have been regenerated under the new name — remove the stale copy.
-		if err := snapshot.DeleteFile(opts.outputDir, f.Path); err != nil {
-			log.Warn("could not delete stale generated file %s: %v", f.Path, err)
+		if err := snapshot.DeleteFile(mc.opts.outputDir, f.Path); err != nil {
+			mc.log.Warn("could not delete stale generated file %s: %v", f.Path, err)
+			if mc.opts.prune {
+				failures = append(failures, fmt.Errorf("delete stale generated file %s: %w", f.Path, err))
+			}
 			continue
 		}
-		_, _ = fmt.Fprintf(out, "  ▸ removed stale generated file %s\n", f.Path)
+		mc.log.Info("removed stale generated file %s", f.Path)
+	}
+	if err := errors.Join(failures...); err != nil {
+		return false, err
 	}
 	return true, nil
 }
@@ -1133,11 +1236,11 @@ func loadAndValidate(opts *cliOptions, cmd *cobra.Command) (*parser.ParsedSchema
 		return nil, err
 	}
 
-	errOut := cmd.ErrOrStderr()
+	log := commandLogger(cmd)
 	hardErrors := make([]error, 0)
 	for _, e := range validator.New(schema).Validate() {
 		if e.Warning {
-			_, _ = fmt.Fprintf(errOut, "⚠ %s\n", e.Error())
+			log.Warn("%s", e.Error())
 			continue
 		}
 		hardErrors = append(hardErrors, e)

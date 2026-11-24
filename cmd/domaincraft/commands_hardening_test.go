@@ -7,10 +7,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/DomainCraft/DomainCraft/internal/bridge"
+	"github.com/DomainCraft/DomainCraft/internal/renderer"
 	"github.com/DomainCraft/DomainCraft/internal/snapshot"
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
 
@@ -93,7 +95,8 @@ func TestMigrationCleanupDeferredOnTTYWhenNonInteractive(t *testing.T) {
 		log.SetWriter(&logOut)
 		var fileOut bytes.Buffer
 
-		applied, err := handleDeletedEntity(opts, snapshotDeleted(rel), map[string]bool{}, log, &fileOut)
+		mc := migrationContext{opts: opts, fresh: map[string]bool{}, log: log, out: &fileOut}
+		applied, err := handleDeletedEntity(mc, snapshotDeleted(rel))
 		if err != nil || applied {
 			t.Fatalf("handleDeletedEntity = %v, %v; want false, nil", applied, err)
 		}
@@ -120,7 +123,8 @@ func TestMigrationCleanupDeferredOnTTYWhenNonInteractive(t *testing.T) {
 		log.SetWriter(&logOut)
 		var fileOut bytes.Buffer
 
-		applied, err := handleRename(opts, snapshotRename(rel), nil, map[string]bool{}, log, &fileOut)
+		mc := migrationContext{opts: opts, fresh: map[string]bool{}, log: log, out: &fileOut}
+		applied, err := handleRename(mc, snapshotRename(rel), nil)
 		if err != nil || applied {
 			t.Fatalf("handleRename = %v, %v; want false, nil", applied, err)
 		}
@@ -131,6 +135,88 @@ func TestMigrationCleanupDeferredOnTTYWhenNonInteractive(t *testing.T) {
 			t.Errorf("missing non-interactive warning: %q", logOut.String())
 		}
 	})
+}
+
+func TestCleanupDeferred(t *testing.T) {
+	stubTerminal(t, true)
+	cases := []struct {
+		name string
+		opts cliOptions
+		want bool
+	}{
+		{"prune on a TTY", cliOptions{prune: true}, false},
+		{"prune non-interactive", cliOptions{prune: true, nonInteractive: true}, false},
+		{"interactive on a TTY", cliOptions{}, false},
+		{"non-interactive on a TTY", cliOptions{nonInteractive: true}, true},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := cleanupDeferred(&tt.opts); got != tt.want {
+				t.Fatalf("cleanupDeferred(%+v) = %v, want %v", tt.opts, got, tt.want)
+			}
+		})
+	}
+
+	stubTerminal(t, false)
+	if !cleanupDeferred(&cliOptions{}) {
+		t.Fatal("cleanup must be deferred without a TTY")
+	}
+}
+
+func TestSanitizeCommandLine(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"CSI", "echo \x1b[2JSAFE", "echo SAFE"},
+		{"OSC with BEL", "\x1b]0;pwn\x07echo SAFE", "echo SAFE"},
+		{"OSC with ST", "echo SAFE\x1b]0;pwn\x1b\\", "echo SAFE"},
+		{"C0 and DEL", "echo\tSAFE\r\n\x00\x07\x7f", "echo\tSAFE\n"},
+		{"C1", "echo\u0085SAFE\u009f", "echoSAFE"},
+		{"bare ESC", "echo SAFE\x1b", "echo SAFE"},
+		{"UTF-8 preserved", "echo Привет", "echo Привет"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sanitizeCommandLine(tt.in); got != tt.want {
+				t.Fatalf("sanitizeCommandLine(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRunDatabaseMigrationsSanitizesDisplayedCommand uses a shell comment to
+// carry the control bytes: the command stays harmless while exercising the
+// consent-review output. Only presentation is sanitized; execution is unchanged.
+func TestRunDatabaseMigrationsSanitizesDisplayedCommand(t *testing.T) {
+	evil := "\x1b[31mRED\x1b[0m \x1b]0;window-title\x07 \x07"
+	command := "echo SAFE # " + evil
+	if runtime.GOOS == "windows" {
+		command = "echo SAFE & rem " + evil
+	}
+	cfg := &renderer.MigrationConfig{Enabled: true, Commands: []string{command}}
+	cmd := &cobra.Command{}
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	log := logger.New()
+	log.SetWriter(&stderr)
+
+	if err := runDatabaseMigrations(cfg, t.TempDir(), cmd, log); err != nil {
+		t.Fatalf("runDatabaseMigrations: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "echo SAFE") || !strings.Contains(stderr.String(), "echo SAFE") {
+		t.Fatalf("command was not displayed: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	if strings.Contains(stdout.String(), "\x1b") {
+		t.Errorf("raw escape byte reached stdout: %q", stdout.String())
+	}
+	for _, injected := range []string{"\x1b[31m", "\x1b]0;", "\x07"} {
+		if strings.Contains(stderr.String(), injected) {
+			t.Errorf("raw escape byte %q reached stderr: %q", injected, stderr.String())
+		}
+	}
 }
 
 func TestLoadAndValidateSendsDiagnosticsToStderr(t *testing.T) {
