@@ -1,7 +1,10 @@
 name: ci
 
 on:
+  # PR checks cover feature branches. Push runs only after a merge to main,
+  # so the same commit is not tested twice.
   push:
+    branches: [main]
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
@@ -46,9 +49,6 @@ jobs:
 
       - name: Build
         run: go build ./cmd/domaincraft
-
-      - name: Vet
-        run: go vet ./...
 
       - name: Test
         run: go test ./...

@@ -9,7 +9,9 @@ name: bridges
 # keeps the toolchain single-language (Go only).
 
 on:
+  # PR checks cover feature branches; push runs once after a merge to main.
   push:
+    branches: [main]
     paths:
       - 'bridges/**'
       - 'internal/**'
@@ -37,7 +39,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.27'
+          go-version: '1.27.4'
           cache: true
           cache-dependency-path: go.sum
 
