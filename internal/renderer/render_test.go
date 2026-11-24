@@ -1,10 +1,12 @@
 package renderer
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DomainCraft/DomainCraft/internal/ir"
@@ -353,20 +355,52 @@ func TestRenderContext_PrimaryKey(t *testing.T) {
 
 func TestResolvePackagesNilLoggerDoesNotPanic(t *testing.T) {
 	t.Parallel()
-	// A nil logger is valid (silent mode). Failed package resolution must not
-	// panic when the logger is nil — Warn is a no-op on a nil Logger.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// A nil logger is valid (silent mode). A failed registry lookup must not
+	// panic or abort the render. Drive this through the public New()/Render()
+	// API so the test covers the same path a CLI run takes.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	}))
 	defer server.Close()
 
-	r := &Renderer{log: nil, sources: []sourceConfig{{config: BridgeConfig{
-		RegistryURL:      server.URL + "/{id}/index.json",
-		RegistryPackages: map[string]string{"jwt_bearer": "Microsoft.AspNetCore.Authentication.JwtBearer"},
-	}}}}
-	got := r.resolvePackages(nil)
-	if len(got) != 0 {
-		t.Fatalf("resolvePackages() = %v, want no resolved versions on failure", got)
+	tmp := t.TempDir()
+	bridgeDir := filepath.Join(tmp, "bridge")
+	if err := os.MkdirAll(filepath.Join(bridgeDir, "templates"), 0o755); err != nil {
+		t.Fatalf("mkdir bridge: %v", err)
+	}
+	bridgeYAML := fmt.Sprintf(`name: demo
+registry_url: %s/{id}/index.json
+registry_packages:
+  jwt_bearer: Microsoft.AspNetCore.Authentication.JwtBearer
+templates:
+  - for: project
+    source: templates/pkg.tmpl
+    target: pkg.txt
+`, server.URL)
+	if err := os.WriteFile(filepath.Join(bridgeDir, "bridge.yaml"), []byte(bridgeYAML), 0o644); err != nil {
+		t.Fatalf("write bridge: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(bridgeDir, "templates", "pkg.tmpl"), []byte(`{{ printf "%v" .Packages }}`), 0o644); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+
+	r, err := New(bridgeDir, nil) // nil logger is intentional
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	written, _, err := r.Render(&ir.IRProject{Name: "P"}, filepath.Join(tmp, "out"))
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(written) != 1 {
+		t.Fatalf("got %d written files, want 1", len(written))
+	}
+	data, err := os.ReadFile(filepath.Join(tmp, "out", "pkg.txt"))
+	if err != nil {
+		t.Fatalf("read pkg.txt: %v", err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "map[]" {
+		t.Fatalf("Packages = %q, want %q (failed resolution yields no versions)", got, "map[]")
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 	"github.com/DomainCraft/DomainCraft/internal/ir"
 	"github.com/DomainCraft/DomainCraft/internal/packages"
 )
@@ -26,15 +27,86 @@ func safeBridgeSource(dir, rel string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve bridge dir: %w", err)
 	}
-	if real, err := filepath.EvalSymlinks(path); err == nil &&
-		real != realDir && !strings.HasPrefix(real, realDir+string(filepath.Separator)) {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil &&
+		resolved != realDir && !strings.HasPrefix(resolved, realDir+string(filepath.Separator)) {
 		return "", fmt.Errorf("bridge source path %q escapes the bridge directory", rel)
 	}
 	return path, nil
 }
 
+// safeOutputPath resolves a rendered template target against outputDir. It keeps
+// the lexical containment check and additionally rejects a symlink at every
+// existing path component (including the final one): os.Rename follows a
+// symlink at the leaf, so a planted link would let a template write outside the
+// output tree even when the lexical path is clean. Missing components are left
+// to the caller's MkdirAll and are re-checked before the file is committed.
+func safeOutputPath(outputDir, renderedTarget string) (string, error) {
+	absOutput, err := filepath.Abs(outputDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve output directory: %w", err)
+	}
+	absTarget := filepath.Join(absOutput, filepath.FromSlash(renderedTarget))
+	if absTarget != absOutput && !strings.HasPrefix(absTarget, absOutput+string(filepath.Separator)) {
+		return "", fmt.Errorf("template target path escapes output directory: %s", renderedTarget)
+	}
+	rel, err := filepath.Rel(absOutput, absTarget)
+	if err != nil {
+		return "", fmt.Errorf("resolve target path: %w", err)
+	}
+	cur := absOutput
+	for comp := range strings.SplitSeq(rel, string(filepath.Separator)) {
+		if comp == "" || comp == "." {
+			continue
+		}
+		cur = filepath.Join(cur, comp)
+		info, err := os.Lstat(cur)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("inspect output path %q: %w", cur, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("template target path escapes output directory through a symlink: %s", renderedTarget)
+		}
+	}
+	return absTarget, nil
+}
+
+// stagedWrite is a fully rendered file held in a temp file next to its target.
+// original holds the target's bytes from before this run so a later failure can
+// restore them; existed=false means the target was created by this run.
+type stagedWrite struct {
+	temp     string
+	target   string
+	original []byte
+	existed  bool
+	mode     os.FileMode
+	record   RenderedFile
+}
+
+// rollbackWrites undoes committed writes in reverse order and removes every
+// staged temp file. It is best-effort: the original error is always returned to
+// the caller, and no output file is left in a half-written state.
+func rollbackWrites(staged, committed []stagedWrite) {
+	for _, w := range slices.Backward(committed) {
+		if w.existed {
+			if err := fsutil.AtomicWrite(w.target, w.original); err == nil {
+				_ = os.Chmod(w.target, w.mode)
+			}
+			continue
+		}
+		_ = os.Remove(w.target)
+	}
+	for _, w := range staged {
+		_ = os.Remove(w.temp)
+	}
+}
+
 // Render renders the IR through every bridge in the chain and returns the
-// written paths and the file manifest.
+// written paths and the file manifest. Rendering is staged in temp files and
+// committed only after every template succeeded; a failure at any point removes
+// the staged files and restores any output files that were already replaced.
 func (r *Renderer) Render(project *ir.IRProject, outputDir string) ([]string, []RenderedFile, error) {
 	if project == nil {
 		return nil, nil, errors.New("IR project is nil")
@@ -65,7 +137,7 @@ func (r *Renderer) Render(project *ir.IRProject, outputDir string) ([]string, []
 		if err != nil {
 			return nil, nil, err
 		}
-		helperBytes, err := os.ReadFile(helperPath)
+		helperBytes, err := os.ReadFile(helperPath) //nolint:gosec // helperPath passed safeBridgeSource validation
 		if err != nil {
 			return nil, nil, fmt.Errorf("read helpers %s: %w", src.config.Helpers, err)
 		}
@@ -79,8 +151,17 @@ func (r *Renderer) Render(project *ir.IRProject, outputDir string) ([]string, []
 		}
 	}
 
-	writtenFiles := make([]string, 0)
+	staged := make([]stagedWrite, 0)
 	manifest := make([]RenderedFile, 0)
+	// fail drops every staged temp file. No output file has been touched during
+	// staging, so there is nothing to restore yet.
+	fail := func(err error) ([]string, []RenderedFile, error) {
+		rollbackWrites(staged, nil)
+		return nil, nil, err
+	}
+
+	// Phase 1: parse templates and render each target into a temp file. Nothing
+	// is written to outputDir until every template has executed successfully.
 	for _, src := range r.sources {
 		for _, spec := range src.config.Templates {
 			// Check if template should be rendered based on "When" condition
@@ -90,11 +171,11 @@ func (r *Renderer) Render(project *ir.IRProject, outputDir string) ([]string, []
 
 			sourcePath, err := safeBridgeSource(src.dir, spec.Source)
 			if err != nil {
-				return nil, nil, err
+				return fail(err)
 			}
-			tplBytes, err := os.ReadFile(sourcePath)
+			tplBytes, err := os.ReadFile(sourcePath) //nolint:gosec // sourcePath passed safeBridgeSource validation
 			if err != nil {
-				return nil, nil, fmt.Errorf("read template %s: %w", spec.Source, err)
+				return fail(fmt.Errorf("read template %s: %w", spec.Source, err))
 			}
 
 			tplName := filepath.Base(spec.Source)
@@ -103,19 +184,19 @@ func (r *Renderer) Render(project *ir.IRProject, outputDir string) ([]string, []
 				// Clone helpers so all named templates are available
 				parsedTemplate, err = helpersTemplate.Clone()
 				if err != nil {
-					return nil, nil, fmt.Errorf("clone helpers for %s: %w", spec.Source, err)
+					return fail(fmt.Errorf("clone helpers for %s: %w", spec.Source, err))
 				}
 				parsedTemplate, err = r.applyDelimiters(parsedTemplate.New(tplName)).Parse(string(tplBytes))
 			} else {
 				parsedTemplate, err = r.applyDelimiters(template.New(tplName).Funcs(funcMap)).Parse(string(tplBytes))
 			}
 			if err != nil {
-				return nil, nil, fmt.Errorf("parse template %s: %w", spec.Source, err)
+				return fail(fmt.Errorf("parse template %s: %w", spec.Source, err))
 			}
 
 			contexts, err := r.renderContexts(spec.For, project, pkgs)
 			if err != nil {
-				return nil, nil, err
+				return fail(err)
 			}
 
 			for _, context := range contexts {
@@ -132,34 +213,12 @@ func (r *Renderer) Render(project *ir.IRProject, outputDir string) ([]string, []
 				for _, targetPattern := range spec.TargetPatterns() {
 					renderedTarget, err := renderTemplateString(targetPattern, context, funcMap)
 					if err != nil {
-						return nil, nil, fmt.Errorf("render target path: %w", err)
+						return fail(fmt.Errorf("render target path: %w", err))
 					}
 
-					absoluteTarget := filepath.Join(outputDir, filepath.FromSlash(renderedTarget))
-					absOutput, err := filepath.Abs(outputDir)
+					absTarget, err := safeOutputPath(outputDir, renderedTarget)
 					if err != nil {
-						return nil, nil, fmt.Errorf("resolve output directory: %w", err)
-					}
-					absTarget, err := filepath.Abs(absoluteTarget)
-					if err != nil {
-						return nil, nil, fmt.Errorf("resolve target path: %w", err)
-					}
-					if !strings.HasPrefix(absTarget, absOutput+string(filepath.Separator)) {
-						return nil, nil, fmt.Errorf("template target path escapes output directory: %s", renderedTarget)
-					}
-
-					// The lexical check does not catch a symlink planted inside the
-					// output tree. Resolve the parent before creating the file.
-					parent := filepath.Dir(absoluteTarget)
-					if realParent, err := filepath.EvalSymlinks(parent); err == nil {
-						realOutput, err := filepath.EvalSymlinks(absOutput)
-						if err != nil {
-							return nil, nil, fmt.Errorf("resolve output directory symlinks: %w", err)
-						}
-						realTarget := filepath.Join(realParent, filepath.Base(absoluteTarget))
-						if realTarget != realOutput && !strings.HasPrefix(realTarget, realOutput+string(filepath.Separator)) {
-							return nil, nil, fmt.Errorf("template target path escapes output directory through a symlink: %s", renderedTarget)
-						}
+						return fail(err)
 					}
 
 					relPath := filepath.ToSlash(renderedTarget)
@@ -173,39 +232,99 @@ func (r *Renderer) Render(project *ir.IRProject, outputDir string) ([]string, []
 					// Scaffold semantics: overwrite: false files are created only once.
 					// The developer owns them afterwards, so they survive regeneration.
 					if spec.IsCustom() {
-						if _, statErr := os.Stat(absoluteTarget); statErr == nil {
+						if _, statErr := os.Stat(absTarget); statErr == nil {
 							record.Written = false
 							manifest = append(manifest, record)
 							continue
 						}
 					}
 
-					if err := os.MkdirAll(filepath.Dir(absoluteTarget), 0o755); err != nil {
-						return nil, nil, fmt.Errorf("create output dir: %w", err)
+					if err := os.MkdirAll(filepath.Dir(absTarget), 0o755); err != nil { //nolint:gosec // generated project dirs must stay world-readable
+						return fail(fmt.Errorf("create output dir: %w", err))
+					}
+					// MkdirAll may have created the missing components above; re-check
+					// so a symlink planted in the meantime is still rejected.
+					if _, err := safeOutputPath(outputDir, renderedTarget); err != nil {
+						return fail(err)
 					}
 
-					file, err := os.Create(absoluteTarget)
+					existed := false
+					mode := os.FileMode(0o644) // os.Create's default under the usual umask
+					var original []byte
+					if info, statErr := os.Lstat(absTarget); statErr == nil {
+						if info.Mode()&os.ModeSymlink != 0 {
+							return fail(fmt.Errorf("template target path escapes output directory through a symlink: %s", renderedTarget))
+						}
+						existed = true
+						mode = info.Mode().Perm()
+						original, err = os.ReadFile(absTarget) //nolint:gosec // absTarget passed safeOutputPath validation
+						if err != nil {
+							return fail(fmt.Errorf("read existing output %s: %w", renderedTarget, err))
+						}
+					} else if !errors.Is(statErr, os.ErrNotExist) {
+						return fail(fmt.Errorf("inspect output file %s: %w", renderedTarget, statErr))
+					}
+
+					// Render into a temp file in the target's own directory so the
+					// final rename stays on the same filesystem. The prior file is
+					// never truncated, even if Execute or Close fails.
+					tmp, err := os.CreateTemp(filepath.Dir(absTarget), ".domaincraft-render-*")
 					if err != nil {
-						return nil, nil, fmt.Errorf("create output file: %w", err)
+						return fail(fmt.Errorf("create temp output file: %w", err))
 					}
-
-					if err := parsedTemplate.Execute(file, context); err != nil {
-						_ = file.Close()
-						_ = os.Remove(absoluteTarget)
-						return nil, nil, fmt.Errorf("execute template: %w", err)
+					tmpPath := tmp.Name()
+					// CreateTemp uses 0600; generated files stay readable as before.
+					if err := tmp.Chmod(mode); err != nil {
+						_ = tmp.Close()
+						_ = os.Remove(tmpPath)
+						return fail(fmt.Errorf("set mode on temp output %s: %w", tmpPath, err))
 					}
-					if err := file.Close(); err != nil {
-						_ = os.Remove(absoluteTarget)
-						return nil, nil, fmt.Errorf("close output file %s: %w", absoluteTarget, err)
+					if err := parsedTemplate.Execute(tmp, context); err != nil {
+						_ = tmp.Close()
+						_ = os.Remove(tmpPath)
+						return fail(fmt.Errorf("execute template: %w", err))
 					}
-					writtenFiles = append(writtenFiles, absoluteTarget)
+					if err := tmp.Close(); err != nil {
+						_ = os.Remove(tmpPath)
+						return fail(fmt.Errorf("close temp output %s: %w", tmpPath, err))
+					}
+					staged = append(staged, stagedWrite{
+						temp:     tmpPath,
+						target:   absTarget,
+						original: original,
+						existed:  existed,
+						mode:     mode,
+						record:   record,
+					})
 					manifest = append(manifest, record)
 				}
 			}
 		}
 	}
 
-	return writtenFiles, manifest, nil
+	// Phase 2: commit staged files. A failed rename rolls back every file that
+	// was already replaced, so callers never observe a partially updated tree.
+	committed := make([]stagedWrite, 0, len(staged))
+	for _, w := range staged {
+		if info, err := os.Lstat(w.target); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			rollbackWrites(staged, committed)
+			return nil, nil, fmt.Errorf("template target path escapes output directory through a symlink: %s", w.record.Path)
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			rollbackWrites(staged, committed)
+			return nil, nil, fmt.Errorf("inspect output file %s: %w", w.record.Path, err)
+		}
+		if err := os.Rename(w.temp, w.target); err != nil {
+			rollbackWrites(staged, committed)
+			return nil, nil, fmt.Errorf("commit output file %s: %w", w.record.Path, err)
+		}
+		committed = append(committed, w)
+	}
+
+	written := make([]string, 0, len(committed))
+	for _, w := range committed {
+		written = append(written, w.target)
+	}
+	return written, manifest, nil
 }
 
 func (r *Renderer) shouldRender(spec TemplateSpec, project *ir.IRProject, pkgs map[string]string) bool {
@@ -296,9 +415,7 @@ func (r *Renderer) resolvePackages(project *ir.IRProject) map[string]string {
 	// adapter wins on conflicts — consistent with type_mappings merge).
 	merged := make(map[string]string)
 	for _, src := range r.sources {
-		for k, v := range src.config.RegistryPackages {
-			merged[k] = v
-		}
+		maps.Copy(merged, src.config.RegistryPackages)
 	}
 	if len(merged) == 0 {
 		return nil
@@ -307,9 +424,9 @@ func (r *Renderer) resolvePackages(project *ir.IRProject) map[string]string {
 	// Use the adapter's registry_url; fall back to any source with one.
 	registryURL := r.config().RegistryURL
 	if registryURL == "" {
-		for i := len(r.sources) - 1; i >= 0; i-- {
-			if r.sources[i].config.RegistryURL != "" {
-				registryURL = r.sources[i].config.RegistryURL
+		for _, src := range slices.Backward(r.sources) {
+			if src.config.RegistryURL != "" {
+				registryURL = src.config.RegistryURL
 				break
 			}
 		}

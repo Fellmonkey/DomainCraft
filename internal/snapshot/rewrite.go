@@ -10,101 +10,116 @@ package snapshot
 // Python or a bare `product` in TS are all rewritten by the same rules.
 
 import (
-	"bytes"
 	"cmp"
 	"os"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 	"github.com/DomainCraft/DomainCraft/pkg/textutil"
 )
 
-// rewriteCasings replaces each old identifier with new inside content. Variants
-// are applied longest-first (so a plural form like `Products` is rewritten as a
-// whole before its singular head `Product` could consume it), then
-// alphabetically, keeping output deterministic.
+// rewriteCasings replaces old identifiers with new in a single pass. Variants
+// are tried longest-first (so `Products` is consumed as a whole before its
+// singular head `Product` gets a chance), then alphabetically for determinism.
+// After a match, scanning resumes after the ORIGINAL token, so replacement text
+// is never rescanned: renaming Product -> ProductItem cannot turn `Products`
+// into `ProductItemItems`.
 func rewriteCasings(content []byte, variants map[string]string) []byte {
+	return replaceLongest(content, variants, tokenOK)
+}
+
+// replaceLongest scans content once, decoding it as runes so non-ASCII
+// identifiers are handled correctly. At each position the longest matching
+// variant that passes ok is applied; unmatched runes are copied verbatim.
+func replaceLongest(content []byte, variants map[string]string, ok func([]rune, int, int) bool) []byte {
 	if len(variants) == 0 {
 		return content
 	}
-	keys := make([]string, 0, len(variants))
-	for k := range variants {
-		keys = append(keys, k)
+	type variant struct {
+		old   []rune
+		value []rune
 	}
-	slices.SortFunc(keys, func(a, b string) int {
-		if c := cmp.Compare(len(b), len(a)); c != 0 {
-			return c
-		}
-		return cmp.Compare(a, b)
-	})
-
-	out := content
-	for _, old := range keys {
-		new := variants[old]
-		if old == "" || old == new {
+	vars := make([]variant, 0, len(variants))
+	for old, value := range variants {
+		if old == "" || old == value {
 			continue
 		}
-		out = replaceToken(out, []byte(old), []byte(new))
+		vars = append(vars, variant{old: []rune(old), value: []rune(value)})
 	}
-	return out
-}
+	slices.SortFunc(vars, func(a, b variant) int {
+		if c := cmp.Compare(len(b.old), len(a.old)); c != 0 {
+			return c
+		}
+		return cmp.Compare(string(a.old), string(b.old))
+	})
 
-// replaceToken replaces every structural occurrence of the exact identifier old
-// with new. An occurrence begins at an identifier boundary (not preceded by an
-// identifier character) and stops before any identifier character that is a
-// lowercase ASCII letter. This lets `ProductService` become `ItemService` while
-// both `myProduct` (inner) and `Productivity` (lowercase continuation) survive.
-func replaceToken(content, old, new []byte) []byte {
-	if len(old) == 0 {
-		return content
-	}
-	out := make([]byte, 0, len(content))
-	i := 0
-	for i < len(content) {
-		rel := bytes.Index(content[i:], old)
-		if rel < 0 {
-			out = append(out, content[i:]...)
+	rs := []rune(string(content))
+	out := make([]rune, 0, len(rs))
+	for i := 0; i < len(rs); {
+		matched := false
+		for _, v := range vars {
+			if i+len(v.old) > len(rs) {
+				continue
+			}
+			if !hasPrefixRunes(rs[i:], v.old) {
+				continue
+			}
+			if !ok(rs, i, len(v.old)) {
+				continue
+			}
+			out = append(out, v.value...)
+			i += len(v.old) // replacement text is never scanned again
+			matched = true
 			break
 		}
-		idx := i + rel
-		out = append(out, content[i:idx]...)
-		if tokenOK(content, idx, old) {
-			out = append(out, new...)
-		} else {
-			out = append(out, old...)
+		if !matched {
+			out = append(out, rs[i])
+			i++
 		}
-		i = idx + len(old)
 	}
-	return out
+	return []byte(string(out))
 }
 
-// tokenOK reports whether content[idx:idx+len(old)] is a standalone identifier
-// occurrence. An occurrence must begin at a word boundary (possibly after a
-// single uppercase marker/interface prefix such as `I` in `IProductService`, so
-// that `myProduct` stays untouched) and its following rune, when it is an
-// identifier character, must not be a lowercase ASCII letter (so `Productivity`
-// survives).
-func tokenOK(content []byte, idx int, old []byte) bool {
-	if idx > 0 {
-		prev := content[idx-1]
-		// A lone uppercase prefix letter counts as a boundary (I, X, Z prefixes).
-		prefixOK := prev >= 'A' && prev <= 'Z' && (idx < 2 || !isIdentChar(content[idx-2]))
-		if isIdentChar(prev) && !prefixOK {
-			return false
-		}
+func hasPrefixRunes(s, prefix []rune) bool {
+	if len(prefix) > len(s) {
+		return false
 	}
-	j := idx + len(old)
-	if j < len(content) && isIdentChar(content[j]) {
-		if content[j] >= 'a' && content[j] <= 'z' {
+	for i, r := range prefix {
+		if s[i] != r {
 			return false
 		}
 	}
 	return true
 }
 
-func isIdentChar(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
+// tokenOK reports whether rs[idx:idx+length] is a standalone identifier
+// occurrence. It begins at a word boundary (possibly after a single uppercase
+// marker prefix such as `I` in `IProductService`, so `myProduct` stays
+// untouched) and its following rune, when it is an identifier character, must
+// not be a lowercase letter (so `Productivity` survives). Rune decoding keeps
+// this correct for non-ASCII identifiers.
+func tokenOK(rs []rune, idx, length int) bool {
+	if idx > 0 {
+		prev := rs[idx-1]
+		prefixOK := unicode.IsUpper(prev) && (idx < 2 || !isIdentRune(rs[idx-2]))
+		if isIdentRune(prev) && !prefixOK {
+			return false
+		}
+	}
+	j := idx + length
+	if j < len(rs) {
+		next := rs[j]
+		if isIdentRune(next) && unicode.IsLower(next) {
+			return false
+		}
+	}
+	return true
+}
+
+func isIdentRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 }
 
 // entityCasings builds the casing-variant table for an entity rename.
@@ -211,7 +226,7 @@ func RewriteFile(outputDir, relPath string, transforms ...func([]byte) []byte) (
 	if err != nil {
 		return false, err
 	}
-	data, err := os.ReadFile(abs)
+	data, err := os.ReadFile(abs) //nolint:gosec // abs passed safeRelPath validation
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"text/template"
 
 	"github.com/DomainCraft/DomainCraft/internal/ir"
@@ -68,7 +69,7 @@ var layerRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 // loadSource loads a single bridge directory (its bridge.yaml).
 func loadSource(bridgePath string) (sourceConfig, error) {
 	bridgeDir, configPath := resolveBridgePath(bridgePath)
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(configPath) //nolint:gosec // resolved from validated bridge refs by resolveBridgePath
 	if err != nil {
 		return sourceConfig{}, fmt.Errorf("read bridge config: %w", err)
 	}
@@ -137,8 +138,8 @@ func (r *Renderer) AttachBases(basePaths []string) error {
 // so a persistence bridge's migrations are found even when the top adapter
 // has no migrations (e.g. csharp-rest → csharp-efcore).
 func (r *Renderer) MigrationConfig() *MigrationConfig {
-	for i := len(r.sources) - 1; i >= 0; i-- {
-		cfg := r.sources[i].config.Migrations
+	for _, src := range slices.Backward(r.sources) {
+		cfg := src.config.Migrations
 		if cfg != nil && cfg.Enabled {
 			return cfg
 		}

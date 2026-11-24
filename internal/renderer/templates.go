@@ -4,8 +4,8 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
-	"path/filepath"
 	"strings"
 	"text/template"
 
@@ -72,9 +72,7 @@ func (r *Renderer) buildFuncMap() (template.FuncMap, error) {
 	if err != nil {
 		return nil, err
 	}
-	for key, value := range bridgeFuncs {
-		funcMap[key] = value
-	}
+	maps.Copy(funcMap, bridgeFuncs)
 	return funcMap, nil
 }
 
@@ -82,7 +80,13 @@ func (r *Renderer) buildFuncMap() (template.FuncMap, error) {
 // (no error) when the file is absent — a bridge with no mappings contributes
 // nothing, and the merged result drives the language functions.
 func (r *Renderer) loadTypeMappings(dir string) (*typeMappings, error) {
-	data, err := os.ReadFile(filepath.Join(dir, "type_mappings.yaml"))
+	// Use the same guard as templates and helpers: a symlinked mapping file must
+	// not pull configuration from outside the bridge directory.
+	path, err := safeBridgeSource(dir, "type_mappings.yaml")
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // path passed safeBridgeSource validation
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -111,12 +115,8 @@ func mergeTypeMappings(base, overlay *typeMappings) *typeMappings {
 			return nil
 		}
 		m := make(map[string]string, len(dst)+len(src))
-		for k, v := range dst {
-			m[k] = v
-		}
-		for k, v := range src {
-			m[k] = v
-		}
+		maps.Copy(m, dst)
+		maps.Copy(m, src)
 		return m
 	}
 	out := &typeMappings{
@@ -146,12 +146,8 @@ func mergeLiterals(base, overlay map[string]LiteralSpec) map[string]LiteralSpec 
 		return nil
 	}
 	m := make(map[string]LiteralSpec, len(base)+len(overlay))
-	for k, v := range base {
-		m[k] = v
-	}
-	for k, v := range overlay {
-		m[k] = v
-	}
+	maps.Copy(m, base)
+	maps.Copy(m, overlay)
 	return m
 }
 

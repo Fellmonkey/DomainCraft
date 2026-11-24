@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 	"github.com/DomainCraft/DomainCraft/internal/ir"
 	"github.com/DomainCraft/DomainCraft/internal/renderer"
 	"github.com/DomainCraft/DomainCraft/pkg/textutil"
@@ -64,7 +65,7 @@ func SnapshotPath(outputDir string) string {
 // Load reads a snapshot from path. It returns (nil, nil) when the snapshot
 // does not exist yet (first generation run).
 func Load(path string) (*Snapshot, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path is the output-rooted snapshot.json
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -80,14 +81,17 @@ func Load(path string) (*Snapshot, error) {
 
 // Save persists the snapshot to path, creating the parent directory.
 func Save(path string, snap *Snapshot) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec // generated project dirs must stay world-readable
 		return fmt.Errorf("create snapshot dir: %w", err)
 	}
 	data, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal snapshot: %w", err)
 	}
-	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+	// Atomic write: a crash mid-save must leave the previous snapshot intact.
+	// A truncated snapshot could make the next run compute destructive
+	// migrations against a model the developer never declared.
+	if err := fsutil.AtomicWrite(path, append(data, '\n')); err != nil {
 		return fmt.Errorf("write snapshot: %w", err)
 	}
 	return nil
@@ -351,8 +355,11 @@ func detectNamespaceMismatch(outputDir string, old *Snapshot, oldNamespace, newN
 		if !f.Custom {
 			continue
 		}
-		abs := filepath.Join(outputDir, filepath.FromSlash(f.Path))
-		data, err := os.ReadFile(abs)
+		abs, err := safeRelPath(outputDir, f.Path)
+		if err != nil {
+			continue
+		}
+		data, err := os.ReadFile(abs) //nolint:gosec // abs passed safeRelPath validation
 		if err != nil {
 			continue
 		}
@@ -370,7 +377,7 @@ func detectNamespaceMismatch(outputDir string, old *Snapshot, oldNamespace, newN
 // referencesNamespace reports whether s declares the given root namespace, e.g.
 // `namespace EscrowPay...` or `namespace EscrowPay;`.
 func referencesNamespace(s, namespace string) bool {
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "namespace ") {
 			continue
@@ -420,7 +427,11 @@ func customEntityFiles(files []renderer.RenderedFile, entityName string) []strin
 func existingFileRefs(outputDir string, files []renderer.RenderedFile) []FileRef {
 	var refs []FileRef
 	for _, f := range files {
-		if _, err := os.Stat(filepath.Join(outputDir, filepath.FromSlash(f.Path))); err != nil {
+		abs, err := safeRelPath(outputDir, f.Path)
+		if err != nil {
+			continue
+		}
+		if _, err := os.Stat(abs); err != nil {
 			continue
 		}
 		refs = append(refs, FileRef{Path: f.Path, Custom: f.Custom})
@@ -433,7 +444,11 @@ func existingFileRefs(outputDir string, files []renderer.RenderedFile) []FileRef
 func existingFilePaths(outputDir string, relPaths []string) []string {
 	var result []string
 	for _, rel := range relPaths {
-		if _, err := os.Stat(filepath.Join(outputDir, filepath.FromSlash(rel))); err == nil {
+		abs, err := safeRelPath(outputDir, rel)
+		if err != nil {
+			continue
+		}
+		if _, err := os.Stat(abs); err == nil {
 			result = append(result, rel)
 		}
 	}
@@ -445,9 +460,14 @@ func existingFilePaths(outputDir string, relPaths []string) []string {
 // rename oldName -> newName. Both the plural and the singular forms of the old
 // name are replaced (plural first, since it is more specific).
 func RenameRelPath(relPath, oldName, newName string) string {
-	out := strings.ReplaceAll(relPath, textutil.Pluralize(oldName), textutil.Pluralize(newName))
-	out = strings.ReplaceAll(out, oldName, newName)
-	return out
+	// Single pass, longest match first. Two sequential ReplaceAll calls would
+	// rescan the replacement of the plural form and rewrite the singular head in
+	// it: Product -> ProductItem would turn Products into ProductItemItems.
+	variants := map[string]string{
+		textutil.Pluralize(oldName): textutil.Pluralize(newName),
+		oldName:                     newName,
+	}
+	return string(replaceLongest([]byte(relPath), variants, tokenOK))
 }
 
 // DeleteFile removes an entity-scoped file (path relative to outputDir).
@@ -482,7 +502,7 @@ func RenameEntityFile(outputDir, relPath, oldName, newName string) (newRel strin
 	if _, err := os.Stat(newAbs); err == nil {
 		return newRel, false, nil
 	}
-	if err := os.MkdirAll(filepath.Dir(newAbs), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(newAbs), 0o755); err != nil { //nolint:gosec // generated project dirs must stay world-readable
 		return newRel, false, fmt.Errorf("create parent dir for %s: %w", newRel, err)
 	}
 	if err := os.Rename(abs, newAbs); err != nil {
