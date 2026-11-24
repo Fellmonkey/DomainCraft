@@ -2,7 +2,7 @@
 
 One bridge = **one layer in one axis**. This guide is for the core and for bridge authors — no Go required to add a language.
 
-Full docs: [https://domaincraft.github.io/domaincraft-site/docs/](https://domaincraft.github.io/domaincraft-site/docs/) — start with [Writing a bridge](https://domaincraft.github.io/domaincraft-site/docs/guides/writing-a-bridge/) and [Template context](https://domaincraft.github.io/domaincraft-site/docs/reference/template-context/).
+Full docs: [https://fellmonkey.github.io/domaincraft-site/docs/](https://fellmonkey.github.io/domaincraft-site/docs/) — start with [Writing a bridge](https://fellmonkey.github.io/domaincraft-site/docs/guides/writing-a-bridge/) and [Template context](https://fellmonkey.github.io/domaincraft-site/docs/reference/template-context/).
 
 ## Quick start
 
@@ -27,7 +27,7 @@ go run ./cmd/domaincraft generate --domain domain.yaml --bridge ../my-bridge --o
 go run ./cmd/domaincraft generate --domain domain.yaml --bridge ../domaincraft-bridge-csharp-rest --replace persistence=../my-dapper --output ./out
 ```
 
-`--bridge` accepts a local path, a registry ID (`csharp-rest`, `ts-core`) or `owner/repo`. `--replace` accepts `layer=bridgeRef` or `bridgeId=bridgeRef` (repeatable). Create a starter `domain.yaml` by hand or in [Studio](https://domaincraft.github.io/domaincraft-studio/) — an example is `examples/domain.yaml`.
+`--bridge` accepts a local path, a registry ID (`csharp-rest`, `ts-core`) or `owner/repo`. `--replace` accepts `layer=bridgeRef` or `bridgeId=bridgeRef` (repeatable). Create a starter `domain.yaml` by hand or in [Studio](https://fellmonkey.github.io/domaincraft-studio/) — an example is `examples/domain.yaml`.
 
 ## Architecture
 
@@ -36,7 +36,7 @@ domain.yaml → Parser → Lexer → Validator → IR Builder → Renderer → G
                                                       → Snapshot (.domaincraft/snapshot.json)
 ```
 
-The **IR** is the contract. Templates read a fully linked `IRProject` — the core never contains C# or TypeScript. Composition is `extends` + `layer` + `--replace` (see [Axes and layers](https://domaincraft.github.io/domaincraft-site/docs/concepts/three-axes/) and [Architecture](https://domaincraft.github.io/domaincraft-site/docs/concepts/architecture/)).
+The **IR** is the contract. Templates read a fully linked `IRProject` — the core never contains C# or TypeScript. Composition is `extends` + `layer` + `--replace` (see [Axes and layers](https://fellmonkey.github.io/domaincraft-site/docs/concepts/three-axes/) and [Architecture](https://fellmonkey.github.io/domaincraft-site/docs/concepts/architecture/)).
 
 ## Creating a new bridge
 
@@ -77,9 +77,9 @@ templates:
     when: hasEnums
 ```
 
-`for:` `entity` (per entity) or `project` (once). `when:` `hasSeed`/`hasEnums`/`hasOwnerTokens`/`hasAuth`/`hasMigration`/`hasMockData`/`hasAddon:dapr`. `overwrite: false` scaffolds once (developer-owned, protected by the snapshot engine). See [Writing a bridge](https://domaincraft.github.io/domaincraft-site/docs/guides/writing-a-bridge/) for all fields.
+`for:` `entity` (per entity) or `project` (once). `when:` `hasSeed`/`hasEnums`/`hasOwnerTokens`/`hasAuth`/`hasMigration`/`hasMockData`/`hasAddon:dapr`. `overwrite: false` scaffolds once (developer-owned, protected by the snapshot engine). See [Writing a bridge](https://fellmonkey.github.io/domaincraft-site/docs/guides/writing-a-bridge/) for all fields.
 
-Split **Core (regenerated)** vs **Custom (`overwrite: false`)** — put logic behind interfaces and scaffold once (partial classes in C#, base classes elsewhere). See [Generation Gap](https://domaincraft.github.io/domaincraft-site/docs/concepts/generation-gap/).
+Split **Core (regenerated)** vs **Custom (`overwrite: false`)** — put logic behind interfaces and scaffold once (partial classes in C#, base classes elsewhere). See [Generation Gap](https://fellmonkey.github.io/domaincraft-site/docs/concepts/generation-gap/).
 
 ### 3. `type_mappings.yaml`
 
@@ -105,9 +105,9 @@ Every IR type must be mapped — missing types pass through as-is.
 
 ### 4. Templates
 
-Go `text/template` with stdlib functions + bridge functions (`languageType`, `isValueType`, `deleteBehaviorName`, `literalValue`, `literalDefault`, `literalMember`, `arrayLiteralOpen`/`Close`, `columnSize`, `fkName`, `pluralize`, `pascalcase`, `snakecase` — see [Template context](https://domaincraft.github.io/domaincraft-site/docs/reference/template-context/)).
+Go `text/template` with stdlib functions + bridge functions (`languageType`, `isValueType`, `deleteBehaviorName`, `literalValue`, `literalDefault`, `literalMember`, `arrayLiteralOpen`/`Close`, `columnSize`, `fkName`, `pluralize`, `pascalcase`, `snakecase` — see [Template context](https://fellmonkey.github.io/domaincraft-site/docs/reference/template-context/)).
 
-Use `{{-`/`-}}` trimming. Filter feature fields with `.IsFeatureField`. Prefer `range .Entity.Fields` with `if` over pre-processing. See [Writing a bridge](https://domaincraft.github.io/domaincraft-site/docs/guides/writing-a-bridge/) for conventions.
+Use `{{-`/`-}}` trimming. Filter feature fields with `.IsFeatureField`. Prefer `range .Entity.Fields` with `if` over pre-processing. See [Writing a bridge](https://fellmonkey.github.io/domaincraft-site/docs/guides/writing-a-bridge/) for conventions.
 
 Available in templates: `.Project`, `.Entity`, `.Bridge`, `.Packages` — with IR helpers like `.HasAudit()`, `.IsEnum()`, `.IsUuid()`, `.EagerLoadNavigation()`, `.TableName()`, `AllFilterOperators()`.
 
@@ -120,7 +120,7 @@ go run ./cmd/domaincraft generate --domain examples/domain.yaml --bridge ./my-br
 go run ./cmd/domaincraft generate --domain examples/domain.yaml --bridge ../domaincraft-bridge-csharp-rest --replace persistence=./my-bridge --output ./test-output
 ```
 
-Add a CI job that generates from `examples/domain.yaml` (and `compliance-suite/kitchen-sink.yaml` for the TCK) and compiles the result. See [Certification](https://domaincraft.github.io/domaincraft-site/docs/guides/certification/).
+Add a CI job that generates from `examples/domain.yaml` (and `compliance-suite/kitchen-sink.yaml` for the TCK) and compiles the result. See [Certification](https://fellmonkey.github.io/domaincraft-site/docs/guides/certification/).
 
 ## Snapshot and migrations
 
@@ -130,7 +130,7 @@ After `generate` the IR + manifest is saved to `.domaincraft/snapshot.json`. The
 * **Renamed entities** — `old_name: Product` on `Item` renames custom files and emits `RenameTable`.
 * **Type changes** — prints a manual-refactoring report.
 
-See [Migrations](https://domaincraft.github.io/domaincraft-site/docs/guides/migrations/).
+See [Migrations](https://fellmonkey.github.io/domaincraft-site/docs/guides/migrations/).
 
 ## Core rules
 
@@ -147,3 +147,13 @@ See [Migrations](https://domaincraft.github.io/domaincraft-site/docs/guides/migr
 * `overwrite: false` only for scaffold-once files.
 * `--prune` after a rename/delete cleans only the right files (check `.domaincraft/snapshot.json`).
 * Deterministic output — two runs produce identical bytes (every map/set that affects files is iterated via `slices.Sorted` / `slices.Sort` / `slices.SortFunc` with `cmp.Compare`, no raw `range` over maps).
+
+## Pull requests
+
+- One change per pull request, with a title in the form **«Area: what changed (#issue)»** — for example «CI: gate e2e by paths (#12)». The first word is the area (CI, Core, Bridges, Studio, Docs…), then a third-person verb. Keep the description short — facts, no water.
+- Anything larger than a small fix needs an agreed issue first — open one and wait before writing the code.
+- **Commits are signed and verified** (GitHub shows "Verified"); unverified commits are not accepted.
+- **An AI agent cannot be a contributor.** The author of a pull request is always a person, responsible for the change. AI may be used as a tool, but the description must state whether AI tools were used, which parts they wrote, and why.
+- Every bug fix adds a check that fails without the fix and passes with it, and names it in `compliance-suite/regressions.tsv` with the issue or pull request and one line on what broke.
+- Check determinism: two runs on the same `domain.yaml` produce identical bytes.
+- By submitting a contribution you agree to the [Contributor License Agreement](CLA.md); participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).

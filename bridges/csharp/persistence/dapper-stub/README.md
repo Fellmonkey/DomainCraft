@@ -16,7 +16,7 @@ domaincraft generate --bridge csharp-rest --replace persistence=csharp-dapper
 # → core + domain + dapper + rest
 ```
 
-See [Axes and layers](https://domaincraft.github.io/domaincraft-site/docs/concepts/three-axes/) for how `--replace` swaps one edge of the chain.
+See [Axes and layers](https://fellmonkey.github.io/domaincraft-site/docs/concepts/three-axes/) for how `--replace` swaps one edge of the chain.
 
 ## Docs
 

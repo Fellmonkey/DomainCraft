@@ -1,0 +1,8 @@
+# Checks that guard a real bug: check name, tab, issue or pull request, tab,
+# what broke. A failing check listed here prints a "guards:" line naming it.
+# A name with a / is a test file. Every bug fix adds its check here; the name
+# is written WITH the fix, so the check fails before the fix and passes after.
+#
+# How to add a row: run the fix's re-run on the generated code (or the Studio /
+# unit test), put the check name in the first column, the issue or PR number
+# in the second, and one line on what broke in the third.

@@ -18,6 +18,13 @@ on:
       - 'bridges/**'
       - 'internal/**'
 
+permissions:
+  contents: read
+
+concurrency:
+  group: bridges-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   bundled-bridges:
     name: Verify every bundled bridge loads

@@ -15,7 +15,7 @@ domaincraft generate --bridge csharp-rest --replace persistence=csharp-dapper
 # → core + domain + dapper + rest (dapper extends csharp-core)
 ```
 
-One persistence variant = one repo. At `10×10` that is 22 repos for 100 combinations; at `30×30` — 62 instead of 900. See [Axes and layers](https://domaincraft.github.io/domaincraft-site/docs/concepts/three-axes/).
+One persistence variant = one repo. At `10×10` that is 22 repos for 100 combinations; at `30×30` — 62 instead of 900. See [Axes and layers](https://fellmonkey.github.io/domaincraft-site/docs/concepts/three-axes/).
 
 ## What it adds on top of `csharp-domain`
 
@@ -84,8 +84,8 @@ dotnet build ./generated/src/Infrastructure
 
 ## Docs
 
-- [Axes and layers](https://domaincraft.github.io/domaincraft-site/docs/concepts/three-axes/)
-- [Schema migrations](https://domaincraft.github.io/domaincraft-site/docs/guides/migrations/)
-- [Infrastructure & addons](https://domaincraft.github.io/domaincraft-site/docs/guides/infrastructure-addons/)
-- [Writing a bridge](https://domaincraft.github.io/domaincraft-site/docs/guides/writing-a-bridge/)
+- [Axes and layers](https://fellmonkey.github.io/domaincraft-site/docs/concepts/three-axes/)
+- [Schema migrations](https://fellmonkey.github.io/domaincraft-site/docs/guides/migrations/)
+- [Infrastructure & addons](https://fellmonkey.github.io/domaincraft-site/docs/guides/infrastructure-addons/)
+- [Writing a bridge](https://fellmonkey.github.io/domaincraft-site/docs/guides/writing-a-bridge/)
 - [DomainCraft](https://github.com/DomainCraft/DomainCraft)

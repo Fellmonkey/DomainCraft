@@ -46,8 +46,8 @@ npm run build --prefix ./frontend
 
 ## Docs
 
-- [Axes and layers](https://domaincraft.github.io/domaincraft-site/docs/concepts/three-axes/)
-- [The TypeScript client](https://domaincraft.github.io/domaincraft-site/docs/guides/typescript-client/)
-- [Query language](https://domaincraft.github.io/domaincraft-site/docs/reference/query/)
-- [Writing a bridge](https://domaincraft.github.io/domaincraft-site/docs/guides/writing-a-bridge/)
+- [Axes and layers](https://fellmonkey.github.io/domaincraft-site/docs/concepts/three-axes/)
+- [The TypeScript client](https://fellmonkey.github.io/domaincraft-site/docs/guides/typescript-client/)
+- [Query language](https://fellmonkey.github.io/domaincraft-site/docs/reference/query/)
+- [Writing a bridge](https://fellmonkey.github.io/domaincraft-site/docs/guides/writing-a-bridge/)
 - [DomainCraft](https://github.com/DomainCraft/DomainCraft)
