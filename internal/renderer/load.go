@@ -6,9 +6,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"text/template"
 
 	"github.com/DomainCraft/DomainCraft/internal/ir"
+	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
 
 	"gopkg.in/yaml.v3"
@@ -17,8 +19,9 @@ import (
 // ContractVersion is the version of the bridge contract the core implements. A
 // bridge may declare the contract it was authored against via `contract_version`
 // in bridge.yaml. The core rejects bridges written against a newer contract and
-// treats an absent declaration as contract 1 (with a deprecation notice).
-const ContractVersion = 1
+// treats an absent declaration as this version (with a deprecation notice).
+// It aliases specmeta.ContractVersion so the contract has one definition.
+const ContractVersion = specmeta.ContractVersion
 
 // sourceConfig is one bridge directory plus its parsed bridge.yaml. A composed
 // renderer holds several of these, ordered base-first, with the adapter last.
@@ -66,6 +69,48 @@ func (r *Renderer) adapterDir() string {
 
 var layerRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
+// The closed vocabulary of `when:` conditions. The evaluator in
+// shouldRenderContext must use these same names: an unknown condition used to
+// fall through its defensive default and render unconditionally.
+const (
+	whenSeed        = "hasSeed"
+	whenEnums       = "hasEnums"
+	whenOwnerTokens = "hasOwnerTokens"
+	whenAuth        = "hasAuth"
+	whenMigration   = "hasMigration"
+	whenMockData    = "hasMockData"
+	whenAddon       = "hasAddon"
+	whenNotAddon    = "notHasAddon"
+)
+
+var (
+	simpleWhenConditions = []string{whenSeed, whenEnums, whenOwnerTokens, whenAuth, whenMigration, whenMockData, whenAddon, whenNotAddon}
+	addonWhenPrefixes    = []string{whenAddon, whenNotAddon}
+)
+
+// validateWhenConditions rejects any condition outside the closed vocabulary,
+// including unknown colon-prefixed forms such as "hasFeature:audit". Bare
+// prefix names stay valid: the evaluator treats them as "any addon".
+func validateWhenConditions(bridgeName string, templates []TemplateSpec) error {
+	for i, spec := range templates {
+		when := spec.When
+		if when == "" {
+			continue
+		}
+		prefix, _, hasColon := strings.Cut(when, ":")
+		known := false
+		if hasColon {
+			known = slices.Contains(addonWhenPrefixes, strings.TrimSpace(prefix))
+		} else {
+			known = slices.Contains(simpleWhenConditions, when)
+		}
+		if !known {
+			return fmt.Errorf("bridge %q template %d: unknown when condition %q (allowed: hasSeed, hasEnums, hasOwnerTokens, hasAuth, hasMigration, hasMockData, hasAddon:<name>, notHasAddon:<name>)", bridgeName, i, when)
+		}
+	}
+	return nil
+}
+
 // loadSource loads a single bridge directory (its bridge.yaml).
 func loadSource(bridgePath string) (sourceConfig, error) {
 	bridgeDir, configPath := resolveBridgePath(bridgePath)
@@ -81,14 +126,17 @@ func loadSource(bridgePath string) (sourceConfig, error) {
 	if config.Layer != "" && !layerRe.MatchString(config.Layer) {
 		return sourceConfig{}, fmt.Errorf("invalid layer %q: must match %s", config.Layer, layerRe.String())
 	}
+	if err := validateWhenConditions(config.Name, config.Templates); err != nil {
+		return sourceConfig{}, err
+	}
 	if config.OutputDir == "" {
 		config.OutputDir = "generated"
 	}
-	// Contract version: absent (0) means contract 1, with a deprecation notice
-	// (emitted by the caller); a newer contract is a hard error.
+	// Contract version: absent (0) means the core's contract version, with a
+	// deprecation notice (emitted by the caller); a newer contract is an error.
 	contractDeclared := config.ContractVersion != 0
 	if config.ContractVersion == 0 {
-		config.ContractVersion = 1
+		config.ContractVersion = ContractVersion
 	}
 	if config.ContractVersion > ContractVersion {
 		return sourceConfig{}, fmt.Errorf(
@@ -105,7 +153,7 @@ func New(bridgePath string, log *logger.Logger) (*Renderer, error) {
 		return nil, err
 	}
 	if !src.contractDeclared && log != nil {
-		log.Warn("bridge %q does not declare `contract_version`; assuming contract v1 (deprecated — please add it)", src.config.Name)
+		log.Warn("bridge %q does not declare `contract_version`; assuming contract v%d (deprecated — please add it)", src.config.Name, src.config.ContractVersion)
 	}
 	return &Renderer{sources: []sourceConfig{src}, log: log}, nil
 }

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -258,11 +257,17 @@ func fetchVersions(registryURL string, packageID string) ([]string, error) {
 		return nil, fmt.Errorf("registry returned %d for %s", resp.StatusCode, packageID)
 	}
 
+	// A bounded read rejects an oversized index instead of silently decoding a
+	// truncated prefix. The shared helper closes the body; the defer above also
+	// covers the early return for a non-OK status.
+	body, err := netutil.ReadBoundedBody(resp, registryEndpoint, int64(maxRegistryResponseBytes), nil)
+	if err != nil {
+		return nil, err
+	}
 	var result struct {
 		Versions []string `json:"versions"`
 	}
-	// Limit response body to prevent OOM from malicious/misconfigured registries.
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxRegistryResponseBytes)).Decode(&result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, err
 	}
 

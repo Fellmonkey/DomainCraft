@@ -183,3 +183,21 @@ func TestResolveVersionUnreachableRegistry(t *testing.T) {
 		t.Fatal("expected a connection error for a dead registry")
 	}
 }
+
+// A body larger than the cap must be rejected, not decoded as a truncated
+// prefix. The old io.LimitReader decoder silently accepted this response.
+func TestResolveVersionRejectsOversizedBody(t *testing.T) {
+	srv := newTestRegistryServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"versions":["1.0.0"]}`))
+		_, _ = w.Write([]byte(strings.Repeat(" ", maxRegistryResponseBytes)))
+	}))
+	defer srv.Close()
+
+	got, err := ResolveVersion(srv.URL+"/{id}.json", "demo.pkg")
+	if err == nil {
+		t.Fatalf("oversized response accepted, version = %q", got)
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("err = %q, want a response-size error", err.Error())
+	}
+}

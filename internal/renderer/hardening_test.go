@@ -188,3 +188,53 @@ func assertNoRenderTemps(t *testing.T, dir string) {
 		}
 	}
 }
+
+// F17: a failed restore used to be discarded silently while the comment claimed
+// no half-written output. Make the restore target's directory unwritable and
+// require the failure to surface.
+func TestRollbackWritesReportsRestoreFailure(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "a.txt")
+
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatalf("chmod dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	// Some platforms (or a root test process) ignore directory write bits.
+	probe := filepath.Join(dir, ".probe")
+	if err := os.WriteFile(probe, []byte("x"), 0o644); err == nil {
+		_ = os.Remove(probe)
+		t.Skip("directory permissions are not enforced on this host")
+	}
+
+	err := rollbackWrites(nil, []stagedWrite{{
+		target:   target,
+		original: []byte("original"),
+		existed:  true,
+		mode:     0o644,
+	}})
+	if err == nil {
+		t.Fatal("rollbackWrites silently discarded a failed restore")
+	}
+	if !strings.Contains(err.Error(), "restore") {
+		t.Errorf("error = %q, want it to name the failed restore", err.Error())
+	}
+}
+
+// The primary rendering error stays first and both errors remain inspectable
+// via errors.Is.
+func TestRollbackErrorKeepsOriginalPrimary(t *testing.T) {
+	t.Parallel()
+	primary := errors.New("commit failed")
+	rollback := errors.New("restore failed")
+	got := rollbackError(primary, rollback)
+	if !errors.Is(got, primary) || !errors.Is(got, rollback) {
+		t.Fatalf("errors.Join lost a cause: %v", got)
+	}
+	if !strings.HasPrefix(got.Error(), primary.Error()) {
+		t.Errorf("primary error is not first: %q", got.Error())
+	}
+	if rollbackError(primary, nil) != primary {
+		t.Error("no-op rollback must return the original error unchanged")
+	}
+}

@@ -1,8 +1,10 @@
 package packages
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -254,6 +256,45 @@ func TestResolveVersionCachedIsolation(t *testing.T) {
 	if got != "9.9.9" {
 		t.Fatalf("bridge-b must not read bridge-a's cache, got %q", got)
 	}
+}
+
+// A failed cache write must not discard a version that was successfully
+// resolved from the registry. Both exported resolvers share this guarantee.
+func TestPersistFailureKeepsResolvedVersion(t *testing.T) {
+	persistErr := errors.New("disk full")
+	oldPersist := persistVersionCacheFn
+	persistVersionCacheFn = func(_ string, _ map[string]versionEntry) error { return persistErr }
+	defer func() { persistVersionCacheFn = oldPersist }()
+
+	t.Run("plain", func(t *testing.T) {
+		resetCacheRoot(t)
+		old := resolveVersionFn
+		resolveVersionFn = func(_, _ string) (string, error) { return "2.0.0", nil }
+		defer func() { resolveVersionFn = old }()
+
+		got, err := ResolveVersionCached("demo", "https://reg.example/{id}", "demo.pkg")
+		if got != "2.0.0" {
+			t.Fatalf("version = %q, want 2.0.0 (persist failure must not drop it)", got)
+		}
+		if !errors.Is(err, persistErr) || !strings.Contains(err.Error(), "persist package version cache") {
+			t.Fatalf("err = %v, want a non-fatal persist failure", err)
+		}
+	})
+
+	t.Run("framework", func(t *testing.T) {
+		resetCacheRoot(t)
+		old := resolveVersionForFrameworkFn
+		resolveVersionForFrameworkFn = func(_, _, _ string) (string, error) { return "10.0.0", nil }
+		defer func() { resolveVersionForFrameworkFn = old }()
+
+		got, err := ResolveVersionCachedForFramework("demo", "https://reg.example/{id}", "demo.pkg", "net10.0")
+		if got != "10.0.0" {
+			t.Fatalf("version = %q, want 10.0.0 (persist failure must not drop it)", got)
+		}
+		if !errors.Is(err, persistErr) {
+			t.Fatalf("err = %v, want the persist failure", err)
+		}
+	})
 }
 
 // TestLoadCacheIgnoresCorruptFile ensures a corrupt cache file degrades

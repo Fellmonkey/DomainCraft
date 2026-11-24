@@ -88,27 +88,25 @@ func persistVersionCache(bridgeID string, entries map[string]versionEntry) error
 	return nil
 }
 
-// ResolveVersionCached resolves the latest stable version of a package from its
-// registry, caching the result per bridge for DefaultCacheTTL. A fresh cached
-// value avoids a network round-trip on every generation; a stale one triggers a
-// refresh. A corrupt or missing cache is ignored and simply re-resolved.
-func ResolveVersionCached(bridgeID, registryURL, packageID string) (string, error) {
-	key := cacheKey(registryURL, packageID)
-
+// resolveVersionCached is the single cache pipeline shared by both exported
+// resolvers. key identifies the (registry, package[, framework]) entry; resolve
+// performs the registry lookup on a miss. Both callers keep their own resolver
+// seam, but the lock/store/TTL/resolve/persist sequence lives here once.
+func resolveVersionCached(bridgeID, key string, resolve func() (string, error)) (string, error) {
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
 
 	entries, err := versionStore(bridgeID)
 	if err != nil {
 		// Cache directory unusable — resolve uncached rather than fail.
-		return resolveVersionFn(registryURL, packageID)
+		return resolve()
 	}
 
 	if e, ok := entries[key]; ok && e.Value != "" && time.Since(e.StoredAt) <= DefaultCacheTTL {
 		return e.Value, nil
 	}
 
-	version, err := resolveVersionFn(registryURL, packageID)
+	version, err := resolve()
 	if err != nil {
 		return "", err
 	}
@@ -118,9 +116,22 @@ func ResolveVersionCached(bridgeID, registryURL, packageID string) (string, erro
 
 	entries[key] = versionEntry{Value: version, StoredAt: time.Now()}
 	if err := persistVersionCacheFn(bridgeID, entries); err != nil {
-		return "", err
+		// The version is real: a broken cache must not turn a successful
+		// registry lookup into a package-less generated project. Report the
+		// write failure non-fatally and let the caller warn once.
+		return version, fmt.Errorf("persist package version cache for %q: %w", bridgeID, err)
 	}
 	return version, nil
+}
+
+// ResolveVersionCached resolves the latest stable version of a package from its
+// registry, caching the result per bridge for DefaultCacheTTL. A fresh cached
+// value avoids a network round-trip on every generation; a stale one triggers a
+// refresh. A corrupt or missing cache is ignored and simply re-resolved.
+func ResolveVersionCached(bridgeID, registryURL, packageID string) (string, error) {
+	return resolveVersionCached(bridgeID, cacheKey(registryURL, packageID), func() (string, error) {
+		return resolveVersionFn(registryURL, packageID)
+	})
 }
 
 // ResolveVersionCachedForFramework is the TFM-aware counterpart of
@@ -128,28 +139,7 @@ func ResolveVersionCached(bridgeID, registryURL, packageID string) (string, erro
 // regenerated for net10.0 and net11.0 must not reuse an incompatible version.
 func ResolveVersionCachedForFramework(bridgeID, registryURL, packageID, targetFramework string) (string, error) {
 	key := cacheKey(registryURL, packageID) + "\x00" + targetFramework
-
-	cacheMu.Lock()
-	defer cacheMu.Unlock()
-
-	entries, err := versionStore(bridgeID)
-	if err != nil {
+	return resolveVersionCached(bridgeID, key, func() (string, error) {
 		return resolveVersionForFrameworkFn(registryURL, packageID, targetFramework)
-	}
-	if e, ok := entries[key]; ok && e.Value != "" && time.Since(e.StoredAt) <= DefaultCacheTTL {
-		return e.Value, nil
-	}
-
-	version, err := resolveVersionForFrameworkFn(registryURL, packageID, targetFramework)
-	if err != nil {
-		return "", err
-	}
-	if version == "" {
-		return "", nil
-	}
-	entries[key] = versionEntry{Value: version, StoredAt: time.Now()}
-	if err := persistVersionCacheFn(bridgeID, entries); err != nil {
-		return "", err
-	}
-	return version, nil
+	})
 }

@@ -72,21 +72,42 @@ type stagedWrite struct {
 }
 
 // rollbackWrites undoes committed writes in reverse order and removes every
-// staged temp file. It is best-effort: the original error is always returned to
-// the caller, and no output file is left in a half-written state.
-func rollbackWrites(staged, committed []stagedWrite) {
+// staged temp file. It is best-effort: every restore/remove failure is joined
+// into the returned error so the caller can report it, while the original
+// rendering error stays the primary cause.
+func rollbackWrites(staged, committed []stagedWrite) error {
+	var failures []error
 	for _, w := range slices.Backward(committed) {
 		if w.existed {
-			if err := fsutil.AtomicWrite(w.target, w.original); err == nil {
-				_ = os.Chmod(w.target, w.mode)
+			if err := fsutil.AtomicWrite(w.target, w.original); err != nil {
+				failures = append(failures, fmt.Errorf("restore %s: %w", w.target, err))
+				continue
+			}
+			if err := os.Chmod(w.target, w.mode); err != nil {
+				failures = append(failures, fmt.Errorf("restore mode of %s: %w", w.target, err))
 			}
 			continue
 		}
-		_ = os.Remove(w.target)
+		if err := os.Remove(w.target); err != nil && !errors.Is(err, os.ErrNotExist) {
+			failures = append(failures, fmt.Errorf("remove %s: %w", w.target, err))
+		}
 	}
 	for _, w := range staged {
-		_ = os.Remove(w.temp)
+		if err := os.Remove(w.temp); err != nil && !errors.Is(err, os.ErrNotExist) {
+			failures = append(failures, fmt.Errorf("remove temp %s: %w", w.temp, err))
+		}
 	}
+	return errors.Join(failures...)
+}
+
+// rollbackError attaches rollback failures to the error that triggered them.
+// The original error stays first, so it remains the primary cause for callers
+// inspecting errors.Is / Error().
+func rollbackError(err, rollbackErr error) error {
+	if rollbackErr == nil {
+		return err
+	}
+	return errors.Join(err, fmt.Errorf("rollback writes: %w", rollbackErr))
 }
 
 // Render renders the IR through every bridge in the chain and returns the
@@ -138,12 +159,13 @@ func (r *Renderer) Render(project *ir.Project, outputDir string) ([]string, []Re
 	}
 
 	staged := make([]stagedWrite, 0)
+	// committed is empty during staging; phase 2 appends to it as files land.
+	committed := make([]stagedWrite, 0)
 	manifest := make([]RenderedFile, 0)
-	// fail drops every staged temp file. No output file has been touched during
-	// staging, so there is nothing to restore yet.
+	// fail drops every staged temp file (and restores committed files once
+	// phase 2 starts), attaching any rollback failure to the primary error.
 	fail := func(err error) ([]string, []RenderedFile, error) {
-		rollbackWrites(staged, nil)
-		return nil, nil, err
+		return nil, nil, rollbackError(err, rollbackWrites(staged, committed))
 	}
 
 	// Phase 1: parse templates and render each target into a temp file. Nothing
@@ -290,18 +312,14 @@ func (r *Renderer) Render(project *ir.Project, outputDir string) ([]string, []Re
 
 	// Phase 2: commit staged files. A failed rename rolls back every file that
 	// was already replaced, so callers never observe a partially updated tree.
-	committed := make([]stagedWrite, 0, len(staged))
 	for _, w := range staged {
 		if info, err := os.Lstat(w.target); err == nil && info.Mode()&os.ModeSymlink != 0 {
-			rollbackWrites(staged, committed)
-			return nil, nil, fmt.Errorf("template target path escapes output directory through a symlink: %s", w.record.Path)
+			return fail(fmt.Errorf("template target path escapes output directory through a symlink: %s", w.record.Path))
 		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-			rollbackWrites(staged, committed)
-			return nil, nil, fmt.Errorf("inspect output file %s: %w", w.record.Path, err)
+			return fail(fmt.Errorf("inspect output file %s: %w", w.record.Path, err))
 		}
 		if err := os.Rename(w.temp, w.target); err != nil {
-			rollbackWrites(staged, committed)
-			return nil, nil, fmt.Errorf("commit output file %s: %w", w.record.Path, err)
+			return fail(fmt.Errorf("commit output file %s: %w", w.record.Path, err))
 		}
 		committed = append(committed, w)
 	}
@@ -332,7 +350,7 @@ func (r *Renderer) shouldRenderContext(spec TemplateSpec, context RenderContext)
 	// true.
 	if cond, name, ok := strings.Cut(spec.When, ":"); ok {
 		switch strings.TrimSpace(cond) {
-		case "hasAddon":
+		case whenAddon:
 			if context.Project != nil {
 				if name == "" {
 					return len(context.Project.Addons) > 0
@@ -340,7 +358,7 @@ func (r *Renderer) shouldRenderContext(spec TemplateSpec, context RenderContext)
 				return context.Project.HasAddon(strings.TrimSpace(name))
 			}
 			return false
-		case "notHasAddon":
+		case whenNotAddon:
 			if context.Project != nil {
 				if name == "" {
 					return len(context.Project.Addons) == 0
@@ -351,16 +369,16 @@ func (r *Renderer) shouldRenderContext(spec TemplateSpec, context RenderContext)
 		}
 	}
 	switch spec.When {
-	case "hasSeed":
+	case whenSeed:
 		// Only render seed templates if there's actual seed data.
 		return context.HasSeedData()
-	case "hasEnums":
+	case whenEnums:
 		// Only render enum templates if there are enums defined
 		if context.Project != nil && len(context.Project.Enums) > 0 {
 			return true
 		}
 		return false
-	case "hasOwnerTokens":
+	case whenOwnerTokens:
 		// Only render owner resolver if any entity uses @Owner tokens
 		if context.Project != nil {
 			for _, e := range context.Project.Entities {
@@ -370,15 +388,18 @@ func (r *Renderer) shouldRenderContext(spec TemplateSpec, context RenderContext)
 			}
 		}
 		return false
-	case "hasAuth":
+	case whenAuth:
 		return context.Project != nil && context.Project.HasAuth()
-	case "hasMigration":
+	case whenMigration:
 		// True when the core computed a non-empty schema migration plan.
 		return context.HasMigration()
-	case "hasMockData":
+	case whenMockData:
 		// True when the context carries generated mock data.
 		return context.HasMockData()
 	default:
+		// Defensive only: loaded manifests are validated against the closed
+		// vocabulary in validateWhenConditions, so this is unreachable for
+		// bridge.yaml-driven templates.
 		return true
 	}
 }
@@ -427,8 +448,9 @@ func (r *Renderer) resolvePackages(project *ir.Project) map[string]string {
 		packageID := merged[key]
 		version, err := packages.ResolveVersionCachedForFramework(r.cacheNamespace(), registryURL, packageID, framework)
 		if err != nil {
+			// A cache-write failure still carries the resolved version; warn
+			// once and use it instead of emitting a package-less project.
 			r.log.Warn("failed to resolve package %s: %v", packageID, err)
-			continue
 		}
 		if version != "" {
 			result[key] = version

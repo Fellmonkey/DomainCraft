@@ -3,7 +3,18 @@ package renderer
 import (
 	"strings"
 	"testing"
+
+	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 )
+
+// TestContractVersionAliasesSpecmeta pins the single source of truth: the
+// renderer's public constant must be the specmeta contract, never a copy.
+func TestContractVersionAliasesSpecmeta(t *testing.T) {
+	t.Parallel()
+	if ContractVersion != specmeta.ContractVersion {
+		t.Fatalf("renderer.ContractVersion = %d, specmeta.ContractVersion = %d", ContractVersion, specmeta.ContractVersion)
+	}
+}
 
 // TestContractVersionMatrix is the compatibility oracle for bridge contracts:
 // absent → 1 (accepted, deprecated); equal → accepted; newer → rejected whose a
