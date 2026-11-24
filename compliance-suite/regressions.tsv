@@ -74,3 +74,4 @@ cmd/domaincraft/commands_update_security_test.go::TestVerifyFileSHA256	#5	self-u
 cmd/domaincraft/commands_update_security_test.go::TestRunCoreUpdateFailsClosed	#5	failed update path could still replace the executable
 cmd/domaincraft/commands_extends_test.go::TestBridgeUpdateNoticeOmitsCachedVersion	#5	cached old version was shown as the available version
 compliance-suite/regressions_test.go::TestRegressionsTable	#5	regression table validated format but not that named checks still exist
+internal/snapshot/hardening_test.go::TestSnapshotJSONHasNoTimestamp	#5	snapshot.json carried a wall-clock timestamp and broke bit-identical output

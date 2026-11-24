@@ -17,7 +17,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 	"github.com/DomainCraft/DomainCraft/internal/ir"
@@ -51,7 +50,6 @@ type EntityState struct {
 type Snapshot struct {
 	FormatVersion    int                     `json:"format_version"`
 	Bridge           string                  `json:"bridge"`
-	CreatedAt        string                  `json:"created_at"`
 	ProjectNamespace string                  `json:"project_namespace,omitempty"` // pascal-cased project name used as the C#/other root namespace
 	Files            []renderer.RenderedFile `json:"files"`
 	Entities         map[string]EntityState  `json:"entities"`
@@ -84,14 +82,11 @@ func Save(path string, snap *Snapshot) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec // generated project dirs must stay world-readable
 		return fmt.Errorf("create snapshot dir: %w", err)
 	}
-	data, err := json.MarshalIndent(snap, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal snapshot: %w", err)
-	}
 	// Atomic write: a crash mid-save must leave the previous snapshot intact.
 	// A truncated snapshot could make the next run compute destructive
-	// migrations against a model the developer never declared.
-	if err := fsutil.AtomicWrite(path, append(data, '\n')); err != nil {
+	// migrations against a model the developer never declared. No timestamp is
+	// persisted, so two runs on the same model produce byte-identical files.
+	if err := fsutil.WriteJSONWithNewline(path, snap, true); err != nil {
 		return fmt.Errorf("write snapshot: %w", err)
 	}
 	return nil
@@ -114,7 +109,6 @@ func New(bridge string, project *ir.Project, files []renderer.RenderedFile) *Sna
 	return &Snapshot{
 		FormatVersion:    FormatVersion,
 		Bridge:           bridge,
-		CreatedAt:        time.Now().UTC().Format(time.RFC3339),
 		ProjectNamespace: textutil.PascalCase(project.Name),
 		Files:            files,
 		Entities:         entities,

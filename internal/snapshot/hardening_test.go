@@ -195,3 +195,22 @@ func TestComputeDiffIgnoresSnapshotPathsThroughSymlinks(t *testing.T) {
 		}
 	})
 }
+
+// Snapshot metadata must not carry a wall-clock timestamp: two runs on the
+// same domain.yaml have to produce byte-identical output.
+func TestSnapshotJSONHasNoTimestamp(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := Path(dir)
+
+	if err := Save(path, New("demo", testProject("Product"), nil)); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if strings.Contains(string(data), "created_at") {
+		t.Errorf("snapshot.json contains a wall-clock timestamp")
+	}
+}
