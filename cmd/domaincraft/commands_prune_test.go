@@ -334,7 +334,7 @@ func TestPruneCLICleanupFailureKeepsSnapshot(t *testing.T) {
 			entity:   "Item",
 			fields:   map[string]string{"title": "string"},
 			file:     renderer.RenderedFile{Path: "src/LegacyService.txt", Entity: "Item", Custom: true},
-			wantDiag: "could not rewrite field references",
+			wantDiag: "rewrite field references in src/LegacyService.txt",
 		},
 		{
 			name:     "failed orphan delete",
@@ -342,7 +342,7 @@ func TestPruneCLICleanupFailureKeepsSnapshot(t *testing.T) {
 			entity:   "Old",
 			fields:   map[string]string{"id": "uuid"},
 			file:     renderer.RenderedFile{Path: "src/OldService.txt", Entity: "Old", Custom: true},
-			wantDiag: "could not delete",
+			wantDiag: "delete src/OldService.txt",
 		},
 	}
 
@@ -372,8 +372,13 @@ func TestPruneCLICleanupFailureKeepsSnapshot(t *testing.T) {
 			if err == nil {
 				t.Fatalf("generate --prune should fail; stdout: %s", stdout)
 			}
-			if !strings.Contains(stderr, tt.wantDiag) {
-				t.Errorf("stderr = %q, want %q", stderr, tt.wantDiag)
+			// Under --prune the failure is returned once (Execute prints it as
+			// "Error: ..."), not warned about and then returned again.
+			if !strings.Contains(err.Error(), tt.wantDiag) {
+				t.Errorf("err = %q, want %q (stderr: %q)", err, tt.wantDiag, stderr)
+			}
+			if strings.Contains(stderr, "could not ") {
+				t.Errorf("cleanup failure was warned about twice: %q", stderr)
 			}
 			if got := readPruneSnapshot(t, output).Bridge; got != "SENTINEL" {
 				t.Errorf("snapshot was advanced past failed cleanup: bridge = %q", got)

@@ -114,11 +114,54 @@ func init() {
 	}
 }
 
+// errUsage marks CLI misuse: bad flags, bad arguments or a missing required
+// flag. main maps it to exit code 2; every other error is a runtime failure
+// (exit 1). The message stays that of the underlying error — the marker is
+// invisible to the user and to log output.
+var errUsage = errors.New("usage error")
+
+type usageError struct{ err error }
+
+func (u usageError) Error() string { return u.err.Error() }
+func (u usageError) Unwrap() error { return u.err }
+func (u usageError) Is(target error) bool {
+	return target == errUsage
+}
+
+// asUsageError tags an error raised inside RunE so it gets the usage exit code.
+func asUsageError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return usageError{err: err}
+}
+
+// reportCommandError is the only place a command failure reaches stderr. A
+// cleanup handler must return its error instead of also logging a warning, or
+// the same failure would be printed twice.
+func reportCommandError(err error) {
+	_, _ = fmt.Fprintln(os.Stderr, "Error:", err)
+}
+
 // Execute runs the root command. Cobra is silenced so the error is printed
 // exactly once here; the error is returned to main, which owns the exit code.
+// Errors raised before the command's PersistentPreRun (unknown flag, unknown
+// command, failed argument validation) are usage errors by construction.
 func Execute() error {
-	if err := newRootCommand().Execute(); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, "Error:", err)
+	root := newRootCommand()
+	preRun := root.PersistentPreRun
+	reachedRun := false
+	root.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		reachedRun = true
+		if preRun != nil {
+			preRun(cmd, args)
+		}
+	}
+	if err := root.Execute(); err != nil {
+		reportCommandError(err)
+		if !reachedRun || errors.Is(err, errUsage) {
+			return asUsageError(err)
+		}
 		return err
 	}
 	return nil
@@ -272,7 +315,7 @@ func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
 	// Parse --replace flags (layer|bridgeId=bridgeRef).
 	replacements, err := parseReplaceFlags(opts.replaceFlags)
 	if err != nil {
-		return err
+		return asUsageError(err)
 	}
 	// Resolve extends chain with optional node replacements.
 	newBridgePath, basePaths, err := resolveChainWithReplacements(opts, opts.bridgePath, replacements, log)
@@ -317,7 +360,7 @@ func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
 	// argument is rejected by cobra.MaximumNArgs(1) / the check below.
 	if len(args) > 0 {
 		if !cmd.Flags().Changed("admin") || opts.adminBridge != "admin-alpine" {
-			return fmt.Errorf("unexpected positional argument %q: use --admin <bridge-id>", args[0])
+			return asUsageError(fmt.Errorf("unexpected positional argument %q: use --admin <bridge-id>", args[0]))
 		}
 		opts.adminBridge = args[0]
 	}
@@ -551,7 +594,7 @@ func resolveBridgeInteractive(opts *cliOptions, log *logger.Logger) (string, str
 	}
 
 	if opts.nonInteractive || !isTerminal() {
-		return "", "", fmt.Errorf("--bridge is required in non-interactive mode")
+		return "", "", asUsageError(fmt.Errorf("--bridge is required in non-interactive mode"))
 	}
 
 	entry, err := interactive.SelectBridge(bridge.Default())
@@ -895,10 +938,29 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 // two-byte Fe controls. A bare ESC (no valid sequence) is dropped separately.
 var ansiSequenceRe = regexp.MustCompile(`\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|[@-_])`)
 
+// isInvisibleFormat reports Unicode format characters that can reorder, hide
+// or join displayed text. Left as-is, one bridge-declared line can be rendered
+// as several harmless-looking commands while the shell still executes the
+// original string. Kept separate so the display policy has one source of truth.
+func isInvisibleFormat(r rune) bool {
+	switch {
+	case r >= 0x200b && r <= 0x200f, // zero-width space, ZWNJ, ZWJ, LRM, RLM
+		r >= 0x202a && r <= 0x202e, // LRE, RLE, PDF, LRO, RLO
+		r >= 0x2060 && r <= 0x206f, // word joiner, invisible operators, LRI/RLI/FSI/PDI
+		r == 0x061c,                // Arabic letter mark
+		r == 0xfeff:                // zero-width no-break space / BOM
+		return true
+	}
+	return false
+}
+
 // sanitizeCommandLine removes terminal control characters from a bridge-declared
-// command before it is displayed or logged. Tab and newline are kept; C0 (other
-// than those two), C1, CSI/OSC sequences, bare ESC and invalid UTF-8 bytes are
-// dropped. The command itself is never modified — only its presentation.
+// command before it is displayed or logged. C0 (except tab and newline), C1,
+// CSI/OSC sequences, bare ESC and invalid UTF-8 bytes are dropped. Tab and
+// newline become visible "\t"/"\n" escapes; bidi and zero-width controls become
+// visible "<U+XXXX>" tokens, so one line can never masquerade as several
+// harmless commands. The command itself is never modified — only its
+// presentation.
 func sanitizeCommandLine(s string) string {
 	s = ansiSequenceRe.ReplaceAllString(s, "")
 	var b strings.Builder
@@ -910,11 +972,18 @@ func sanitizeCommandLine(s string) string {
 			continue
 		}
 		if c < utf8.RuneSelf {
-			if (c < 0x20 && c != '\t' && c != '\n') || c == 0x7f {
-				i++
-				continue
+			switch c {
+			case '\t':
+				b.WriteString(`\t`)
+			case '\n':
+				b.WriteString(`\n`)
+			default:
+				if (c < 0x20) || c == 0x7f {
+					i++
+					continue
+				}
+				b.WriteByte(c)
 			}
-			b.WriteByte(c)
 			i++
 			continue
 		}
@@ -924,6 +993,11 @@ func sanitizeCommandLine(s string) string {
 			continue
 		}
 		if r >= 0x80 && r <= 0x9f { // C1 controls
+			i += size
+			continue
+		}
+		if isInvisibleFormat(r) {
+			b.WriteString(fmt.Sprintf("<U+%04X>", r))
 			i += size
 			continue
 		}
@@ -983,7 +1057,8 @@ func applyMigrationActions(opts *cliOptions, diff *snapshot.Diff, fresh map[stri
 				}
 				rewrote, err := snapshot.RewriteFile(opts.outputDir, rel, snapshot.NamespaceTransform(diff.NamespaceRename))
 				if err != nil {
-					mc.log.Warn("could not rewrite namespace in %s: %v", rel, err)
+					// Under --prune the error is returned and printed once by
+					// Execute(); a Warn here would print the same failure twice.
 					failures = append(failures, fmt.Errorf("rewrite namespace in %s: %w", rel, err))
 					continue
 				}
@@ -999,7 +1074,6 @@ func applyMigrationActions(opts *cliOptions, diff *snapshot.Diff, fresh map[stri
 				}
 				rewrote, err := snapshot.RewriteFile(opts.outputDir, rel, snapshot.FieldTransform(fr))
 				if err != nil {
-					mc.log.Warn("could not rewrite field references in %s: %v", rel, err)
 					failures = append(failures, fmt.Errorf("rewrite field references in %s: %w", rel, err))
 					continue
 				}
@@ -1098,9 +1172,10 @@ func handleDeletedEntity(mc migrationContext, del snapshot.DeletedEntity) (bool,
 			continue
 		}
 		if err := snapshot.DeleteFile(mc.opts.outputDir, f.Path); err != nil {
-			mc.log.Warn("could not delete %s: %v", f.Path, err)
 			if mc.opts.prune {
 				failures = append(failures, fmt.Errorf("delete %s: %w", f.Path, err))
+			} else {
+				mc.log.Warn("could not delete %s: %v", f.Path, err)
 			}
 			continue
 		}
@@ -1143,27 +1218,32 @@ func handleRename(mc migrationContext, ren snapshot.Rename, d *snapshot.Diff) (b
 				// The destination was scaffolded this run by the custom
 				// (overwrite: false) template. Replace it with the developer's
 				// existing custom file so custom hooks survive the rename.
-				if err := os.Remove(filepath.Join(mc.opts.outputDir, filepath.FromSlash(newRel))); err != nil {
-					mc.log.Warn("could not replace scaffolded %s: %v", newRel, err)
+				// Use the validated helper: a poisoned snapshot path must never
+				// remove a file outside outputDir (including through a symlink).
+				if err := snapshot.DeleteFile(mc.opts.outputDir, newRel); err != nil {
 					if mc.opts.prune {
 						failures = append(failures, fmt.Errorf("replace scaffolded %s: %w", newRel, err))
+					} else {
+						mc.log.Warn("could not replace scaffolded %s: %v", newRel, err)
 					}
 					continue
 				}
 			}
 			newRel, renamed, err := snapshot.RenameEntityFile(mc.opts.outputDir, f.Path, ren.OldName, ren.NewName)
 			if err != nil {
-				mc.log.Warn("could not rename %s: %v", f.Path, err)
 				if mc.opts.prune {
 					failures = append(failures, fmt.Errorf("rename %s: %w", f.Path, err))
+				} else {
+					mc.log.Warn("could not rename %s: %v", f.Path, err)
 				}
 				continue
 			}
 			if renamed {
 				if rewrote, rerr := snapshot.RewriteFile(mc.opts.outputDir, newRel, snapshot.RenameTransforms(ren.OldName, ren.NewName, d)...); rerr != nil {
-					mc.log.Warn("could not rewrite content of %s: %v", newRel, rerr)
 					if mc.opts.prune {
 						failures = append(failures, fmt.Errorf("rewrite content of %s: %w", newRel, rerr))
+					} else {
+						mc.log.Warn("could not rewrite content of %s: %v", newRel, rerr)
 					}
 				} else if rewrote {
 					mc.log.Info("renamed %s -> %s (content updated)", f.Path, newRel)
@@ -1175,9 +1255,10 @@ func handleRename(mc migrationContext, ren snapshot.Rename, d *snapshot.Diff) (b
 		}
 		// Generated files have been regenerated under the new name — remove the stale copy.
 		if err := snapshot.DeleteFile(mc.opts.outputDir, f.Path); err != nil {
-			mc.log.Warn("could not delete stale generated file %s: %v", f.Path, err)
 			if mc.opts.prune {
 				failures = append(failures, fmt.Errorf("delete stale generated file %s: %w", f.Path, err))
+			} else {
+				mc.log.Warn("could not delete stale generated file %s: %v", f.Path, err)
 			}
 			continue
 		}

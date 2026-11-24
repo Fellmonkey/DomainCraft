@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/signal"
 	"syscall"
@@ -21,6 +22,9 @@ func run() int {
 	commandCtx = ctx
 	bridge.SetCommandContext(ctx)
 	if err := Execute(); err != nil {
+		if errors.Is(err, errUsage) {
+			return 2
+		}
 		return 1
 	}
 	return 0

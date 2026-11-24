@@ -61,6 +61,7 @@ var (
 	chmodFn             = os.Chmod
 	renameFn            = os.Rename
 	removeFn            = os.Remove
+	createTempFn        = os.CreateTemp
 )
 
 // githubRelease is the subset of the GitHub releases/latest payload we need.
@@ -193,7 +194,13 @@ func runCoreUpdate(log *logger.Logger, checkOnly bool) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := downloadBinary(assetURL)
+	// Resolve the executable before downloading: the temp file must live on the
+	// same volume as the binary, otherwise rename fails with EXDEV on install.
+	exe, err := executableFn()
+	if err != nil {
+		return fmt.Errorf("locate current executable: %w", err)
+	}
+	tmp, err := downloadBinary(assetURL, filepath.Dir(exe))
 	if err != nil {
 		return err
 	}
@@ -203,10 +210,6 @@ func runCoreUpdate(log *logger.Logger, checkOnly bool) error {
 		return fmt.Errorf("refusing to install update: %w", err)
 	}
 
-	exe, err := executableFn()
-	if err != nil {
-		return fmt.Errorf("locate current executable: %w", err)
-	}
 	if err := replaceExecutableFn(tmp, exe); err != nil {
 		return err
 	}
@@ -378,8 +381,10 @@ func readResponseBody(resp *http.Response, rawURL string) ([]byte, error) {
 	return netutil.ReadBoundedBody(resp, rawURL, maxResponseBody, validateReleaseRedirect)
 }
 
-// downloadBinary fetches a release asset into a temp file and returns its path.
-func downloadBinary(rawURL string) (string, error) {
+// downloadBinary fetches a release asset into a temp file in dir and returns
+// its path. Callers pass filepath.Dir(exe) so the final rename never crosses a
+// volume boundary (EXDEV on Unix, a needless copy on Windows).
+func downloadBinary(rawURL, dir string) (string, error) {
 	validURL, err := validateReleaseURL(rawURL)
 	if err != nil {
 		return "", fmt.Errorf("download update: %w", err)
@@ -389,7 +394,7 @@ func downloadBinary(rawURL string) (string, error) {
 		return "", fmt.Errorf("download update: %w", err)
 	}
 
-	tmp, err := os.CreateTemp("", "domaincraft-update-*")
+	tmp, err := createTempFn(dir, "domaincraft-update-*")
 	if err != nil {
 		return "", err
 	}

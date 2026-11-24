@@ -140,7 +140,7 @@ func TestDownloadAndReplace(t *testing.T) {
 	}
 	defer func() { httpGetBodyFn = oldHTTP }()
 
-	tmp, err := downloadBinary("https://github.com/DomainCraft/DomainCraft/releases/download/v1.2.3/domaincraft-linux-amd64")
+	tmp, err := downloadBinary("https://github.com/DomainCraft/DomainCraft/releases/download/v1.2.3/domaincraft-linux-amd64", t.TempDir())
 	if err != nil {
 		t.Fatalf("downloadBinary: %v", err)
 	}

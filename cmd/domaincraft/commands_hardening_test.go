@@ -163,6 +163,177 @@ func TestCleanupDeferred(t *testing.T) {
 	}
 }
 
+// TestPruneRejectsScaffoldReplaceEscape guards the last unvalidated removal in
+// --prune: a poisoned rename destination must never delete a file outside the
+// output directory, neither via ".." nor through a symlink.
+func TestPruneRejectsScaffoldReplaceEscape(t *testing.T) {
+	run := func(t *testing.T, output, oldRel, newRel string) {
+		t.Helper()
+		mc := migrationContext{
+			opts:  &cliOptions{outputDir: output, prune: true},
+			fresh: map[string]bool{newRel: true}, // scaffolded destination triggers the replace path
+			log:   logger.New(),
+			out:   &bytes.Buffer{},
+		}
+		ren := snapshot.Rename{
+			OldName: "Old",
+			NewName: "New",
+			Files:   []snapshot.FileRef{{Path: oldRel, Custom: true}},
+		}
+		applied, err := handleRename(mc, ren, &snapshot.Diff{})
+		if applied || err == nil {
+			t.Fatalf("handleRename = %v, %v; want a hard error under --prune", applied, err)
+		}
+		if !strings.Contains(err.Error(), "replace scaffolded") {
+			t.Errorf("err = %v, want it to name the scaffold replacement", err)
+		}
+	}
+
+	t.Run("path traversal", func(t *testing.T) {
+		root := t.TempDir()
+		output := filepath.Join(root, "generated")
+		outside := filepath.Join(root, "outside")
+		for _, dir := range []string{output, outside} {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		victim := filepath.Join(outside, "NewService.txt")
+		if err := os.WriteFile(victim, []byte("keep"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		run(t, output, "../outside/OldService.txt", "../outside/NewService.txt")
+		if _, err := os.Stat(victim); err != nil {
+			t.Fatalf("file outside outputDir was removed: %v", err)
+		}
+	})
+
+	t.Run("symlink to outside directory", func(t *testing.T) {
+		root := t.TempDir()
+		output := filepath.Join(root, "generated")
+		outside := filepath.Join(root, "outside")
+		for _, dir := range []string{output, outside} {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		victim := filepath.Join(outside, "NewService.txt")
+		if err := os.WriteFile(victim, []byte("keep"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(output, "link")); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		run(t, output, "link/OldService.txt", "link/NewService.txt")
+		if _, err := os.Stat(victim); err != nil {
+			t.Fatalf("file behind the symlink was removed: %v", err)
+		}
+	})
+}
+
+// TestPruneCleanupErrorPrintedOnce checks that a failed namespace rewrite under
+// --prune is returned (and printed by reportCommandError) but never warned about
+// a second time by the cleanup handler itself.
+func TestPruneCleanupErrorPrintedOnce(t *testing.T) {
+	root := t.TempDir()
+	// A non-empty directory at the custom file path makes RewriteFile fail.
+	blocked := filepath.Join(root, "src", "ItemService.txt")
+	if err := os.MkdirAll(filepath.Join(blocked, "child"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	diff := &snapshot.Diff{NamespaceRename: &snapshot.NamespaceMismatch{
+		OldNamespace: "OldNs",
+		NewNamespace: "NewNs",
+		Files:        []string{"src/ItemService.txt"},
+	}}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStderr := os.Stderr
+	os.Stderr = w
+	t.Cleanup(func() {
+		os.Stderr = oldStderr
+		_ = r.Close()
+		_ = w.Close()
+	})
+
+	log := logger.New()
+	log.SetWriter(w)
+	cmd := &cobra.Command{}
+	cmd.SetErr(w)
+	applied, err := applyMigrationActions(&cliOptions{outputDir: root, prune: true}, diff, nil, log, cmd)
+	if applied || err == nil {
+		t.Fatalf("applyMigrationActions = %v, %v; want a hard error", applied, err)
+	}
+	reportCommandError(err)
+	_ = w.Close()
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+	if n := strings.Count(got, "rewrite namespace in src/ItemService.txt"); n != 1 {
+		t.Errorf("cleanup failure printed %d times, want 1: %q", n, got)
+	}
+	if strings.Contains(got, "could not rewrite namespace") {
+		t.Errorf("duplicate warning was emitted: %q", got)
+	}
+}
+
+// TestUsageErrorsExitTwo separates CLI misuse (exit 2) from runtime failures
+// (exit 1) while keeping the error itself printed exactly once.
+func TestUsageErrorsExitTwo(t *testing.T) {
+	oldArgs, oldStderr, oldVersion, oldCtx := os.Args, os.Stderr, version, commandCtx
+	version = "dev"
+	// run() cancels the context it installs via its deferred stop(); restore
+	// the package-level context so later tests keep a live one.
+	t.Cleanup(func() { os.Args, os.Stderr, version, commandCtx = oldArgs, oldStderr, oldVersion, oldCtx })
+
+	domainPath := filepath.Join(t.TempDir(), "domain.yaml")
+	if err := os.WriteFile(domainPath, []byte(`project:
+  name: Fixture
+database: postgresql
+entities:
+  Item:
+    fields:
+      id: uuid [primary]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bridgeDir := pruneBridge(t, "")
+	cases := []struct {
+		name string
+		args []string
+		want int
+	}{
+		{"unknown flag", []string{"domaincraft", "validate", "--bogus"}, 2},
+		{"too many arguments", []string{"domaincraft", "validate", "a", "b"}, 2},
+		{"unknown command", []string{"domaincraft", "nope"}, 2},
+		{"missing bridge", []string{"domaincraft", "generate", "--domain", domainPath, "--output", t.TempDir(), "--non-interactive"}, 2},
+		{"malformed --replace", []string{"domaincraft", "generate", "--domain", domainPath, "--bridge", bridgeDir, "--output", t.TempDir(), "--non-interactive", "--replace", "malformed"}, 2},
+		{"runtime failure", []string{"domaincraft", "validate", "--domain", filepath.Join(t.TempDir(), "missing.yaml")}, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			logPath := filepath.Join(t.TempDir(), "stderr.log")
+			f, err := os.Create(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			os.Args, os.Stderr = tc.args, f
+			got := run()
+			_ = f.Close()
+			if got != tc.want {
+				data, _ := os.ReadFile(logPath)
+				t.Errorf("run(%v) = %d, want %d; stderr: %s", tc.args, got, tc.want, data)
+			}
+		})
+	}
+}
+
 func TestSanitizeCommandLine(t *testing.T) {
 	cases := []struct {
 		name string
@@ -172,10 +343,17 @@ func TestSanitizeCommandLine(t *testing.T) {
 		{"CSI", "echo \x1b[2JSAFE", "echo SAFE"},
 		{"OSC with BEL", "\x1b]0;pwn\x07echo SAFE", "echo SAFE"},
 		{"OSC with ST", "echo SAFE\x1b]0;pwn\x1b\\", "echo SAFE"},
-		{"C0 and DEL", "echo\tSAFE\r\n\x00\x07\x7f", "echo\tSAFE\n"},
+		{"C0 and DEL", "echo\tSAFE\r\n\x00\x07\x7f", `echo\tSAFE\n`},
 		{"C1", "echo\u0085SAFE\u009f", "echoSAFE"},
 		{"bare ESC", "echo SAFE\x1b", "echo SAFE"},
 		{"UTF-8 preserved", "echo Привет", "echo Привет"},
+		{"embedded newline cannot split the command", "echo SAFE\nrm -rf /", `echo SAFE\nrm -rf /`},
+		{"embedded tab cannot fake a new argument", "echo\tSAFE", `echo\tSAFE`},
+		{"bidi override", "echo \u202eSAFE\u202c", "echo <U+202E>SAFE<U+202C>"},
+		{"bidi isolates", "\u2066evil\u2069SAFE", "<U+2066>evil<U+2069>SAFE"},
+		{"zero-width characters", "e\u200bx\u200dy\u200cz", "e<U+200B>x<U+200D>y<U+200C>z"},
+		{"zero-width no-break space", "\ufeffSAFE", "<U+FEFF>SAFE"},
+		{"RTL mark", "\u200fSAFE", "<U+200F>SAFE"},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {

@@ -435,12 +435,53 @@ func TestDownloadBinaryChmodFailure(t *testing.T) {
 
 	chmodErr := errors.New("chmod denied")
 	chmodFn = func(string, os.FileMode) error { return chmodErr }
-	path, err := downloadBinary("https://github.com/DomainCraft/DomainCraft/releases/download/v1.2.3/domaincraft-linux-amd64")
+	path, err := downloadBinary("https://github.com/DomainCraft/DomainCraft/releases/download/v1.2.3/domaincraft-linux-amd64", t.TempDir())
 	if !errors.Is(err, chmodErr) || !strings.Contains(err.Error(), "make downloaded update executable") {
 		t.Fatalf("err = %v, want chmod failure", err)
 	}
 	if path != "" {
 		t.Errorf("path = %q, want no installed binary", path)
+	}
+}
+
+// TestReplaceExecutableUsesSameVolumeTemp guards the EXDEV fix: the download
+// temp must be created next to the running executable, not in the OS temp dir.
+func TestReplaceExecutableUsesSameVolumeTemp(t *testing.T) {
+	oldVersion, oldHTTP, oldExe, oldReplace, oldCreateTemp := version, httpGetBodyFn, executableFn, replaceExecutableFn, createTempFn
+	t.Cleanup(func() {
+		version, httpGetBodyFn, executableFn, replaceExecutableFn, createTempFn = oldVersion, oldHTTP, oldExe, oldReplace, oldCreateTemp
+	})
+
+	root := t.TempDir()
+	exe := filepath.Join(root, "domaincraft")
+	assets, bodies := updatePayload([]byte("new binary"))
+	version = "1.0.0"
+	httpGetBodyFn = fakeUpdateServer("v1.2.0", assets, bodies)
+	executableFn = func() (string, error) { return exe, nil }
+
+	var tempDir, installedFrom string
+	createTempFn = func(dir, pattern string) (*os.File, error) {
+		tempDir = dir
+		return os.CreateTemp(dir, pattern)
+	}
+	replaceExecutableFn = func(tmp, gotExe string) error {
+		installedFrom = tmp
+		if gotExe != exe {
+			t.Errorf("replace target = %q, want %q", gotExe, exe)
+		}
+		return nil
+	}
+
+	log := logger.New()
+	log.SetWriter(io.Discard)
+	if err := runCoreUpdate(log, false); err != nil {
+		t.Fatalf("runCoreUpdate: %v", err)
+	}
+	if tempDir != root {
+		t.Fatalf("CreateTemp dir = %q, want the executable directory %q", tempDir, root)
+	}
+	if filepath.Dir(installedFrom) != root {
+		t.Errorf("temp binary %q is not next to the executable %q", installedFrom, exe)
 	}
 }
 
