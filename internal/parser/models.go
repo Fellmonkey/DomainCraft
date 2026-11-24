@@ -84,6 +84,72 @@ func (e AuthEndpoints) HasSetup() bool { return e.Setup == nil || *e.Setup }
 type DeployConfig struct {
 	Domain string `yaml:"domain" json:"domain,omitempty"`
 	Port   int    `yaml:"port" json:"port,omitempty"`
+	// portSet records whether "port" was present in YAML. An explicit 0 is a
+	// value, not a missing key, so ParseRawSchema must not default it to 8080.
+	portSet bool
+}
+
+// yamlMergeKeyNames returns the key names contributed by a YAML merge value
+// ("<<"), which is either an alias to a mapping or a sequence of such aliases.
+// The alias decode below applies the merged values; this walk only records
+// which keys were present so an explicit zero in a merged block survives.
+func yamlMergeKeyNames(value *yaml.Node) []string {
+	var names []string
+	var collect func(*yaml.Node)
+	collect = func(node *yaml.Node) {
+		switch node.Kind {
+		case yaml.AliasNode:
+			if node.Alias != nil {
+				collect(node.Alias)
+			}
+		case yaml.SequenceNode:
+			for _, item := range node.Content {
+				collect(item)
+			}
+		case yaml.MappingNode:
+			for i := 0; i < len(node.Content)-1; i += 2 {
+				names = append(names, node.Content[i].Value)
+			}
+		}
+	}
+	collect(value)
+	return names
+}
+
+type deployConfigAlias DeployConfig
+
+// UnmarshalYAML records key presence before decoding the block. Decoding goes
+// through an alias so yaml.v3 does not call this method recursively.
+func (d *DeployConfig) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.MappingNode {
+		return value.Decode((*deployConfigAlias)(d))
+	}
+	for i := 0; i < len(value.Content)-1; i += 2 {
+		key := value.Content[i]
+		switch key.Value {
+		case "port":
+			d.portSet = true
+		case "domain":
+			// no presence flag needed: the empty string default is unambiguous
+		case "<<":
+			if key.Tag != "!!str" {
+				for _, name := range yamlMergeKeyNames(value.Content[i+1]) {
+					if name == "port" {
+						d.portSet = true
+					}
+				}
+				continue
+			}
+			// A quoted "<<" is a regular key, not a merge, and falls through.
+			fallthrough
+		default:
+			// Node.Decode uses a fresh decoder without KnownFields(true), so
+			// strict decoding is enforced here to keep the root decoder's
+			// unknown-key behavior inside this block.
+			return fmt.Errorf("line %d: field %s not found in type parser.DeployConfig", key.Line, key.Value)
+		}
+	}
+	return value.Decode((*deployConfigAlias)(d))
 }
 
 // CacheConfig represents cache configuration (agnostic — no language/platform specifics).
@@ -112,12 +178,92 @@ type RateLimitConfig struct {
 	Policy        string `yaml:"policy" json:"policy,omitempty"` // fixed | sliding
 	PermitLimit   int    `yaml:"permit_limit" json:"permit_limit,omitempty"`
 	WindowSeconds int    `yaml:"window_seconds" json:"window_seconds,omitempty"`
+	// Presence flags distinguish an explicit 0 (deny all / no window) from an
+	// omitted key that must receive the documented default.
+	permitLimitSet   bool
+	windowSecondsSet bool
+}
+
+type rateLimitConfigAlias RateLimitConfig
+
+// UnmarshalYAML records key presence before decoding the block. Decoding goes
+// through an alias so yaml.v3 does not call this method recursively.
+func (r *RateLimitConfig) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.MappingNode {
+		return value.Decode((*rateLimitConfigAlias)(r))
+	}
+	for i := 0; i < len(value.Content)-1; i += 2 {
+		key := value.Content[i]
+		switch key.Value {
+		case "permit_limit":
+			r.permitLimitSet = true
+		case "window_seconds":
+			r.windowSecondsSet = true
+		case "enabled", "policy":
+			// no presence flags needed: these defaults are unambiguous
+		case "<<":
+			if key.Tag != "!!str" {
+				for _, name := range yamlMergeKeyNames(value.Content[i+1]) {
+					switch name {
+					case "permit_limit":
+						r.permitLimitSet = true
+					case "window_seconds":
+						r.windowSecondsSet = true
+					}
+				}
+				continue
+			}
+			fallthrough
+		default:
+			return fmt.Errorf("line %d: field %s not found in type parser.RateLimitConfig", key.Line, key.Value)
+		}
+	}
+	return value.Decode((*rateLimitConfigAlias)(r))
 }
 
 // PaginationConfig represents list pagination sizing.
 type PaginationConfig struct {
 	DefaultPageSize int `yaml:"default_page_size" json:"default_page_size,omitempty"`
 	MaxPageSize     int `yaml:"max_page_size" json:"max_page_size,omitempty"`
+	// Presence flags distinguish an explicit 0 from an omitted key that must
+	// receive the documented default.
+	defaultPageSizeSet bool
+	maxPageSizeSet     bool
+}
+
+type paginationConfigAlias PaginationConfig
+
+// UnmarshalYAML records key presence before decoding the block. Decoding goes
+// through an alias so yaml.v3 does not call this method recursively.
+func (p *PaginationConfig) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.MappingNode {
+		return value.Decode((*paginationConfigAlias)(p))
+	}
+	for i := 0; i < len(value.Content)-1; i += 2 {
+		key := value.Content[i]
+		switch key.Value {
+		case "default_page_size":
+			p.defaultPageSizeSet = true
+		case "max_page_size":
+			p.maxPageSizeSet = true
+		case "<<":
+			if key.Tag != "!!str" {
+				for _, name := range yamlMergeKeyNames(value.Content[i+1]) {
+					switch name {
+					case "default_page_size":
+						p.defaultPageSizeSet = true
+					case "max_page_size":
+						p.maxPageSizeSet = true
+					}
+				}
+				continue
+			}
+			fallthrough
+		default:
+			return fmt.Errorf("line %d: field %s not found in type parser.PaginationConfig", key.Line, key.Value)
+		}
+	}
+	return value.Decode((*paginationConfigAlias)(p))
 }
 
 // MultiTenancyConfig holds multi-tenancy settings
@@ -273,7 +419,7 @@ func ParseRawSchema(data []byte) (*RawSchema, error) {
 	if schema.Project.Deploy == nil {
 		schema.Project.Deploy = &DeployConfig{}
 	}
-	if schema.Project.Deploy.Port == 0 {
+	if !schema.Project.Deploy.portSet {
 		schema.Project.Deploy.Port = 8080
 	}
 	if schema.Project.Deploy.Domain == "" {
@@ -295,10 +441,10 @@ func ParseRawSchema(data []byte) (*RawSchema, error) {
 	if schema.Project.RateLimit.Policy == "" {
 		schema.Project.RateLimit.Policy = "fixed"
 	}
-	if schema.Project.RateLimit.PermitLimit == 0 {
+	if !schema.Project.RateLimit.permitLimitSet {
 		schema.Project.RateLimit.PermitLimit = 100
 	}
-	if schema.Project.RateLimit.WindowSeconds == 0 {
+	if !schema.Project.RateLimit.windowSecondsSet {
 		schema.Project.RateLimit.WindowSeconds = 60
 	}
 
@@ -306,10 +452,10 @@ func ParseRawSchema(data []byte) (*RawSchema, error) {
 	if schema.Project.Pagination == nil {
 		schema.Project.Pagination = &PaginationConfig{}
 	}
-	if schema.Project.Pagination.DefaultPageSize == 0 {
+	if !schema.Project.Pagination.defaultPageSizeSet {
 		schema.Project.Pagination.DefaultPageSize = 20
 	}
-	if schema.Project.Pagination.MaxPageSize == 0 {
+	if !schema.Project.Pagination.maxPageSizeSet {
 		schema.Project.Pagination.MaxPageSize = 200
 	}
 

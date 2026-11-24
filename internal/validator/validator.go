@@ -203,23 +203,28 @@ func (v *Validator) validateProject() []ValidationError {
 			errs = append(errs, warn("<schema>", "",
 				"rate_limit.permit_limit must be non-negative"))
 		}
-		if p.RateLimit.WindowSeconds < 1 {
+		// An explicit 0 means "no window"; only negatives are invalid. The
+		// parser fills in 60 when the key is omitted, so 0 never means "unset"
+		// by the time the validator sees it.
+		if p.RateLimit.WindowSeconds < 0 {
 			errs = append(errs, warn("<schema>", "",
-				"rate_limit.window_seconds must be at least 1"))
+				"rate_limit.window_seconds must be non-negative"))
 		}
 	}
 
-	// Pagination
+	// Pagination. An explicit 0 is a meaningful value (no default / no cap);
+	// only negatives are invalid. Omitted keys are defaulted by the parser.
 	if p.Pagination != nil {
-		if p.Pagination.DefaultPageSize < 1 {
+		if p.Pagination.DefaultPageSize < 0 {
 			errs = append(errs, warn("<schema>", "",
-				"pagination.default_page_size must be at least 1"))
+				"pagination.default_page_size must be non-negative"))
 		}
-		if p.Pagination.MaxPageSize < 1 {
+		if p.Pagination.MaxPageSize < 0 {
 			errs = append(errs, warn("<schema>", "",
-				"pagination.max_page_size must be at least 1"))
+				"pagination.max_page_size must be non-negative"))
 		}
-		if p.Pagination.DefaultPageSize > p.Pagination.MaxPageSize {
+		if p.Pagination.DefaultPageSize > 0 && p.Pagination.MaxPageSize > 0 &&
+			p.Pagination.DefaultPageSize > p.Pagination.MaxPageSize {
 			errs = append(errs, warnf("<schema>", "",
 				"pagination.default_page_size (%d) must not exceed max_page_size (%d)", p.Pagination.DefaultPageSize,
 				p.Pagination.MaxPageSize))

@@ -72,6 +72,36 @@ entities: {}
 `,
 			wantErr: "field typo_field not found in type parser.ProjectConfig",
 		},
+		{
+			name: "unknown deploy key",
+			yaml: `project:
+  name: Test
+  deploy:
+    typo_field: 1
+entities: {}
+`,
+			wantErr: "field typo_field not found in type parser.DeployConfig",
+		},
+		{
+			name: "unknown rate limit key",
+			yaml: `project:
+  name: Test
+  rate_limit:
+    typo_field: 1
+entities: {}
+`,
+			wantErr: "field typo_field not found in type parser.RateLimitConfig",
+		},
+		{
+			name: "unknown pagination key",
+			yaml: `project:
+  name: Test
+  pagination:
+    typo_field: 1
+entities: {}
+`,
+			wantErr: "field typo_field not found in type parser.PaginationConfig",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -783,5 +813,165 @@ entities:
 				t.Errorf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+// TestParseRawSchemaExplicitZerosPreserved pins the contract that an explicit
+// zero in domain.yaml survives parsing. The old defaults treated 0 as "unset",
+// silently replacing permit_limit: 0 with 100 (and likewise for the other
+// numeric project settings).
+func TestParseRawSchemaExplicitZerosPreserved(t *testing.T) {
+	t.Parallel()
+	yamlData := []byte(`
+project:
+  name: Test
+  deploy:
+    port: 0
+  rate_limit:
+    permit_limit: 0
+    window_seconds: 0
+  pagination:
+    default_page_size: 0
+    max_page_size: 0
+entities: {}
+`)
+
+	parsed, err := ParseRawSchema(yamlData)
+	if err != nil {
+		t.Fatalf("ParseRawSchema() error = %v", err)
+	}
+	if parsed.Project.Deploy.Port != 0 {
+		t.Errorf("Deploy.Port = %d, want explicit 0", parsed.Project.Deploy.Port)
+	}
+	if parsed.Project.RateLimit.PermitLimit != 0 {
+		t.Errorf("RateLimit.PermitLimit = %d, want explicit 0", parsed.Project.RateLimit.PermitLimit)
+	}
+	if parsed.Project.RateLimit.WindowSeconds != 0 {
+		t.Errorf("RateLimit.WindowSeconds = %d, want explicit 0", parsed.Project.RateLimit.WindowSeconds)
+	}
+	if parsed.Project.Pagination.DefaultPageSize != 0 {
+		t.Errorf("Pagination.DefaultPageSize = %d, want explicit 0", parsed.Project.Pagination.DefaultPageSize)
+	}
+	if parsed.Project.Pagination.MaxPageSize != 0 {
+		t.Errorf("Pagination.MaxPageSize = %d, want explicit 0", parsed.Project.Pagination.MaxPageSize)
+	}
+}
+
+// TestParseYAMLPreservesExplicitZeros checks that ParseYAML (the entry point
+// used by the CLI and WASM validator) carries the preserved zeros into the
+// ParsedSchema the validator sees.
+func TestParseYAMLPreservesExplicitZeros(t *testing.T) {
+	t.Parallel()
+	yamlData := []byte(`
+project:
+  name: Test
+  deploy:
+    port: 0
+  rate_limit:
+    permit_limit: 0
+    window_seconds: 0
+  pagination:
+    default_page_size: 0
+    max_page_size: 0
+entities:
+  User:
+    fields:
+      id: uuid [primary]
+`)
+
+	parsed, err := ParseYAML(yamlData)
+	if err != nil {
+		t.Fatalf("ParseYAML() error = %v", err)
+	}
+	if parsed.Project.Deploy.Port != 0 {
+		t.Errorf("Deploy.Port = %d, want explicit 0", parsed.Project.Deploy.Port)
+	}
+	if parsed.Project.RateLimit.PermitLimit != 0 {
+		t.Errorf("RateLimit.PermitLimit = %d, want explicit 0", parsed.Project.RateLimit.PermitLimit)
+	}
+	if parsed.Project.RateLimit.WindowSeconds != 0 {
+		t.Errorf("RateLimit.WindowSeconds = %d, want explicit 0", parsed.Project.RateLimit.WindowSeconds)
+	}
+	if parsed.Project.Pagination.DefaultPageSize != 0 {
+		t.Errorf("Pagination.DefaultPageSize = %d, want explicit 0", parsed.Project.Pagination.DefaultPageSize)
+	}
+	if parsed.Project.Pagination.MaxPageSize != 0 {
+		t.Errorf("Pagination.MaxPageSize = %d, want explicit 0", parsed.Project.Pagination.MaxPageSize)
+	}
+}
+
+// TestParseRawSchemaOmittedKeysUseDefaults pins the other half of the
+// presence contract: a config block with omitted numeric keys still receives
+// the documented defaults.
+func TestParseRawSchemaOmittedKeysUseDefaults(t *testing.T) {
+	t.Parallel()
+	yamlData := []byte(`
+project:
+  name: Test
+  deploy: {}
+  rate_limit: {}
+  pagination: {}
+entities: {}
+`)
+
+	parsed, err := ParseRawSchema(yamlData)
+	if err != nil {
+		t.Fatalf("ParseRawSchema() error = %v", err)
+	}
+	if parsed.Project.Deploy.Port != 8080 {
+		t.Errorf("Deploy.Port = %d, want default 8080", parsed.Project.Deploy.Port)
+	}
+	if parsed.Project.RateLimit.PermitLimit != 100 {
+		t.Errorf("RateLimit.PermitLimit = %d, want default 100", parsed.Project.RateLimit.PermitLimit)
+	}
+	if parsed.Project.RateLimit.WindowSeconds != 60 {
+		t.Errorf("RateLimit.WindowSeconds = %d, want default 60", parsed.Project.RateLimit.WindowSeconds)
+	}
+	if parsed.Project.Pagination.DefaultPageSize != 20 {
+		t.Errorf("Pagination.DefaultPageSize = %d, want default 20", parsed.Project.Pagination.DefaultPageSize)
+	}
+	if parsed.Project.Pagination.MaxPageSize != 200 {
+		t.Errorf("Pagination.MaxPageSize = %d, want default 200", parsed.Project.Pagination.MaxPageSize)
+	}
+}
+
+// TestParseRawSchemaPartialExplicitZeros checks that presence is tracked per
+// key: an explicit zero does not suppress defaults for its siblings.
+func TestParseRawSchemaPartialExplicitZeros(t *testing.T) {
+	t.Parallel()
+	yamlData := []byte(`
+project:
+  name: Test
+  deploy:
+    port: 0
+    domain: api.example.com
+  rate_limit:
+    permit_limit: 0
+  pagination:
+    max_page_size: 0
+entities: {}
+`)
+
+	parsed, err := ParseRawSchema(yamlData)
+	if err != nil {
+		t.Fatalf("ParseRawSchema() error = %v", err)
+	}
+	if parsed.Project.Deploy.Port != 0 {
+		t.Errorf("Deploy.Port = %d, want explicit 0", parsed.Project.Deploy.Port)
+	}
+	if parsed.Project.Deploy.Domain != "api.example.com" {
+		t.Errorf("Deploy.Domain = %q, want api.example.com", parsed.Project.Deploy.Domain)
+	}
+	if parsed.Project.RateLimit.PermitLimit != 0 {
+		t.Errorf("RateLimit.PermitLimit = %d, want explicit 0", parsed.Project.RateLimit.PermitLimit)
+	}
+	if parsed.Project.RateLimit.WindowSeconds != 60 {
+		t.Errorf("RateLimit.WindowSeconds = %d, want default 60", parsed.Project.RateLimit.WindowSeconds)
+	}
+	if parsed.Project.Pagination.DefaultPageSize != 20 {
+		t.Errorf("Pagination.DefaultPageSize = %d, want default 20", parsed.Project.Pagination.DefaultPageSize)
+	}
+	if parsed.Project.Pagination.MaxPageSize != 0 {
+		t.Errorf("Pagination.MaxPageSize = %d, want explicit 0", parsed.Project.Pagination.MaxPageSize)
 	}
 }

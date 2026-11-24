@@ -2668,3 +2668,94 @@ func TestValidateAcceptsValidEntityOldName(t *testing.T) {
 		t.Fatalf("expected a valid entity old_name to be accepted, got %v", errs)
 	}
 }
+
+// schemaWithProjectConfig builds a schema with one valid entity so only the
+// supplied project-level settings can produce diagnostics.
+func schemaWithProjectConfig(t *testing.T, project parser.ProjectConfig) *parser.ParsedSchema {
+	t.Helper()
+	project.Name = "Test"
+	return &parser.ParsedSchema{
+		Project:     project,
+		EntityOrder: []string{"User"},
+		Entities: map[string]*parser.ParsedEntity{
+			"User": {
+				Name:       "User",
+				FieldOrder: []string{"id"},
+				Fields: map[string]*parser.ParsedField{
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
+				},
+			},
+		},
+	}
+}
+
+// TestValidateAcceptsExplicitZeroProjectNumericValues pins that an explicit 0
+// (which the parser now preserves) is a valid value rather than "unset".
+func TestValidateAcceptsExplicitZeroProjectNumericValues(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		project parser.ProjectConfig
+	}{
+		{"port", parser.ProjectConfig{Deploy: &parser.DeployConfig{Port: 0}}},
+		{"permit limit", parser.ProjectConfig{RateLimit: &parser.RateLimitConfig{PermitLimit: 0}}},
+		{"window seconds", parser.ProjectConfig{RateLimit: &parser.RateLimitConfig{WindowSeconds: 0}}},
+		{"default page size", parser.ProjectConfig{Pagination: &parser.PaginationConfig{DefaultPageSize: 0}}},
+		{"max page size", parser.ProjectConfig{Pagination: &parser.PaginationConfig{MaxPageSize: 0}}},
+		{"all zeros", parser.ProjectConfig{
+			Deploy:     &parser.DeployConfig{Port: 0},
+			RateLimit:  &parser.RateLimitConfig{PermitLimit: 0, WindowSeconds: 0},
+			Pagination: &parser.PaginationConfig{DefaultPageSize: 0, MaxPageSize: 0},
+		}},
+		{"zero default with capped max", parser.ProjectConfig{
+			Pagination: &parser.PaginationConfig{DefaultPageSize: 0, MaxPageSize: 200},
+		}},
+		{"positive default with uncapped max", parser.ProjectConfig{
+			Pagination: &parser.PaginationConfig{DefaultPageSize: 20, MaxPageSize: 0},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			errs := New(schemaWithProjectConfig(t, tt.project)).Validate()
+			if len(errs) != 0 {
+				t.Fatalf("expected no diagnostics for explicit zero, got %v", errs)
+			}
+		})
+	}
+}
+
+// TestValidateRejectsNegativeProjectNumericValues pins that accepting zero did
+// not loosen the existing negative and positive-range checks.
+func TestValidateRejectsNegativeProjectNumericValues(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		project  parser.ProjectConfig
+		wantText string
+		wantWarn bool
+	}{
+		{"negative port", parser.ProjectConfig{Deploy: &parser.DeployConfig{Port: -1}}, "deploy.port", false},
+		{"port above max", parser.ProjectConfig{Deploy: &parser.DeployConfig{Port: 65536}}, "deploy.port", false},
+		{"negative permit limit", parser.ProjectConfig{RateLimit: &parser.RateLimitConfig{PermitLimit: -1}}, "rate_limit.permit_limit must be non-negative", true},
+		{"negative window seconds", parser.ProjectConfig{RateLimit: &parser.RateLimitConfig{WindowSeconds: -1}}, "rate_limit.window_seconds must be non-negative", true},
+		{"negative default page size", parser.ProjectConfig{Pagination: &parser.PaginationConfig{DefaultPageSize: -1}}, "pagination.default_page_size must be non-negative", true},
+		{"negative max page size", parser.ProjectConfig{Pagination: &parser.PaginationConfig{MaxPageSize: -1}}, "pagination.max_page_size must be non-negative", true},
+		{"default above max", parser.ProjectConfig{Pagination: &parser.PaginationConfig{DefaultPageSize: 201, MaxPageSize: 200}}, "must not exceed max_page_size", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			errs := New(schemaWithProjectConfig(t, tt.project)).Validate()
+			found := false
+			for _, e := range errs {
+				if strings.Contains(e.Message, tt.wantText) && e.Warning == tt.wantWarn {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("expected diagnostic %q (warning=%t), got %v", tt.wantText, tt.wantWarn, errs)
+			}
+		})
+	}
+}
