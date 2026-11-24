@@ -123,38 +123,39 @@ func isIdentRune(r rune) bool {
 	return specmeta.IsIdentifierRune(r)
 }
 
+// casingVariants builds the one casing-variant table used by every rename
+// rewrite (content and paths). Callers pass the base form they need: PascalCase
+// for entities and fields, the declared identifier for a project namespace.
+// withPlural adds the plural forms on top of Pascal / camel / UPPER.
+func casingVariants(old, new string, withPlural bool) map[string]string {
+	variants := map[string]string{
+		old:                     new,                     // Product -> Item
+		textutil.CamelCase(old): textutil.CamelCase(new), // product -> item
+		strings.ToUpper(old):    strings.ToUpper(new),    // PRODUCT -> ITEM
+	}
+	if withPlural {
+		oldPlural := textutil.Pluralize(old)
+		newPlural := textutil.Pluralize(new)
+		variants[oldPlural] = newPlural                                         // Products -> Items
+		variants[textutil.CamelCase(oldPlural)] = textutil.CamelCase(newPlural) // products -> items
+		variants[strings.ToUpper(oldPlural)] = strings.ToUpper(newPlural)       // PRODUCTS -> ITEMS
+	}
+	return variants
+}
+
 // entityCasings builds the casing-variant table for an entity rename.
 func entityCasings(oldName, newName string) map[string]string {
-	oldPascal := textutil.PascalCase(oldName)
-	newPascal := textutil.PascalCase(newName)
-	return map[string]string{
-		oldPascal:                                       newPascal,                                       // Product -> Item
-		textutil.CamelCase(oldName):                     textutil.CamelCase(newName),                     // product -> item
-		strings.ToUpper(oldPascal):                      strings.ToUpper(newPascal),                      // PRODUCT -> ITEM
-		textutil.Pluralize(oldPascal):                   textutil.Pluralize(newPascal),                   // Products -> Items
-		textutil.CamelCase(textutil.Pluralize(oldName)): textutil.CamelCase(textutil.Pluralize(newName)), // products -> items
-		strings.ToUpper(textutil.Pluralize(oldPascal)):  strings.ToUpper(textutil.Pluralize(newPascal)),  // PRODUCTS -> ITEMS
-	}
+	return casingVariants(textutil.PascalCase(oldName), textutil.PascalCase(newName), true)
 }
 
 // fieldCasings builds the casing-variant table for a field rename.
 func fieldCasings(oldField, newField string) map[string]string {
-	oldPascal := textutil.PascalCase(oldField)
-	newPascal := textutil.PascalCase(newField)
-	return map[string]string{
-		oldPascal:                    newPascal,                    // Title -> Name
-		textutil.CamelCase(oldField): textutil.CamelCase(newField), // title -> name
-		strings.ToUpper(oldPascal):   strings.ToUpper(newPascal),   // TITLE -> NAME
-	}
+	return casingVariants(textutil.PascalCase(oldField), textutil.PascalCase(newField), false)
 }
 
 // namespaceCasings builds the casing-variant table for a root-namespace rename.
 func namespaceCasings(oldNs, newNs string) map[string]string {
-	return map[string]string{
-		oldNs:                     newNs,
-		textutil.CamelCase(oldNs): textutil.CamelCase(newNs),
-		strings.ToUpper(oldNs):    strings.ToUpper(newNs),
-	}
+	return casingVariants(oldNs, newNs, false)
 }
 
 // RewriteEntityContent rewrites identifier references to an old entity name back

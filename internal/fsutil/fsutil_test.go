@@ -23,6 +23,40 @@ func TestAtomicWriteCreatesDirsAndWrites(t *testing.T) {
 	}
 }
 
+// A rewrite must not silently turn a developer-owned 0644 file into a 0600
+// file: AtomicWrite stages in a 0600 temp file, so it has to copy the target's
+// mode onto the temp file before the rename. Windows normalises permission bits
+// (0644 reads back as 0666), so the assertion compares the observed mode.
+func TestAtomicWritePreservesExistingFileMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "developer-owned.cs")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+	before, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("lstat before: %v", err)
+	}
+	modeBefore := before.Mode().Perm()
+
+	if err := AtomicWrite(path, []byte("new")); err != nil {
+		t.Fatalf("AtomicWrite: %v", err)
+	}
+	after, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("lstat after: %v", err)
+	}
+	if got := after.Mode().Perm(); got != modeBefore {
+		t.Errorf("mode = %04o, want %04o (unchanged from the 0644 seed)", got, modeBefore)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(data) != "new" {
+		t.Errorf("content = %q, want %q", data, "new")
+	}
+}
+
 func TestAtomicWriteOverwritesAndLeavesNoTempFiles(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cache.json")

@@ -149,6 +149,56 @@ func TestComputeMigrationPlanColumnOps(t *testing.T) {
 	}
 }
 
+// The migration plan used to derive table names with its own
+// ToDatabaseColumnName(Pluralize(...)) helper. It must agree with the IR's
+// TableName()/TableNameFor on acronym names, where a hand-rolled snake_case
+// diverges (IPv4Address -> i_pv4addresses, not i_pv4_addresses).
+func TestMigrationPlanTableNameMatchesIRForAcronymEntity(t *testing.T) {
+	t.Parallel()
+	const name = "IPv4Address"
+	const oldName = "IPv6Address"
+
+	entity := ir.Entity{
+		Name:       name,
+		NamePlural: "IPv4Addresses",
+		Fields:     []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
+	}
+	if got := entity.TableName(); got != "i_pv4addresses" {
+		t.Fatalf("Entity.TableName() = %q, want i_pv4addresses", got)
+	}
+	if got := ir.TableNameFor(name); got != entity.TableName() {
+		t.Errorf("TableNameFor(%q) = %q, want %q", name, got, entity.TableName())
+	}
+
+	t.Run("rename table", func(t *testing.T) {
+		old := &Snapshot{Entities: map[string]EntityState{oldName: {Fields: map[string]string{"id": "uuid"}}}}
+		renamed := entity
+		renamed.OldName = oldName
+		plan := ComputeMigrationPlan(old, &ir.Project{Entities: []ir.Entity{renamed}})
+		if len(plan.Operations) != 1 || plan.Operations[0].Kind != ir.OpRenameTable {
+			t.Fatalf("operations = %+v, want one RenameTable", plan.Operations)
+		}
+		op := plan.Operations[0]
+		if op.Table != renamed.TableName() || op.OldTable != ir.TableNameFor(oldName) {
+			t.Errorf("rename = %s -> %s, want %s -> %s", op.OldTable, op.Table, ir.TableNameFor(oldName), renamed.TableName())
+		}
+		if op.OldTable != "i_pv6addresses" {
+			t.Errorf("OldTable = %q, want i_pv6addresses", op.OldTable)
+		}
+	})
+
+	t.Run("drop table", func(t *testing.T) {
+		old := &Snapshot{Entities: map[string]EntityState{name: {Fields: map[string]string{"id": "uuid"}}}}
+		plan := ComputeMigrationPlan(old, &ir.Project{})
+		if len(plan.Operations) != 1 || plan.Operations[0].Kind != ir.OpDropTable {
+			t.Fatalf("operations = %+v, want one DropTable", plan.Operations)
+		}
+		if got := plan.Operations[0].Table; got != ir.TableNameFor(name) {
+			t.Errorf("DropTable table = %q, want %q", got, ir.TableNameFor(name))
+		}
+	})
+}
+
 func TestComputeMigrationPlanNilInputs(t *testing.T) {
 	t.Parallel()
 	if plan := ComputeMigrationPlan(nil, nil); !plan.IsEmpty() {

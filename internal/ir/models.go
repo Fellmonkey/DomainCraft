@@ -222,12 +222,27 @@ func (r Relation) EagerLoadNavigation() string {
 	return r.NavigationName
 }
 
-// TableName returns the entity's snake_case database table name. It is the
-// single source of truth for the table name — bridges must print this instead of
-// re-deriving it with their own snake_case (the template `snakecase` diverges
-// from textutil.ToDatabaseColumnName on acronyms, e.g. `IPv4Address`).
+// TableNameFor returns the snake_case database table name for an entity name.
+// It is the single source of truth for table names — bridges and the migration
+// engine must use it instead of re-deriving the name with their own snake_case
+// (the template `snakecase` diverges from textutil.ToDatabaseColumnName on
+// acronyms, e.g. `IPv4Address` -> `i_pv4address`).
+func TableNameFor(name string) string {
+	return toTableName(textutil.Pluralize(name))
+}
+
+// toTableName applies the canonical snake_case conversion to an already-plural
+// name. The parser stores the plural in Entity.NamePlural, so the two entry
+// points share this one conversion instead of each re-deriving it.
+func toTableName(plural string) string {
+	return textutil.ToDatabaseColumnName(plural)
+}
+
+// TableName returns the entity's snake_case database table name. It stays based
+// on the parser-provided NamePlural (which may be an irregular plural); callers
+// that only have a singular name use TableNameFor.
 func (e Entity) TableName() string {
-	return textutil.ToDatabaseColumnName(e.NamePlural)
+	return toTableName(e.NamePlural)
 }
 
 // ForeignKeyColumnName returns the snake_case DB column name of this relation's

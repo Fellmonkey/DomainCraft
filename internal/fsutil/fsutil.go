@@ -70,10 +70,20 @@ func RefuseSymlinks(base, target string) error {
 
 // AtomicWrite writes data to path via a temp file in the same directory
 // followed by a rename, so a crash mid-write never leaves a truncated or
-// corrupt file behind. The parent directory is created if missing.
+// corrupt file behind. The parent directory is created if missing. An existing
+// target keeps its permissions; a genuinely new file gets CreateTemp's 0600.
 func AtomicWrite(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // generated project and cache dirs must stay world-readable
+		return err
+	}
+
+	mode := os.FileMode(0o600) // CreateTemp's default for new files
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink == 0 {
+			mode = info.Mode().Perm()
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 
@@ -84,6 +94,12 @@ func AtomicWrite(path string, data []byte) error {
 	tmpName := tmp.Name()
 	defer func() { _ = os.Remove(tmpName) }() // no-op once the rename succeeds
 
+	// CreateTemp uses 0600; apply the target's mode before committing the
+	// rename, the same way the renderer stages generated files.
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		return err

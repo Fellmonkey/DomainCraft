@@ -18,12 +18,6 @@ import (
 	"github.com/DomainCraft/DomainCraft/pkg/textutil"
 )
 
-// tableName returns the snake_case plural table name for an entity name, the
-// same convention the IR entity's NamePlural follows.
-func tableName(entityName string) string {
-	return textutil.ToDatabaseColumnName(textutil.Pluralize(entityName))
-}
-
 // ComputeMigrationPlan builds the abstract migration tree.
 func ComputeMigrationPlan(old *Snapshot, project *ir.Project) *ir.MigrationPlan {
 	plan := &ir.MigrationPlan{}
@@ -91,7 +85,7 @@ func ComputeMigrationPlan(old *Snapshot, project *ir.Project) *ir.MigrationPlan 
 			Entity:   e.Name,
 			OldName:  oldName,
 			Table:    e.TableName(),
-			OldTable: tableName(oldName),
+			OldTable: ir.TableNameFor(oldName),
 		})
 	}
 
@@ -107,7 +101,7 @@ func ComputeMigrationPlan(old *Snapshot, project *ir.Project) *ir.MigrationPlan 
 		plan.Operations = append(plan.Operations, ir.MigrationOp{
 			Kind:   ir.OpDropTable,
 			Entity: name,
-			Table:  tableName(name),
+			Table:  ir.TableNameFor(name),
 		})
 	}
 

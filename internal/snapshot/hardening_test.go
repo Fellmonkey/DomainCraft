@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -202,6 +203,7 @@ func TestSnapshotJSONHasNoTimestamp(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := Path(dir)
+	other := Path(filepath.Join(dir, "second-run"))
 
 	if err := Save(path, New("demo", testProject("Product"), nil)); err != nil {
 		t.Fatalf("Save() error = %v", err)
@@ -212,5 +214,17 @@ func TestSnapshotJSONHasNoTimestamp(t *testing.T) {
 	}
 	if strings.Contains(string(data), "created_at") {
 		t.Errorf("snapshot.json contains a wall-clock timestamp")
+	}
+
+	// Identical input saved to a different path must produce identical bytes.
+	if err := Save(other, New("demo", testProject("Product"), nil)); err != nil {
+		t.Fatalf("second Save() error = %v", err)
+	}
+	otherData, err := os.ReadFile(other)
+	if err != nil {
+		t.Fatalf("ReadFile(second) error = %v", err)
+	}
+	if !bytes.Equal(data, otherData) {
+		t.Errorf("two saves of the same model differ:\nfirst:  %s\nsecond: %s", data, otherData)
 	}
 }

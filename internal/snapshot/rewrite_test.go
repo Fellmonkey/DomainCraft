@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -92,6 +93,100 @@ func TestRewriteFileRoundTrip(t *testing.T) {
 	want := "public partial class ItemService { Task<Item> GetAsync(); }"
 	if string(got) != want {
 		t.Errorf("round trip\ngot: %q\nwant: %q", string(got), want)
+	}
+}
+
+// casingVariants is the one variant table shared by content and path rewrites.
+// Pin the exact set so neither caller grows or loses a casing silently.
+func TestCasingVariants(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		old, new string
+		plural   bool
+		want     map[string]string
+	}{
+		{
+			name:   "entity with plural",
+			old:    "Product",
+			new:    "Item",
+			plural: true,
+			want: map[string]string{
+				"Product":  "Item",
+				"product":  "item",
+				"PRODUCT":  "ITEM",
+				"Products": "Items",
+				"products": "items",
+				"PRODUCTS": "ITEMS",
+			},
+		},
+		{
+			name:   "field without plural",
+			old:    "Title",
+			new:    "Name",
+			plural: false,
+			want: map[string]string{
+				"Title": "Name",
+				"title": "name",
+				"TITLE": "NAME",
+			},
+		},
+		{
+			name:   "namespace keeps declared casing",
+			old:    "AcmeShop",
+			new:    "AcmeStore",
+			plural: false,
+			want: map[string]string{
+				"AcmeShop": "AcmeStore",
+				"acmeShop": "acmeStore",
+				"ACMESHOP": "ACMESTORE",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := casingVariants(tt.old, tt.new, tt.plural)
+			if !maps.Equal(got, tt.want) {
+				t.Errorf("casingVariants(%q, %q, %v) = %v, want %v", tt.old, tt.new, tt.plural, got, tt.want)
+			}
+		})
+	}
+}
+
+// A RewriteFile pass rewrites a developer-owned file in place. The atomic
+// write must not change its permissions. Windows normalises permission bits
+// (0644 reads back as 0666), so compare the observed before/after mode.
+func TestRewriteFilePreservesExistingMode(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	rel := "src/Services/ItemService.cs"
+	abs := filepath.Join(dir, "src", "Services", "ItemService.cs")
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(abs, []byte("class ProductService {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Lstat(abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modeBefore := before.Mode().Perm()
+
+	rewrote, err := RewriteFile(dir, rel, EntityTransform("Product", "Item"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rewrote {
+		t.Fatal("expected file to be rewritten")
+	}
+	after, err := os.Lstat(abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := after.Mode().Perm(); got != modeBefore {
+		t.Errorf("mode = %04o, want %04o (unchanged from the 0644 seed)", got, modeBefore)
 	}
 }
 

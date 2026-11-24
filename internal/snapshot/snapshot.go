@@ -416,51 +416,50 @@ func customEntityFiles(files []renderer.RenderedFile, entityName string) []strin
 	return paths
 }
 
-// existingFileRefs filters old entity-scoped files to those that still exist
-// on disk, preserving whether each is a custom (overwrite: false) file.
-func existingFileRefs(outputDir string, files []renderer.RenderedFile) []FileRef {
-	var refs []FileRef
-	for _, f := range files {
-		abs, err := safeRelPath(outputDir, f.Path)
+// existingItems is the single safeRelPath + Stat + skip + sort filter used by
+// every caller that turns snapshot-supplied paths into on-disk facts. Items
+// whose path escapes outputDir or is missing are dropped; the rest stay in
+// deterministic path order.
+func existingItems[T any](outputDir string, items []T, relPath func(T) string) []T {
+	var result []T
+	for _, item := range items {
+		abs, err := safeRelPath(outputDir, relPath(item))
 		if err != nil {
 			continue
 		}
 		if _, err := os.Stat(abs); err != nil {
 			continue
 		}
+		result = append(result, item)
+	}
+	slices.SortFunc(result, func(a, b T) int { return cmp.Compare(relPath(a), relPath(b)) })
+	return result
+}
+
+// existingFileRefs filters old entity-scoped files to those that still exist
+// on disk, preserving whether each is a custom (overwrite: false) file.
+func existingFileRefs(outputDir string, files []renderer.RenderedFile) []FileRef {
+	existing := existingItems(outputDir, files, func(f renderer.RenderedFile) string { return f.Path })
+	refs := make([]FileRef, 0, len(existing))
+	for _, f := range existing {
 		refs = append(refs, FileRef{Path: f.Path, Custom: f.Custom})
 	}
-	slices.SortFunc(refs, func(a, b FileRef) int { return cmp.Compare(a.Path, b.Path) })
 	return refs
 }
 
 // existingFilePaths filters relative paths to those that still exist on disk.
 func existingFilePaths(outputDir string, relPaths []string) []string {
-	var result []string
-	for _, rel := range relPaths {
-		abs, err := safeRelPath(outputDir, rel)
-		if err != nil {
-			continue
-		}
-		if _, err := os.Stat(abs); err == nil {
-			result = append(result, rel)
-		}
-	}
-	slices.Sort(result)
-	return result
+	return existingItems(outputDir, relPaths, func(rel string) string { return rel })
 }
 
 // RenameRelPath maps an entity-scoped file path to its path after the entity
-// rename oldName -> newName. Both the plural and the singular forms of the old
-// name are replaced (plural first, since it is more specific).
+// rename oldName -> newName. It uses the same casing-variant table as content
+// rewrites, so singular/plural paths in any casing are renamed consistently.
 func RenameRelPath(relPath, oldName, newName string) string {
 	// Single pass, longest match first. Two sequential ReplaceAll calls would
 	// rescan the replacement of the plural form and rewrite the singular head in
 	// it: Product -> ProductItem would turn Products into ProductItemItems.
-	variants := map[string]string{
-		textutil.Pluralize(oldName): textutil.Pluralize(newName),
-		oldName:                     newName,
-	}
+	variants := casingVariants(oldName, newName, true)
 	return string(replaceLongest([]byte(relPath), variants, tokenOK))
 }
 
