@@ -365,34 +365,49 @@ func newBridgesCmd() *cobra.Command {
 				return nil
 			}
 
-			fmt.Fprintf(out, "%-20s %-10s %-26s %s\n", "ID", "Language", "Status", "Description")
-			fmt.Fprintf(out, "%-20s %-10s %-26s %s\n",
+			fmt.Fprintf(out, "%-20s %-10s %-18s %-16s %s\n", "ID", "Language", "Source", "Status", "Description")
+			fmt.Fprintf(out, "%-20s %-10s %-18s %-16s %s\n",
 				strings.Repeat("-", 20),
 				strings.Repeat("-", 10),
-				strings.Repeat("-", 26),
+				strings.Repeat("-", 18),
+				strings.Repeat("-", 16),
 				strings.Repeat("-", 40),
 			)
 
 			for _, e := range entries {
-				status := "remote"
-				if bridge.IsCached(e) {
-					status = "cached"
-					if checkUpdates {
-						if u, err := bridge.CheckForUpdate(e, 0); err == nil && u != nil {
-							status = "update available " + versionDelta(u)
-						}
+				st := e.Status(checkUpdates)
+				source := "remote"
+				switch {
+				case st.Embedded && st.Cached:
+					source = "embedded+cache"
+				case st.Embedded:
+					source = "embedded"
+				case st.Cached:
+					source = "cache"
+				}
+				status := ""
+				switch {
+				case st.Embedded:
+					status = "bundled"
+					if st.Outdated {
+						status = "update available"
 					}
+				case st.Cached:
+					status = "ready"
+					if st.Outdated {
+						status = "update available"
+					}
+				default:
+					status = "not locally available"
 				}
-				desc := e.Description
 				if e.Deprecated {
-					desc += " (deprecated)"
+					status += "+deprecated"
 				}
-				fmt.Fprintf(out, "%-20s %-10s %-26s %s\n", e.ID, e.Language, status, desc)
+				fmt.Fprintf(out, "%-20s %-10s %-18s %-16s %s\n", e.ID, e.Language, source, status, e.Description)
 			}
 
-			if checkUpdates {
-				fmt.Fprintln(out, "\nHint: run `domaincraft generate --update-bridges` to download available updates.")
-			}
+			fmt.Fprintln(out, "\nLegend: embedded = inside this binary; cache = local copy; remote = fetched on demand.")
+			fmt.Fprintln(out, "Run `domaincraft generate --update-bridges` to refresh cached bridges to the latest supported version.")
 			return nil
 		},
 	}

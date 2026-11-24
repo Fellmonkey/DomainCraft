@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	domaincraft "github.com/DomainCraft/DomainCraft"
 )
 
 // ResolveExtendsRef resolves one `extends` reference. It shares the loader
@@ -84,4 +86,52 @@ func IsOfficialBundled(dir string) bool {
 		}
 	}
 	return false
+}
+
+// BridgeStatus describes where a bridge is available from and whether it is
+// current. It is computed without network access unless CheckRemote is true.
+type BridgeStatus struct {
+	// Embedded is true when the bridge ships inside this binary (go:embed).
+	Embedded bool
+	// Cached is true when the bridge is materialized in the local cache.
+	Cached bool
+	// Outdated is true when a cached/embedded bridge has a newer remote version
+	// AND that newer version is supported by the current contract. It is only
+	// populated when CheckRemote is true.
+	Outdated bool
+	// RemoteReachable records whether the remote was contacted successfully
+	// during a CheckRemote computation (false when offline/unknown).
+	RemoteReachable bool
+}
+
+// Status computes a bridge's availability status.
+//   - CheckRemote=false (the default for `bridges`): only local facts — embedded
+//     and cached — are reported, with no network traffic.
+//   - CheckRemote=true (used by `--check-updates`): additionally probes the
+//     remote and reports whether a newer supported version exists.
+func (e RegistryEntry) Status(checkRemote bool) BridgeStatus {
+	s := BridgeStatus{}
+	if e.Path != "" {
+		if _, err := domaincraft.Bridges.ReadDir("bridges/" + filepath.ToSlash(e.Path)); err == nil {
+			s.Embedded = true
+		}
+	}
+	if IsCached(e) {
+		s.Cached = true
+	}
+	if !checkRemote {
+		return s
+	}
+	u, err := CheckForUpdate(e, 0)
+	if err == nil && u != nil {
+		// Only flag an update if the remote contract is supported, so an
+		// unsupported (neverer-contract) bridge is never offered.
+		if c, rerr := remoteContractVersion(e, u.RemoteBranch); rerr == nil {
+			if cerr := shouldApplyContract(c); cerr == nil {
+				s.Outdated = true
+				s.RemoteReachable = true
+			}
+		}
+	}
+	return s
 }
