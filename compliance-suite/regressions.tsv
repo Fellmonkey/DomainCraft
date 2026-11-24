@@ -97,3 +97,6 @@ internal/bridge/hardening_test.go::TestApplyUpdateJoinsFastPathFailureWithCloneF
 internal/bridge/update_contract_test.go::TestCoreContractVersionMatchesSpecmeta	#5	bridge contract version had an independent definition
 internal/parser/parser_test.go::TestParseRawSchemaExplicitZerosPreserved	#5	explicit zero numeric settings were replaced by defaults
 internal/validator/validator_test.go::TestValidateAcceptsExplicitZeroProjectNumericValues	#5	explicit zero rate-limit and pagination values were rejected
+internal/renderer/hardening_test.go::TestRenderRejectsSymlinkWithRelativeBridgeDir	#5	relative bridge directory bypassed the symlink containment check
+internal/renderer/hardening_test.go::TestRenderRollbackRemovesTargetDeletedBeforeCommit	#5	rollback wrote empty bytes when a target disappeared between staging and commit
+internal/ir/build_relations_bench_test.go::TestBuildHubRelationsPreservesFirstMatch	#5	relation indexing changed first-match semantics on hub entities

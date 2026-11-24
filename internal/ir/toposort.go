@@ -1,6 +1,9 @@
 package ir
 
-import "slices"
+import (
+	"slices"
+	"sort"
+)
 
 // sortEntities reorders the slice by FK dependencies using Kahn's algorithm.
 // The order is deterministic: ties are broken by entity name.
@@ -14,16 +17,21 @@ func sortEntities(entities []Entity) []Entity {
 	}
 
 	// deps[i] = set of entity names that entities[i] depends on (must come first).
-	deps := make([]map[string]bool, len(entities))
+	// dependents[name] is the inverse edge: indices that must wait for name.
+	// Building it once avoids rescanning every entity for every popped name.
 	inDegree := make([]int, len(entities))
+	dependents := make(map[string][]int, len(entities))
 	for i, entity := range entities {
 		depSet := make(map[string]bool)
 		for _, rel := range entity.RelationsOut {
 			if !rel.IsMany && rel.TargetEntity != nil && rel.TargetEntity.Name != entity.Name {
-				depSet[rel.TargetEntity.Name] = true
+				target := rel.TargetEntity.Name
+				if !depSet[target] {
+					depSet[target] = true
+					dependents[target] = append(dependents[target], i)
+				}
 			}
 		}
-		deps[i] = depSet
 		inDegree[i] = len(depSet)
 	}
 
@@ -36,6 +44,10 @@ func sortEntities(entities []Entity) []Entity {
 	}
 	// Deterministic ordering: process ready entities in name order.
 	slices.Sort(ready)
+	insertReady := func(name string) {
+		at := sort.Search(len(ready), func(i int) bool { return ready[i] >= name })
+		ready = slices.Insert(ready, at, name)
+	}
 
 	order := make([]string, 0, len(entities))
 	for len(ready) > 0 {
@@ -43,15 +55,13 @@ func sortEntities(entities []Entity) []Entity {
 		ready = ready[1:]
 		order = append(order, name)
 
-		// For every entity depending on this one, decrement in-degree.
-		for i := range entities {
-			if deps[i][name] {
-				inDegree[i]--
-				if inDegree[i] == 0 {
-					// Insert in sorted order to keep processing deterministic.
-					ready = append(ready, entities[i].Name)
-					slices.Sort(ready)
-				}
+		// Decrement only the entities that actually depend on this name.
+		// The binary insert keeps the queue sorted, so the emitted order is
+		// unchanged from sorting the whole queue after every insertion.
+		for _, i := range dependents[name] {
+			inDegree[i]--
+			if inDegree[i] == 0 {
+				insertReady(entities[i].Name)
 			}
 		}
 	}

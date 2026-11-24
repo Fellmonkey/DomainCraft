@@ -214,12 +214,23 @@ func ComputeDiff(old *Snapshot, project *ir.Project, outputDir string) *Diff {
 		}
 	}
 
-	// Group old entity-scoped files by entity name.
+	// Group old entity-scoped files by entity name. The custom-file path lists
+	// are derived here once, so neither change pass has to rescan the manifest.
 	filesByEntity := make(map[string][]renderer.RenderedFile)
 	for _, f := range old.Files {
 		if f.Entity != "" {
 			filesByEntity[f.Entity] = append(filesByEntity[f.Entity], f)
 		}
+	}
+	customPathsByEntity := make(map[string][]string, len(filesByEntity))
+	for entityName, files := range filesByEntity {
+		paths := make([]string, 0, len(files))
+		for _, f := range files {
+			if f.Custom {
+				paths = append(paths, f.Path)
+			}
+		}
+		customPathsByEntity[entityName] = paths
 	}
 
 	// Renamed entities (declared via old_name).
@@ -259,7 +270,7 @@ func ComputeDiff(old *Snapshot, project *ir.Project, outputDir string) *Diff {
 		for _, f := range newEntity.Fields {
 			newFields[f.Name] = f.DatabaseType
 		}
-		customFiles := existingFilePaths(outputDir, customEntityFiles(old.Files, oldName))
+		customFiles := existingFilePaths(outputDir, customPathsByEntity[oldName])
 		for fieldName, oldType := range oldState.Fields {
 			newType, ok := newFields[fieldName]
 			if !ok || oldType == newType {
@@ -294,7 +305,7 @@ func ComputeDiff(old *Snapshot, project *ir.Project, outputDir string) *Diff {
 		if !ok {
 			continue
 		}
-		customFiles := existingFilePaths(outputDir, customEntityFiles(old.Files, oldName))
+		customFiles := existingFilePaths(outputDir, customPathsByEntity[oldName])
 		for _, f := range newEntity.Fields {
 			if f.OldName == "" {
 				continue
@@ -402,18 +413,6 @@ func (d *Diff) NamespaceRenameReport() string {
 	b.WriteString("\nReplace `namespace " + n.OldNamespace + ".` with `namespace " + n.NewNamespace + ".` in each file ")
 	b.WriteString("(or run a find-and-replace across your project).\n")
 	return b.String()
-}
-
-// customEntityFiles returns the relative paths of custom (overwrite: false)
-// files that were generated for the given entity in the old snapshot.
-func customEntityFiles(files []renderer.RenderedFile, entityName string) []string {
-	var paths []string
-	for _, f := range files {
-		if f.Entity == entityName && f.Custom {
-			paths = append(paths, f.Path)
-		}
-	}
-	return paths
 }
 
 // existingItems is the single safeRelPath + Stat + skip + sort filter used by

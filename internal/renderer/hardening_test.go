@@ -73,6 +73,73 @@ templates:
 	}
 }
 
+// F15: the bridge-source symlink check must use an absolute bridge directory.
+// With a relative bridge dir, a symlinked final source component used to be
+// compared against a relative base and slipped through.
+func TestRenderRejectsSymlinkWithRelativeBridgeDir(t *testing.T) {
+	t.Run("symlinked template source", func(t *testing.T) {
+		base := t.TempDir()
+		outside := filepath.Join(base, "outside.tmpl")
+		if err := os.WriteFile(outside, []byte("leaked"), 0o644); err != nil {
+			t.Fatalf("write outside template: %v", err)
+		}
+		manifest := func(source string) string {
+			return `name: demo
+contract_version: 1
+templates:
+  - for: project
+    source: ` + source + `
+    target: "out.txt"
+`
+		}
+		bridge := writeHardeningBridge(t, map[string]string{
+			"bridge.yaml":         manifest("templates/good.tmpl"),
+			"templates/good.tmpl": `good`,
+		})
+		cwd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("getwd: %v", err)
+		}
+		relBridge, err := filepath.Rel(cwd, bridge)
+		if err != nil {
+			t.Fatalf("relative bridge dir: %v", err)
+		}
+		out := filepath.Join(base, "out")
+		if err := os.MkdirAll(out, 0o755); err != nil {
+			t.Fatalf("mkdir output: %v", err)
+		}
+		// Positive control: a relative bridge dir alone must work.
+		r, err := New(relBridge, nil)
+		if err != nil {
+			t.Fatalf("New(%q) error = %v", relBridge, err)
+		}
+		if _, _, err := r.Render(&ir.Project{Name: "P"}, out); err != nil {
+			t.Fatalf("Render with relative bridge dir failed: %v", err)
+		}
+		if err := os.Remove(filepath.Join(out, "out.txt")); err != nil {
+			t.Fatalf("remove control output: %v", err)
+		}
+
+		// Same relative dir, but the source's final component is a symlink out.
+		if err := os.WriteFile(filepath.Join(bridge, "bridge.yaml"), []byte(manifest("templates/p.tmpl")), 0o644); err != nil {
+			t.Fatalf("rewrite bridge.yaml: %v", err)
+		}
+		if err := os.Symlink(outside, filepath.Join(bridge, "templates", "p.tmpl")); err != nil {
+			t.Skipf("symlinks unavailable on this host: %v", err)
+		}
+		r, err = New(relBridge, nil)
+		if err != nil {
+			t.Fatalf("New(%q) error = %v", relBridge, err)
+		}
+		if _, _, err := r.Render(&ir.Project{Name: "P"}, out); err == nil {
+			t.Fatal("Render accepted a symlinked template source in a relative bridge dir")
+		}
+		if _, err := os.Stat(filepath.Join(out, "out.txt")); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("target was written despite rejected source: %v", err)
+		}
+	})
+}
+
 // R2: a template that parses but fails during Execute must not truncate the
 // previous contents of the target, and must leave no temp file behind.
 func TestRenderExecuteErrorPreservesPreviousOutput(t *testing.T) {
@@ -174,6 +241,69 @@ templates:
 			assertNoRenderTemps(t, out)
 		})
 	}
+}
+
+// F24: a target that existed at staging but was deleted before commit must be
+// rolled back as a new file (removed). Otherwise the nil original bytes are
+// written back and an empty file survives the failed render.
+func TestRenderRollbackRemovesTargetDeletedBeforeCommit(t *testing.T) {
+	base := t.TempDir()
+	bridge := writeHardeningBridge(t, map[string]string{
+		"bridge.yaml": `name: demo
+contract_version: 1
+templates:
+  - for: project
+    source: templates/good.tmpl
+    target: "a.txt"
+  - for: project
+    source: templates/block.tmpl
+    target: "b.txt"
+`,
+		"templates/good.tmpl":  `new-content`,
+		"templates/block.tmpl": `never-committed`,
+	})
+	out := filepath.Join(base, "out")
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		t.Fatalf("mkdir output: %v", err)
+	}
+	a := filepath.Join(out, "a.txt")
+	if err := os.WriteFile(a, []byte("original"), 0o644); err != nil {
+		t.Fatalf("write prior a.txt: %v", err)
+	}
+	// Symlinks are rejected by the Phase 2 check, but only ones that appear
+	// after staging reach that check: Phase 1 rejects them too.
+	outside := filepath.Join(base, "outside.txt")
+	if err := os.WriteFile(outside, []byte("keep"), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+	probe := filepath.Join(base, "probe.link")
+	if err := os.Symlink(outside, probe); err != nil {
+		t.Skipf("symlinks unavailable on this host: %v", err)
+	}
+	_ = os.Remove(probe)
+
+	r, err := New(bridge, nil)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	beforeCommitHook = func() {
+		if err := os.Remove(a); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("remove staged target: %v", err)
+		}
+		if err := os.Symlink(outside, filepath.Join(out, "b.txt")); err != nil {
+			t.Errorf("plant symlink before commit: %v", err)
+		}
+	}
+	t.Cleanup(func() { beforeCommitHook = nil })
+
+	if _, _, err := r.Render(&ir.Project{Name: "P"}, out); err == nil {
+		t.Fatal("Render succeeded despite a blocked commit")
+	}
+	if _, err := os.Stat(a); !errors.Is(err, os.ErrNotExist) {
+		data, readErr := os.ReadFile(a)
+		t.Errorf("a.txt survived rollback: statErr=%v data=%q readErr=%v", err, data, readErr)
+	}
+	assertNoRenderTemps(t, out)
 }
 
 func assertNoRenderTemps(t *testing.T, dir string) {

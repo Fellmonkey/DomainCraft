@@ -59,12 +59,20 @@ func safeOutputPath(outputDir, renderedTarget string) (string, error) {
 	return absTarget, nil
 }
 
+// beforeCommitHook is a test seam called once between staging and commit. It is
+// nil in production; tests set it to mutate the filesystem at that exact point.
+// Tests using it must not run in parallel.
+var beforeCommitHook func()
+
 // stagedWrite is a fully rendered file held in a temp file next to its target.
-// original holds the target's bytes from before this run so a later failure can
-// restore them; existed=false means the target was created by this run.
+// backup is the rename-aside path of the previous target, created only at
+// commit time; existed=false means the target was created by this run.
+// original is retained for callers that invoke rollbackWrites directly with
+// in-memory bytes; Render itself no longer reads existing targets up front.
 type stagedWrite struct {
 	temp     string
 	target   string
+	backup   string
 	original []byte
 	existed  bool
 	mode     os.FileMode
@@ -78,6 +86,14 @@ type stagedWrite struct {
 func rollbackWrites(staged, committed []stagedWrite) error {
 	var failures []error
 	for _, w := range slices.Backward(committed) {
+		if w.backup != "" {
+			// The previous file was moved aside before the new one landed;
+			// moving it back restores bytes, mode and timestamps exactly.
+			if err := os.Rename(w.backup, w.target); err != nil {
+				failures = append(failures, fmt.Errorf("restore %s: %w", w.target, err))
+			}
+			continue
+		}
 		if w.existed {
 			if err := fsutil.AtomicWrite(w.target, w.original); err != nil {
 				failures = append(failures, fmt.Errorf("restore %s: %w", w.target, err))
@@ -258,17 +274,14 @@ func (r *Renderer) Render(project *ir.Project, outputDir string) ([]string, []Re
 
 					existed := false
 					mode := os.FileMode(0o644) // os.Create's default under the usual umask
-					var original []byte
 					if info, statErr := os.Lstat(absTarget); statErr == nil {
 						if info.Mode()&os.ModeSymlink != 0 {
 							return fail(fmt.Errorf("template target path escapes output directory through a symlink: %s", renderedTarget))
 						}
 						existed = true
 						mode = info.Mode().Perm()
-						original, err = os.ReadFile(absTarget) //nolint:gosec // absTarget passed safeOutputPath validation
-						if err != nil {
-							return fail(fmt.Errorf("read existing output %s: %w", renderedTarget, err))
-						}
+						// The previous bytes are not read here: phase 2 moves the
+						// whole file aside and moves it back on rollback.
 					} else if !errors.Is(statErr, os.ErrNotExist) {
 						return fail(fmt.Errorf("inspect output file %s: %w", renderedTarget, statErr))
 					}
@@ -297,12 +310,11 @@ func (r *Renderer) Render(project *ir.Project, outputDir string) ([]string, []Re
 						return fail(fmt.Errorf("close temp output %s: %w", tmpPath, err))
 					}
 					staged = append(staged, stagedWrite{
-						temp:     tmpPath,
-						target:   absTarget,
-						original: original,
-						existed:  existed,
-						mode:     mode,
-						record:   record,
+						temp:    tmpPath,
+						target:  absTarget,
+						existed: existed,
+						mode:    mode,
+						record:  record,
 					})
 					manifest = append(manifest, record)
 				}
@@ -310,18 +322,51 @@ func (r *Renderer) Render(project *ir.Project, outputDir string) ([]string, []Re
 		}
 	}
 
-	// Phase 2: commit staged files. A failed rename rolls back every file that
-	// was already replaced, so callers never observe a partially updated tree.
+	// Phase 2: commit staged files. An existing target is renamed aside into a
+	// sibling backup before the rendered temp file takes its place. Rollback
+	// renames the backup back, so no prior content is ever read into memory.
+	if beforeCommitHook != nil {
+		beforeCommitHook()
+	}
 	for _, w := range staged {
-		if info, err := os.Lstat(w.target); err == nil && info.Mode()&os.ModeSymlink != 0 {
-			return fail(fmt.Errorf("template target path escapes output directory through a symlink: %s", w.record.Path))
-		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		if info, err := os.Lstat(w.target); err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fail(fmt.Errorf("template target path escapes output directory through a symlink: %s", w.record.Path))
+			}
+			// The staged temp name is already unique in this directory.
+			backup := w.temp + ".bak"
+			if err := os.Rename(w.target, backup); err != nil {
+				return fail(fmt.Errorf("back up output file %s: %w", w.record.Path, err))
+			}
+			w.backup = backup
+			w.existed = true
+			w.mode = info.Mode().Perm()
+		} else if errors.Is(err, os.ErrNotExist) {
+			// The target vanished after staging. Restore the pre-commit state:
+			// this is now a new file, so rollback must remove it, not write nil
+			// bytes through the staging-time `existed` flag.
+			w.existed = false
+			w.backup = ""
+		} else {
 			return fail(fmt.Errorf("inspect output file %s: %w", w.record.Path, err))
 		}
+		// Record the write before the final rename so a failure here still
+		// restores the backup and removes the staged temp file.
+		committed = append(committed, w)
 		if err := os.Rename(w.temp, w.target); err != nil {
 			return fail(fmt.Errorf("commit output file %s: %w", w.record.Path, err))
 		}
-		committed = append(committed, w)
+	}
+
+	// Backups are only needed until every file has landed. Keep the render
+	// successful even if a leftover backup cannot be removed; the generated
+	// files are already correct and rollback must not consume the backups now.
+	for _, w := range committed {
+		if w.backup != "" {
+			if err := os.Remove(w.backup); err != nil && !errors.Is(err, os.ErrNotExist) && r.log != nil {
+				r.log.Warn("remove backup %s: %v", w.backup, err)
+			}
+		}
 	}
 
 	written := make([]string, 0, len(committed))
