@@ -140,11 +140,15 @@ func (p *Parser) parseEntity(name string, raw RawEntity) (*ParsedEntity, error) 
 		Indexes:    make([]*ParsedIndex, 0),
 	}
 
-	// Parse features (behavior macros)
+	// Parse features (behavior macros). Duplicates are rejected here: the
+	// Features map cannot carry them, so a later check could never fire.
 	for _, feature := range raw.Features {
 		feature = strings.TrimSpace(feature)
 		if !specmeta.IsFeature(feature) {
 			return nil, fmt.Errorf("unknown feature: %s", feature)
+		}
+		if entity.Features[feature] {
+			return nil, fmt.Errorf("duplicate feature: %s", feature)
 		}
 		entity.Features[feature] = true
 	}

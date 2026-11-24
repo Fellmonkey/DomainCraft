@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -513,6 +514,19 @@ func (v *Validator) validateEntity(entityName string, entity *parser.ParsedEntit
 			"entity name is not a valid identifier"))
 	}
 
+	// old_name is a rename hint; like a field's old_name it must be a valid
+	// identifier and must not point back at the entity itself.
+	if entity.OldName != "" {
+		if !specmeta.IsValidIdentifier(entity.OldName) {
+			errs = append(errs, invalid(entityName, "",
+				"old_name is not a valid identifier"))
+		}
+		if entity.OldName == entityName {
+			errs = append(errs, invalid(entityName, "",
+				"old_name cannot equal the entity name (it is the entity's previous name)"))
+		}
+	}
+
 	// Must have at least one field.
 	if len(entity.Fields) == 0 {
 		errs = append(errs, invalid(entityName, "",
@@ -539,16 +553,6 @@ func (v *Validator) validateEntity(entityName string, entity *parser.ParsedEntit
 				break
 			}
 		}
-	}
-
-	// Duplicate feature names.
-	featureSeen := make(map[string]bool)
-	for f := range entity.Features {
-		if featureSeen[f] {
-			errs = append(errs, warnf(entityName, "",
-				"duplicate feature %q", f))
-		}
-		featureSeen[f] = true
 	}
 
 	// Track DB column names for collision detection.
@@ -645,7 +649,22 @@ func (v *Validator) validateEntity(entityName string, entity *parser.ParsedEntit
 
 // --- field-level ---
 
+// validateField runs field rules in their canonical order so error ordering
+// and messages stay stable.
 func (v *Validator) validateField(entityName string, fieldName string, field *parser.ParsedField) []ValidationError {
+	var errs []ValidationError
+	errs = append(errs, validateFieldName(entityName, fieldName, field)...)
+	errs = append(errs, v.validateRelationField(entityName, fieldName, field)...)
+	errs = append(errs, validatePrimaryKeyField(entityName, fieldName, field)...)
+	errs = append(errs, v.validateEnumField(entityName, fieldName, field)...)
+	errs = append(errs, v.validateArrayField(entityName, fieldName, field)...)
+	errs = append(errs, validateFieldValidations(entityName, fieldName, field)...)
+	errs = append(errs, v.validateFieldDefault(entityName, fieldName, field)...)
+	return errs
+}
+
+// validateFieldName checks the identifier and feature-field collisions.
+func validateFieldName(entityName, fieldName string, field *parser.ParsedField) []ValidationError {
 	var errs []ValidationError
 
 	// Field name must be a valid identifier.
@@ -663,6 +682,14 @@ func (v *Validator) validateField(entityName string, fieldName string, field *pa
 				fdef.Type))
 		}
 	}
+
+	return errs
+}
+
+// validateRelationField checks the cross-entity and semantic rules the lexer
+// cannot perform.
+func (v *Validator) validateRelationField(entityName, fieldName string, field *parser.ParsedField) []ValidationError {
+	var errs []ValidationError
 
 	// Relation-specific checks.
 	// Note: on_delete value, set_null+optional, many+on_delete, and many+relation
@@ -710,6 +737,13 @@ func (v *Validator) validateField(entityName string, fieldName string, field *pa
 		}
 	}
 
+	return errs
+}
+
+// validatePrimaryKeyField checks constraints on a primary-key field.
+func validatePrimaryKeyField(entityName, fieldName string, field *parser.ParsedField) []ValidationError {
+	var errs []ValidationError
+
 	// Primary key constraints.
 	if field.IsPrimary {
 		if field.Type == "array" {
@@ -722,6 +756,13 @@ func (v *Validator) validateField(entityName string, fieldName string, field *pa
 		}
 	}
 
+	return errs
+}
+
+// validateEnumField checks that an enum reference is declared.
+func (v *Validator) validateEnumField(entityName, fieldName string, field *parser.ParsedField) []ValidationError {
+	var errs []ValidationError
+
 	// Enum reference.
 	if field.Type == "enum" && field.TargetType != "" {
 		if _, ok := v.schema.Enums[field.TargetType]; !ok {
@@ -729,6 +770,14 @@ func (v *Validator) validateField(entityName string, fieldName string, field *pa
 				"enum '%s' is not defined in enums section", field.TargetType))
 		}
 	}
+
+	return errs
+}
+
+// validateArrayField checks that an array element type is primitive or a
+// declared enum.
+func (v *Validator) validateArrayField(entityName, fieldName string, field *parser.ParsedField) []ValidationError {
+	var errs []ValidationError
 
 	// Array element type.
 	if field.Type == "array" && field.TargetType != "" {
@@ -740,6 +789,14 @@ func (v *Validator) validateField(entityName string, fieldName string, field *pa
 			}
 		}
 	}
+
+	return errs
+}
+
+// validateFieldValidations checks modifier applicability, numeric values and
+// contradictory ranges.
+func validateFieldValidations(entityName, fieldName string, field *parser.ParsedField) []ValidationError {
+	var errs []ValidationError
 
 	// Validation modifiers must be type-appropriate.
 	ftype := strings.ToLower(field.Type)
@@ -772,6 +829,15 @@ func (v *Validator) validateField(entityName string, fieldName string, field *pa
 
 	// Check for contradictory range validations.
 	errs = append(errs, validateContradictoryRanges(entityName, fieldName, field, isNumeric, isString)...)
+
+	return errs
+}
+
+// validateFieldDefault checks default value types and enum membership.
+func (v *Validator) validateFieldDefault(entityName, fieldName string, field *parser.ParsedField) []ValidationError {
+	var errs []ValidationError
+
+	ftype := strings.ToLower(field.Type)
 
 	// Default value type check.
 	if field.DefaultValue != "" && field.DefaultIsFunc {
@@ -1031,6 +1097,20 @@ func (v *Validator) validateSeedEntry(entityName string, entity *parser.ParsedEn
 	return errs
 }
 
+// isFractionalFloat reports whether a numeric seed value is a float with a
+// fractional part. Integral fields cannot hold such a value: the seed generator
+// would truncate it (1.9 -> 1) without warning.
+func isFractionalFloat(value any) bool {
+	switch n := value.(type) {
+	case float32:
+		return math.Trunc(float64(n)) != float64(n)
+	case float64:
+		return math.Trunc(n) != n
+	default:
+		return false
+	}
+}
+
 // validateSeedValueType checks that a seed value is type-compatible with its field.
 func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx int,
 	field *parser.ParsedField, seedValue any) []ValidationError {
@@ -1051,7 +1131,11 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 	case specmeta.IsIntegralType(ftype):
 		switch n := seedValue.(type) {
 		case int, int32, int64, float32, float64:
-			// numeric OK
+			// A fractional float would be silently truncated by the seed generator.
+			if isFractionalFloat(n) {
+				errs = append(errs, invalidf(entityName, fieldName,
+					"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
+			}
 		case string:
 			// A string must parse; otherwise seed coercion silently yields 0.
 			if _, err := strconv.ParseInt(n, 10, 64); err != nil {

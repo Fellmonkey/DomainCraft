@@ -75,3 +75,16 @@ cmd/domaincraft/commands_update_security_test.go::TestRunCoreUpdateFailsClosed	#
 cmd/domaincraft/commands_extends_test.go::TestBridgeUpdateNoticeOmitsCachedVersion	#5	cached old version was shown as the available version
 compliance-suite/regressions_test.go::TestRegressionsTable	#5	regression table validated format but not that named checks still exist
 internal/snapshot/hardening_test.go::TestSnapshotJSONHasNoTimestamp	#5	snapshot.json carried a wall-clock timestamp and broke bit-identical output
+internal/validator/validator_test.go::TestValidateRejectsFractionalSeedForIntegralField	#5	fractional seed values were silently truncated into integer columns
+internal/validator/validator_test.go::TestValidateRejectsInvalidEntityOldName	#5	entity old_name bypassed identifier validation and reached migration rewrites
+internal/validator/validator_test.go::TestValidateRejectsSelfReferentialEntityOldName	#5	self-referential old_name produced a no-op rename migration
+internal/parser/parser_test.go::TestParseDuplicateFeature	#5	duplicate features in domain.yaml were silently collapsed
+internal/renderer/contract_test.go::TestLoadSourceRejectsUnknownWhenCondition	#5	unknown when condition rendered templates unconditionally
+internal/renderer/hardening_test.go::TestRollbackWritesReportsRestoreFailure	#5	failed rollback was reported as a clean render
+internal/renderer/version_test.go::TestContractVersionAliasesSpecmeta	#5	contract version had four independent definitions and could drift
+internal/packages/cache_test.go::TestPersistFailureKeepsResolvedVersion	#5	cache write failure discarded a successfully resolved package version
+internal/packages/registry_test.go::TestResolveVersionRejectsOversizedBody	#5	oversized registry response was silently truncated into a version list
+internal/fsutil/fsutil_test.go::TestAtomicWritePreservesExistingFileMode	#5	atomic rewrite dropped developer-owned files to mode 0600
+internal/snapshot/rewrite_test.go::TestRewriteFilePreservesExistingMode	#5	prune rewrite silently changed permissions of custom files
+internal/snapshot/hardening_test.go::TestMigrationPlanTableNameMatchesIRForAcronymEntity	#5	migration plan and IR derived table names through two different rules
+internal/snapshot/hardening_test.go::TestCasingVariants	#5	four parallel casing tables could drift during entity renames

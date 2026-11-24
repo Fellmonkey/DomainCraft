@@ -748,3 +748,40 @@ entities:
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+// TestParseDuplicateFeature pins that a feature listed twice is rejected at
+// parse time — the Features map collapses duplicates, so a validator-side
+// check could never see them.
+func TestParseDuplicateFeature(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		features string
+	}{
+		{name: "adjacent", features: "[audit, audit]"},
+		{name: "separated", features: "[audit, soft_delete, audit]"},
+		{name: "whitespace", features: "[audit, ' audit ']"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			yamlData := []byte(`
+project:
+  name: Test
+entities:
+  User:
+    features: ` + tt.features + `
+    fields:
+      id: uuid [primary]
+      email: string [required, unique]
+`)
+			_, err := ParseYAML(yamlData)
+			if err == nil {
+				t.Fatal("expected error for duplicate feature")
+			}
+			if !strings.Contains(err.Error(), "duplicate feature: audit") {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}

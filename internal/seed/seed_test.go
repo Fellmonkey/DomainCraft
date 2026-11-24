@@ -469,3 +469,34 @@ func TestGenerateUsesDeclaredDefaultOverMock(t *testing.T) {
 		t.Errorf("attempts = %#v, want int64(3)", vals["attempts"])
 	}
 }
+
+// TestNormalizeIntegralFloatSeed documents that a float with an integral
+// value survives seed coercion; fractional values are rejected upstream by
+// the validator before they reach this code.
+func TestNormalizeIntegralFloatSeed(t *testing.T) {
+	t.Parallel()
+	project := &ir.Project{
+		Entities: []ir.Entity{
+			{
+				Name: "Docs",
+				Fields: []ir.Field{
+					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
+					{Name: "count", DatabaseType: "int"},
+				},
+				Seed: []map[string]any{{
+					"id":    "550e8400-e29b-41d4-a716-446655440000",
+					"count": float64(1.0),
+				}},
+			},
+		},
+	}
+
+	ds := Normalize(project)
+	vals := map[string]any{}
+	for _, sv := range ds.Entities[0].Records[0].Fields {
+		vals[sv.Field] = sv.Value
+	}
+	if vals["count"] != int64(1) {
+		t.Errorf("count = %#v, want int64(1)", vals["count"])
+	}
+}

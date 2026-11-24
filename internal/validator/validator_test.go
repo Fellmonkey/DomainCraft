@@ -2534,3 +2534,137 @@ func TestValidateSortsErrorsByMessageTiebreaker(t *testing.T) {
 		t.Fatalf("first error = %q, want the empty-value error", errs[0].Message)
 	}
 }
+
+// schemaWithSeedValue builds a minimal valid schema with one integral field
+// carrying a single seed value.
+func schemaWithSeedValue(t *testing.T, fieldType string, value any) *parser.ParsedSchema {
+	t.Helper()
+	return &parser.ParsedSchema{
+		Project:     parser.ProjectConfig{Name: "Test"},
+		EntityOrder: []string{"Doc"},
+		Entities: map[string]*parser.ParsedEntity{
+			"Doc": {
+				Name:       "Doc",
+				FieldOrder: []string{"id", "count"},
+				Fields: map[string]*parser.ParsedField{
+					"id":    testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"count": testutil.MustParsedField(t, "count", fieldType),
+				},
+				Seed: []map[string]any{{"id": "550e8400-e29b-41d4-a716-446655440000", "count": value}},
+			},
+		},
+	}
+}
+
+func TestValidateRejectsFractionalSeedForIntegralField(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		fieldType string
+		value     any
+	}{
+		{name: "float64 1.9 for int", fieldType: "int", value: float64(1.9)},
+		{name: "float32 1.9 for int", fieldType: "int", value: float32(1.9)},
+		{name: "float64 2.5 for bigint", fieldType: "bigint", value: float64(2.5)},
+		{name: "negative float32 for bigint", fieldType: "bigint", value: float32(-2.5)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			errs := nonWarnings(New(schemaWithSeedValue(t, tt.fieldType, tt.value)).Validate())
+			found := false
+			for _, e := range errs {
+				if e.Field == "count" && strings.Contains(e.Message, "seed entry 0") &&
+					strings.Contains(e.Message, "not compatible with type "+tt.fieldType) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("expected fractional seed error, got %v", errs)
+			}
+		})
+	}
+}
+
+func TestValidateAcceptsIntegralValuedFloatSeed(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		fieldType string
+		value     any
+	}{
+		{name: "float64 1.0 for int", fieldType: "int", value: float64(1.0)},
+		{name: "float32 1.0 for int", fieldType: "int", value: float32(1.0)},
+		{name: "float64 3.0 for bigint", fieldType: "bigint", value: float64(3.0)},
+		{name: "float32 3.0 for bigint", fieldType: "bigint", value: float32(3.0)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			errs := nonWarnings(New(schemaWithSeedValue(t, tt.fieldType, tt.value)).Validate())
+			if len(errs) != 0 {
+				t.Fatalf("expected integral-valued float seed to be accepted, got %v", errs)
+			}
+		})
+	}
+}
+
+// schemaWithEntityOldName builds a minimal valid schema with an entity rename hint.
+func schemaWithEntityOldName(t *testing.T, entityName, oldName string) *parser.ParsedSchema {
+	t.Helper()
+	return &parser.ParsedSchema{
+		Project:     parser.ProjectConfig{Name: "Test"},
+		EntityOrder: []string{entityName},
+		Entities: map[string]*parser.ParsedEntity{
+			entityName: {
+				Name:       entityName,
+				OldName:    oldName,
+				FieldOrder: []string{"id"},
+				Fields: map[string]*parser.ParsedField{
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
+				},
+			},
+		},
+	}
+}
+
+func TestValidateRejectsInvalidEntityOldName(t *testing.T) {
+	t.Parallel()
+	for _, oldName := range []string{"bad-name", "has space", "123abc", "Product.Id"} {
+		t.Run(oldName, func(t *testing.T) {
+			t.Parallel()
+			errs := nonWarnings(New(schemaWithEntityOldName(t, "Item", oldName)).Validate())
+			found := false
+			for _, e := range errs {
+				if strings.Contains(e.Message, "old_name is not a valid identifier") {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("expected invalid entity old_name error for %q, got %v", oldName, errs)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsSelfReferentialEntityOldName(t *testing.T) {
+	t.Parallel()
+	errs := nonWarnings(New(schemaWithEntityOldName(t, "Product", "Product")).Validate())
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Message, "old_name cannot equal the entity name") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected self-referential entity old_name error, got %v", errs)
+	}
+}
+
+func TestValidateAcceptsValidEntityOldName(t *testing.T) {
+	t.Parallel()
+	errs := nonWarnings(New(schemaWithEntityOldName(t, "Item", "Product")).Validate())
+	if len(errs) != 0 {
+		t.Fatalf("expected a valid entity old_name to be accepted, got %v", errs)
+	}
+}
