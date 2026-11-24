@@ -23,7 +23,11 @@ func safeBridgeSource(dir, rel string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("unsafe bridge source path %q: %w", rel, err)
 	}
-	realDir, err := filepath.EvalSymlinks(dir)
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve bridge dir: %w", err)
+	}
+	realDir, err := filepath.EvalSymlinks(absDir)
 	if err != nil {
 		return "", fmt.Errorf("resolve bridge dir: %w", err)
 	}
