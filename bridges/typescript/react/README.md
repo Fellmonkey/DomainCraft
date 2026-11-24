@@ -28,7 +28,7 @@ domaincraft generate --bridge react-rest --replace framework=vue-rest
 # → core + client + vue-rest
 ```
 
-One framework variant = one repo. See [Axes and layers](https://domaincraft.github.io/domaincraft-site/docs/concepts/three-axes/).
+One framework variant = one repo. See [Axes and layers](https://fellmonkey.github.io/domaincraft-site/docs/concepts/three-axes/).
 
 ## How it composes
 
@@ -54,7 +54,7 @@ npm install --prefix ./frontend && npm run build --prefix ./frontend
 
 ## Docs
 
-- [Axes and layers](https://domaincraft.github.io/domaincraft-site/docs/concepts/three-axes/)
-- [The TypeScript client](https://domaincraft.github.io/domaincraft-site/docs/guides/typescript-client/)
-- [Writing a bridge](https://domaincraft.github.io/domaincraft-site/docs/guides/writing-a-bridge/)
+- [Axes and layers](https://fellmonkey.github.io/domaincraft-site/docs/concepts/three-axes/)
+- [The TypeScript client](https://fellmonkey.github.io/domaincraft-site/docs/guides/typescript-client/)
+- [Writing a bridge](https://fellmonkey.github.io/domaincraft-site/docs/guides/writing-a-bridge/)
 - [DomainCraft](https://github.com/DomainCraft/DomainCraft)

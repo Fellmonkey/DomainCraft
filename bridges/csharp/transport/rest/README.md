@@ -17,7 +17,7 @@ domaincraft generate --bridge csharp-rest --replace transport=csharp-grpc
 # → core + domain + efcore + grpc
 ```
 
-One transport variant = one repo. At `10×10` that is 22 repos for 100 combinations; at `30×30` — 62 instead of 900. See [Axes and layers](https://domaincraft.github.io/domaincraft-site/docs/concepts/three-axes/).
+One transport variant = one repo. At `10×10` that is 22 repos for 100 combinations; at `30×30` — 62 instead of 900. See [Axes and layers](https://fellmonkey.github.io/domaincraft-site/docs/concepts/three-axes/).
 
 ## What it adds on top of `csharp-efcore`
 
@@ -76,10 +76,10 @@ docker compose -f ./generated/docker-compose.yml up --build
 
 ## Docs
 
-- [Axes and layers](https://domaincraft.github.io/domaincraft-site/docs/concepts/three-axes/)
-- [Authentication](https://domaincraft.github.io/domaincraft-site/docs/guides/authentication/)
-- [Permissions](https://domaincraft.github.io/domaincraft-site/docs/guides/permissions/)
-- [Deploying the generated API](https://domaincraft.github.io/domaincraft-site/docs/guides/deploy/)
-- [CLI reference](https://domaincraft.github.io/domaincraft-site/docs/reference/cli/)
-- [Writing a bridge](https://domaincraft.github.io/domaincraft-site/docs/guides/writing-a-bridge/)
+- [Axes and layers](https://fellmonkey.github.io/domaincraft-site/docs/concepts/three-axes/)
+- [Authentication](https://fellmonkey.github.io/domaincraft-site/docs/guides/authentication/)
+- [Permissions](https://fellmonkey.github.io/domaincraft-site/docs/guides/permissions/)
+- [Deploying the generated API](https://fellmonkey.github.io/domaincraft-site/docs/guides/deploy/)
+- [CLI reference](https://fellmonkey.github.io/domaincraft-site/docs/reference/cli/)
+- [Writing a bridge](https://fellmonkey.github.io/domaincraft-site/docs/guides/writing-a-bridge/)
 - [DomainCraft](https://github.com/DomainCraft/DomainCraft)

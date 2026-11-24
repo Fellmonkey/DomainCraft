@@ -53,6 +53,6 @@ dotnet build ./generated/src/Domain
 
 ## Docs
 
-- [Axes and layers](https://domaincraft.github.io/domaincraft-site/docs/concepts/three-axes/) — how `N×M` becomes `N+M`
-- [Writing a bridge](https://domaincraft.github.io/domaincraft-site/docs/guides/writing-a-bridge/)
+- [Axes and layers](https://fellmonkey.github.io/domaincraft-site/docs/concepts/three-axes/) — how bridges compose in one repository
+- [Writing a bridge](https://fellmonkey.github.io/domaincraft-site/docs/guides/writing-a-bridge/)
 - [DomainCraft](https://github.com/DomainCraft/DomainCraft)
