@@ -1,7 +1,6 @@
 package bridge
 
 import (
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -9,6 +8,7 @@ import (
 	"strings"
 
 	domaincraft "github.com/DomainCraft/DomainCraft"
+	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 )
 
 // TryMaterializeEmbedded copies the embedded copy of an official bridge into its
@@ -95,36 +95,5 @@ func refuseSymlinks(base, target string) error {
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("target %q escapes cache directory", target)
 	}
-	if err := lstatNoSymlink(baseAbs); err != nil {
-		return err
-	}
-	if rel == "." {
-		return nil
-	}
-	cur := baseAbs
-	for part := range strings.SplitSeq(rel, string(filepath.Separator)) {
-		if part == "" || part == "." {
-			continue
-		}
-		cur = filepath.Join(cur, part)
-		if err := lstatNoSymlink(cur); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// lstatNoSymlink fails on an existing symlink and ignores missing paths.
-func lstatNoSymlink(path string) error {
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("inspect %q: %w", path, err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("refuse to write through symlink %q", path)
-	}
-	return nil
+	return fsutil.RefuseSymlinks(baseAbs, targetAbs)
 }

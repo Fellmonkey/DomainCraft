@@ -5,9 +5,68 @@ package fsutil
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// LocalPathWithin resolves rel against base and rejects anything outside base.
+// It returns the absolute target and its path relative to base. Callers add
+// their own symlink policy: RefuseSymlinks for writes, EvalSymlinks for reads
+// that must follow a symlinked root.
+func LocalPathWithin(base, rel string) (string, string, error) {
+	local := filepath.FromSlash(rel)
+	if !filepath.IsLocal(local) {
+		return "", "", fmt.Errorf("path %q is not local", rel)
+	}
+	absBase, err := filepath.Abs(base)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve base %q: %w", base, err)
+	}
+	absTarget := filepath.Join(absBase, local)
+	if absTarget != absBase && !strings.HasPrefix(absTarget, absBase+string(filepath.Separator)) {
+		return "", "", fmt.Errorf("path %q escapes %q", rel, base)
+	}
+	relative, err := filepath.Rel(absBase, absTarget)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve path %q: %w", rel, err)
+	}
+	return absTarget, relative, nil
+}
+
+// RefuseSymlinks rejects an existing symlink at base or any component of target
+// below it. Missing components are ignored; the caller creates them later and
+// must re-check before committing a file.
+func RefuseSymlinks(base, target string) error {
+	rel, err := filepath.Rel(base, target)
+	if err != nil {
+		return fmt.Errorf("resolve path %q: %w", target, err)
+	}
+	paths := []string{base}
+	cur := base
+	for comp := range strings.SplitSeq(rel, string(filepath.Separator)) {
+		if comp == "" || comp == "." {
+			continue
+		}
+		cur = filepath.Join(cur, comp)
+		paths = append(paths, cur)
+	}
+	for _, path := range paths {
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect %q: %w", path, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refuse to write through symlink %q", path)
+		}
+	}
+	return nil
+}
 
 // AtomicWrite writes data to path via a temp file in the same directory
 // followed by a rename, so a crash mid-write never leaves a truncated or
@@ -37,9 +96,19 @@ func AtomicWrite(path string, data []byte) error {
 
 // WriteJSON marshals v as indented JSON and writes it to path atomically.
 func WriteJSON(path string, v any) error {
+	return WriteJSONWithNewline(path, v, false)
+}
+
+// WriteJSONWithNewline marshals v as indented JSON and writes it atomically.
+// The newline flag preserves the exact byte format expected by committed
+// fixtures and schema files.
+func WriteJSONWithNewline(path string, v any, newline bool) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
+	}
+	if newline {
+		data = append(data, '\n')
 	}
 	return AtomicWrite(path, data)
 }

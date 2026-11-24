@@ -16,7 +16,6 @@ package main
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -752,15 +751,7 @@ func writeDomainLock(domainPath string, dirs []string) error {
 	}
 	slices.SortFunc(out, func(a, b lockBridge) int { return cmp.Compare(a.ID, b.ID) })
 
-	data, err := json.MarshalIndent(domainLock{Bridges: out}, "", "  ")
-	if err != nil {
-		return err
-	}
-	dir := filepath.Dir(domainPath)
-	if dir == "" {
-		dir = "."
-	}
-	return fsutil.AtomicWrite(filepath.Join(dir, "domaincraft.lock.json"), data)
+	return fsutil.WriteJSON(filepath.Join(filepath.Dir(domainPath), "domaincraft.lock.json"), domainLock{Bridges: out})
 }
 
 // bridgeMetadata reads the identifying fields out of a bridge directory's

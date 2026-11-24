@@ -19,10 +19,10 @@ import (
 // safeBridgeSource resolves a template or helper path declared by bridge.yaml
 // and rejects paths that escape the bridge directory.
 func safeBridgeSource(dir, rel string) (string, error) {
-	if !filepath.IsLocal(rel) {
-		return "", fmt.Errorf("unsafe bridge source path %q", rel)
+	path, _, err := fsutil.LocalPathWithin(dir, rel)
+	if err != nil {
+		return "", fmt.Errorf("unsafe bridge source path %q: %w", rel, err)
 	}
-	path := filepath.Join(dir, rel)
 	realDir, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return "", fmt.Errorf("resolve bridge dir: %w", err)
@@ -41,34 +41,16 @@ func safeBridgeSource(dir, rel string) (string, error) {
 // output tree even when the lexical path is clean. Missing components are left
 // to the caller's MkdirAll and are re-checked before the file is committed.
 func safeOutputPath(outputDir, renderedTarget string) (string, error) {
+	absTarget, _, err := fsutil.LocalPathWithin(outputDir, renderedTarget)
+	if err != nil {
+		return "", fmt.Errorf("template target path %s: %w", renderedTarget, err)
+	}
 	absOutput, err := filepath.Abs(outputDir)
 	if err != nil {
 		return "", fmt.Errorf("resolve output directory: %w", err)
 	}
-	absTarget := filepath.Join(absOutput, filepath.FromSlash(renderedTarget))
-	if absTarget != absOutput && !strings.HasPrefix(absTarget, absOutput+string(filepath.Separator)) {
-		return "", fmt.Errorf("template target path escapes output directory: %s", renderedTarget)
-	}
-	rel, err := filepath.Rel(absOutput, absTarget)
-	if err != nil {
-		return "", fmt.Errorf("resolve target path: %w", err)
-	}
-	cur := absOutput
-	for comp := range strings.SplitSeq(rel, string(filepath.Separator)) {
-		if comp == "" || comp == "." {
-			continue
-		}
-		cur = filepath.Join(cur, comp)
-		info, err := os.Lstat(cur)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return "", fmt.Errorf("inspect output path %q: %w", cur, err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return "", fmt.Errorf("template target path escapes output directory through a symlink: %s", renderedTarget)
-		}
+	if err := fsutil.RefuseSymlinks(absOutput, absTarget); err != nil {
+		return "", fmt.Errorf("template target path %s: %w", renderedTarget, err)
 	}
 	return absTarget, nil
 }

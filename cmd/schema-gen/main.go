@@ -2,12 +2,12 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 )
 
@@ -15,14 +15,7 @@ func main() {
 	outputPath := flag.String("o", filepath.Join("spec", "domain.schema.json"), "output path for the generated schema")
 	flag.Parse()
 
-	schema := buildSchema()
-	data, err := json.MarshalIndent(schema, "", "  ")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "marshal schema:", err)
-		os.Exit(1)
-	}
-
-	if err := os.WriteFile(*outputPath, append(data, '\n'), 0o600); err != nil {
+	if err := fsutil.WriteJSONWithNewline(*outputPath, buildSchema(), true); err != nil {
 		fmt.Fprintln(os.Stderr, "write schema:", err)
 		os.Exit(1)
 	}

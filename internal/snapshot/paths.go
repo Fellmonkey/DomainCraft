@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 )
 
 // safeRelPath resolves a snapshot file path against outputDir and rejects
@@ -18,27 +20,17 @@ import (
 // inside the resolved output root. The returned path keeps the lexical form so
 // callers see paths under outputDir even when that directory is itself a link.
 func safeRelPath(outputDir, relPath string) (string, error) {
-	local := filepath.FromSlash(relPath)
-	if !filepath.IsLocal(local) {
-		return "", fmt.Errorf("unsafe snapshot path %q: must be local to output dir", relPath)
+	abs, rel, err := fsutil.LocalPathWithin(outputDir, relPath)
+	if err != nil {
+		return "", fmt.Errorf("unsafe snapshot path %q: %w", relPath, err)
 	}
-
 	absOutput, err := filepath.Abs(outputDir)
 	if err != nil {
 		return "", fmt.Errorf("resolve output dir %q: %w", outputDir, err)
 	}
-	abs := filepath.Join(absOutput, local)
-	if abs != absOutput && !strings.HasPrefix(abs, absOutput+string(filepath.Separator)) {
-		return "", fmt.Errorf("unsafe snapshot path %q: outside output dir", relPath)
-	}
-
 	realOutput, err := filepath.EvalSymlinks(absOutput)
 	if err != nil {
 		return "", fmt.Errorf("resolve output dir %q: %w", outputDir, err)
-	}
-	rel, err := filepath.Rel(absOutput, abs)
-	if err != nil {
-		return "", fmt.Errorf("resolve snapshot path %q: %w", relPath, err)
 	}
 	cur, realCur := absOutput, realOutput
 	for comp := range strings.SplitSeq(rel, string(filepath.Separator)) {

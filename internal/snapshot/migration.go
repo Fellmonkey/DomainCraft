@@ -60,7 +60,7 @@ func ComputeMigrationPlan(old *Snapshot, project *ir.Project) *ir.MigrationPlan 
 				continue // handled as a rename below
 			}
 		}
-		op := ir.MigrationOp{Kind: ir.OpCreateTable, Entity: e.Name, Table: tableName(e.Name)}
+		op := ir.MigrationOp{Kind: ir.OpCreateTable, Entity: e.Name, Table: e.TableName()}
 		for _, f := range e.Fields {
 			column := f.ColumnName()
 			op.Columns = append(op.Columns, ir.MigrationColumn{
@@ -90,7 +90,7 @@ func ComputeMigrationPlan(old *Snapshot, project *ir.Project) *ir.MigrationPlan 
 			Kind:     ir.OpRenameTable,
 			Entity:   e.Name,
 			OldName:  oldName,
-			Table:    tableName(e.Name),
+			Table:    e.TableName(),
 			OldTable: tableName(oldName),
 		})
 	}
@@ -142,7 +142,7 @@ func diffColumns(plan *ir.MigrationPlan, oldState EntityState, e *ir.Entity) {
 		newFieldByName[f.Name] = f
 	}
 
-	table := tableName(e.Name)
+	table := e.TableName()
 
 	// RenameColumn: new field declares old_name pointing at a field that existed.
 	renamedFields := make([]string, 0)
