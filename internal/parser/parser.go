@@ -197,8 +197,17 @@ func (p *Parser) parseEntity(name string, raw RawEntity) (*ParsedEntity, error) 
 	return entity, nil
 }
 
-// parseField parses a single field using the lexer
+// parseField is kept for callers inside the parser; the shared entry point is
+// ParseField so the testutil helper cannot drift from the parser's normalization.
 func (p *Parser) parseField(name string, fieldDef string) (*ParsedField, error) {
+	return ParseField(name, fieldDef)
+}
+
+// ParseField parses a single field definition and applies the parser's semantic
+// normalization (primary implies required, optional clears required, required is
+// mirrored into the validations map, and relation fields get their relation
+// type). Both Parser and testutil go through this one function.
+func ParseField(name string, fieldDef string) (*ParsedField, error) {
 	fd, err := lexer.ParseFieldString(fieldDef)
 	if err != nil {
 		return nil, err

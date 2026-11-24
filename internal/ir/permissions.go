@@ -71,9 +71,9 @@ func (p *Permissions) Plan(operation string) *PermissionPlan {
 	plan := &PermissionPlan{Operation: operation}
 	for _, r := range roles {
 		switch {
-		case r == "*":
+		case specmeta.IsPublicPermission(r):
 			plan.IsPublic = true
-		case len(r) > 0 && r[0] == '@':
+		case specmeta.IsOwnershipToken(r):
 			plan.HasOwner = true
 		default:
 			plan.Roles = append(plan.Roles, r)

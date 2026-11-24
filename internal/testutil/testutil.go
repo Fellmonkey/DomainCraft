@@ -4,22 +4,20 @@ package testutil
 import (
 	"testing"
 
-	"github.com/DomainCraft/DomainCraft/internal/lexer"
 	"github.com/DomainCraft/DomainCraft/internal/parser"
-	"github.com/DomainCraft/DomainCraft/pkg/textutil"
 )
 
-// MustParsedField parses a field definition string and returns a *ParsedField.
-// Fails the test if parsing fails.
+// MustParsedField parses a field definition the same way the parser does, then
+// returns the resulting *ParsedField. Fails the test if parsing fails.
+//
+// It calls parser.ParseField so test fixtures carry the parser's normalization
+// (primary implies required, optional clears required, required is mirrored into
+// Validations, and relation fields get their RelationType).
 func MustParsedField(t *testing.T, name, input string) *parser.ParsedField {
 	t.Helper()
-	fieldDef, err := lexer.ParseFieldString(input)
+	field, err := parser.ParseField(name, input)
 	if err != nil {
-		t.Fatalf("ParseFieldString(%q) error = %v", input, err)
+		t.Fatalf("ParseField(%q, %q) error = %v", name, input, err)
 	}
-	fieldDef.Name = name
-	return &parser.ParsedField{
-		FieldDefinition:    fieldDef,
-		DatabaseColumnName: textutil.ToDatabaseColumnName(name),
-	}
+	return field
 }

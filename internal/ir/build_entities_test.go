@@ -21,8 +21,8 @@ func TestBuildCreatesRelations(t *testing.T) {
 				NamePlural: "Products",
 				FieldOrder: []string{"id", "categoryId"},
 				Fields: map[string]*parser.ParsedField{
-					"id":         mustParsedField(t, "id", "uuid [primary]"),
-					"categoryId": mustParsedField(t, "categoryId", "relation(Category)"),
+					"id":         testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"categoryId": testutil.MustParsedField(t, "categoryId", "relation(Category)"),
 				},
 			},
 			"Category": {
@@ -30,7 +30,7 @@ func TestBuildCreatesRelations(t *testing.T) {
 				NamePlural: "Categories",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 			},
 		},
@@ -79,9 +79,9 @@ func TestBuildResolvesEnumTypes(t *testing.T) {
 				NamePlural: "Products",
 				FieldOrder: []string{"id", "status", "tags"},
 				Fields: map[string]*parser.ParsedField{
-					"id":     mustParsedField(t, "id", "uuid [primary]"),
-					"status": mustParsedField(t, "status", "enum(ProductStatus)"),
-					"tags":   mustParsedField(t, "tags", "array(Tag)"),
+					"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"status": testutil.MustParsedField(t, "status", "enum(ProductStatus)"),
+					"tags":   testutil.MustParsedField(t, "tags", "array(Tag)"),
 				},
 			},
 		},
@@ -123,15 +123,15 @@ func TestBuildResolvesPrimitiveTypes(t *testing.T) {
 				NamePlural: "Users",
 				FieldOrder: []string{"id", "name", "count", "price", "active", "born", "created", "data", "items"},
 				Fields: map[string]*parser.ParsedField{
-					"id":      mustParsedField(t, "id", "uuid [primary]"),
-					"name":    mustParsedField(t, "name", "string"),
-					"count":   mustParsedField(t, "count", "bigint"),
-					"price":   mustParsedField(t, "price", "decimal"),
-					"active":  mustParsedField(t, "active", "boolean"),
-					"born":    mustParsedField(t, "born", "date"),
-					"created": mustParsedField(t, "created", "datetime"),
-					"data":    mustParsedField(t, "data", "jsonb"),
-					"items":   mustParsedField(t, "items", "array(int)"),
+					"id":      testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"name":    testutil.MustParsedField(t, "name", "string"),
+					"count":   testutil.MustParsedField(t, "count", "bigint"),
+					"price":   testutil.MustParsedField(t, "price", "decimal"),
+					"active":  testutil.MustParsedField(t, "active", "boolean"),
+					"born":    testutil.MustParsedField(t, "born", "date"),
+					"created": testutil.MustParsedField(t, "created", "datetime"),
+					"data":    testutil.MustParsedField(t, "data", "jsonb"),
+					"items":   testutil.MustParsedField(t, "items", "array(int)"),
 				},
 			},
 		},
@@ -168,10 +168,6 @@ func TestBuildResolvesPrimitiveTypes(t *testing.T) {
 	}
 }
 
-func mustParsedField(t *testing.T, name, input string) *parser.ParsedField {
-	return testutil.MustParsedField(t, name, input)
-}
-
 //relationPKCycleSchema builds a model where each entity's primary key is a
 // relation to the other entity. Before the cycle guard this made Build recurse
 // through resolveDatabaseType until the process died with a stack overflow.
@@ -187,7 +183,7 @@ func relationPKCycleSchema(t *testing.T) *parser.ParsedSchema {
 				NamePlural: "Alphas",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "relation(Beta) [primary]"),
+					"id": testutil.MustParsedField(t, "id", "relation(Beta) [primary]"),
 				},
 			},
 			"Beta": {
@@ -195,7 +191,7 @@ func relationPKCycleSchema(t *testing.T) *parser.ParsedSchema {
 				NamePlural: "Betas",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "relation(Alpha) [primary]"),
+					"id": testutil.MustParsedField(t, "id", "relation(Alpha) [primary]"),
 				},
 			},
 		},
@@ -228,7 +224,7 @@ func TestResolveDatabaseTypeDetectsCycles(t *testing.T) {
 			name:   "self relation primary key",
 			schema: relationPKCycleSchema(t),
 			field: func(_ *testing.T, s *parser.ParsedSchema) *parser.ParsedField {
-				f := mustParsedField(t, "id", "relation(Alpha) [primary]")
+				f := testutil.MustParsedField(t, "id", "relation(Alpha) [primary]")
 				s.Entities["Alpha"].Fields["id"] = f
 				return f
 			},
@@ -249,13 +245,13 @@ func TestResolveDatabaseTypeDetectsCycles(t *testing.T) {
 					"Order": {
 						FieldOrder: []string{"userId"},
 						Fields: map[string]*parser.ParsedField{
-							"userId": mustParsedField(t, "userId", "relation(User)"),
+							"userId": testutil.MustParsedField(t, "userId", "relation(User)"),
 						},
 					},
 					"User": {
 						FieldOrder: []string{"id"},
 						Fields: map[string]*parser.ParsedField{
-							"id": mustParsedField(t, "id", "uuid [primary]"),
+							"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 						},
 					},
 				},
@@ -347,7 +343,7 @@ func TestBuildCopiesDescription(t *testing.T) {
 				NamePlural: "Users",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 			},
 		},
@@ -376,7 +372,7 @@ func TestBuildCopiesFeaturesMap(t *testing.T) {
 				Features:   map[string]bool{"audit": true, "soft_delete": true},
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 			},
 		},
@@ -423,8 +419,8 @@ func TestBuildCircularDependency(t *testing.T) {
 				NamePlural: "As",
 				FieldOrder: []string{"id", "bRef"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"bRef": mustParsedField(t, "bRef", "relation(B)"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"bRef": testutil.MustParsedField(t, "bRef", "relation(B)"),
 				},
 			},
 			"B": {
@@ -432,8 +428,8 @@ func TestBuildCircularDependency(t *testing.T) {
 				NamePlural: "Bs",
 				FieldOrder: []string{"id", "aRef"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"aRef": mustParsedField(t, "aRef", "relation(A)"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"aRef": testutil.MustParsedField(t, "aRef", "relation(A)"),
 				},
 			},
 		},
@@ -462,8 +458,8 @@ func TestBuildCopiesDatabaseColumnName(t *testing.T) {
 				NamePlural: "Users",
 				FieldOrder: []string{"id", "firstName"},
 				Fields: map[string]*parser.ParsedField{
-					"id":        mustParsedField(t, "id", "uuid [primary]"),
-					"firstName": mustParsedField(t, "firstName", "string"),
+					"id":        testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"firstName": testutil.MustParsedField(t, "firstName", "string"),
 				},
 			},
 		},
@@ -503,8 +499,8 @@ func TestBuildCopiesFieldOldName(t *testing.T) {
 				NamePlural: "Products",
 				FieldOrder: []string{"id", "displayName"},
 				Fields: map[string]*parser.ParsedField{
-					"id":          mustParsedField(t, "id", "uuid [primary]"),
-					"displayName": mustParsedField(t, "displayName", "string [required, old_name:productTitle]"),
+					"id":          testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"displayName": testutil.MustParsedField(t, "displayName", "string [required, old_name:productTitle]"),
 				},
 			},
 		},
@@ -544,32 +540,32 @@ func TestBuildResolvesTargetEntityAfterTopoSort(t *testing.T) {
 				Name:       "User",
 				NamePlural: "Users",
 				FieldOrder: []string{"id"},
-				Fields:     map[string]*parser.ParsedField{"id": mustParsedField(t, "id", "uuid [primary]")},
+				Fields:     map[string]*parser.ParsedField{"id": testutil.MustParsedField(t, "id", "uuid [primary]")},
 			},
 			"Product": {
 				Name:       "Product",
 				NamePlural: "Products",
 				FieldOrder: []string{"id", "categoryId", "supplierId", "tags"},
 				Fields: map[string]*parser.ParsedField{
-					"id":         mustParsedField(t, "id", "uuid [primary]"),
-					"categoryId": mustParsedField(t, "categoryId", "relation(Category)"),
-					"supplierId": mustParsedField(t, "supplierId", "relation(User)"),
-					"tags":       mustParsedField(t, "tags", "relation(Tag) [many]"),
+					"id":         testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"categoryId": testutil.MustParsedField(t, "categoryId", "relation(Category)"),
+					"supplierId": testutil.MustParsedField(t, "supplierId", "relation(User)"),
+					"tags":       testutil.MustParsedField(t, "tags", "relation(Tag) [many]"),
 				},
 			},
 			"Category": {
 				Name:       "Category",
 				NamePlural: "Categories",
 				FieldOrder: []string{"id"},
-				Fields:     map[string]*parser.ParsedField{"id": mustParsedField(t, "id", "uuid [primary]")},
+				Fields:     map[string]*parser.ParsedField{"id": testutil.MustParsedField(t, "id", "uuid [primary]")},
 			},
 			"Order": {
 				Name:       "Order",
 				NamePlural: "Orders",
 				FieldOrder: []string{"id", "userId"},
 				Fields: map[string]*parser.ParsedField{
-					"id":     mustParsedField(t, "id", "uuid [primary]"),
-					"userId": mustParsedField(t, "userId", "relation(User)"),
+					"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"userId": testutil.MustParsedField(t, "userId", "relation(User)"),
 				},
 			},
 			"OrderItem": {
@@ -577,25 +573,25 @@ func TestBuildResolvesTargetEntityAfterTopoSort(t *testing.T) {
 				NamePlural: "OrderItems",
 				FieldOrder: []string{"id", "orderId", "productId"},
 				Fields: map[string]*parser.ParsedField{
-					"id":        mustParsedField(t, "id", "uuid [primary]"),
-					"orderId":   mustParsedField(t, "orderId", "relation(Order)"),
-					"productId": mustParsedField(t, "productId", "relation(Product)"),
+					"id":        testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"orderId":   testutil.MustParsedField(t, "orderId", "relation(Order)"),
+					"productId": testutil.MustParsedField(t, "productId", "relation(Product)"),
 				},
 			},
 			"Tag": {
 				Name:       "Tag",
 				NamePlural: "Tags",
 				FieldOrder: []string{"id"},
-				Fields:     map[string]*parser.ParsedField{"id": mustParsedField(t, "id", "uuid [primary]")},
+				Fields:     map[string]*parser.ParsedField{"id": testutil.MustParsedField(t, "id", "uuid [primary]")},
 			},
 			"Review": {
 				Name:       "Review",
 				NamePlural: "Reviews",
 				FieldOrder: []string{"id", "productId", "userId"},
 				Fields: map[string]*parser.ParsedField{
-					"id":        mustParsedField(t, "id", "uuid [primary]"),
-					"productId": mustParsedField(t, "productId", "relation(Product)"),
-					"userId":    mustParsedField(t, "userId", "relation(User)"),
+					"id":        testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"productId": testutil.MustParsedField(t, "productId", "relation(Product)"),
+					"userId":    testutil.MustParsedField(t, "userId", "relation(User)"),
 				},
 			},
 			"Document": {
@@ -603,8 +599,8 @@ func TestBuildResolvesTargetEntityAfterTopoSort(t *testing.T) {
 				NamePlural: "Documents",
 				FieldOrder: []string{"id", "authorId"},
 				Fields: map[string]*parser.ParsedField{
-					"id":       mustParsedField(t, "id", "uuid [primary]"),
-					"authorId": mustParsedField(t, "authorId", "relation(User)"),
+					"id":       testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"authorId": testutil.MustParsedField(t, "authorId", "relation(User)"),
 				},
 			},
 		},
@@ -699,16 +695,16 @@ func TestBuildDisambiguatesInverseNavigationNames(t *testing.T) {
 				Name:       "User",
 				NamePlural: "Users",
 				FieldOrder: []string{"id"},
-				Fields:     map[string]*parser.ParsedField{"id": mustParsedField(t, "id", "uuid [primary]")},
+				Fields:     map[string]*parser.ParsedField{"id": testutil.MustParsedField(t, "id", "uuid [primary]")},
 			},
 			"EscrowContract": {
 				Name:       "EscrowContract",
 				NamePlural: "EscrowContracts",
 				FieldOrder: []string{"id", "buyer", "seller"},
 				Fields: map[string]*parser.ParsedField{
-					"id":     mustParsedField(t, "id", "uuid [primary]"),
-					"buyer":  mustParsedField(t, "buyer", "relation(User) [required, on_delete:restrict]"),
-					"seller": mustParsedField(t, "seller", "relation(User) [required, on_delete:restrict]"),
+					"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"buyer":  testutil.MustParsedField(t, "buyer", "relation(User) [required, on_delete:restrict]"),
+					"seller": testutil.MustParsedField(t, "seller", "relation(User) [required, on_delete:restrict]"),
 				},
 			},
 		},
@@ -781,8 +777,8 @@ func TestBuildReconcilesOneToManyDeclaredOnBothSides(t *testing.T) {
 				NamePlural: "Wallets",
 				FieldOrder: []string{"id", "transactions"},
 				Fields: map[string]*parser.ParsedField{
-					"id":           mustParsedField(t, "id", "uuid [primary]"),
-					"transactions": mustParsedField(t, "transactions", "relation(WalletTransaction) [many]"),
+					"id":           testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"transactions": testutil.MustParsedField(t, "transactions", "relation(WalletTransaction) [many]"),
 				},
 			},
 			"WalletTransaction": {
@@ -790,8 +786,8 @@ func TestBuildReconcilesOneToManyDeclaredOnBothSides(t *testing.T) {
 				NamePlural: "WalletTransactions",
 				FieldOrder: []string{"id", "wallet"},
 				Fields: map[string]*parser.ParsedField{
-					"id":     mustParsedField(t, "id", "uuid [primary]"),
-					"wallet": mustParsedField(t, "wallet", "relation(Wallet) [required, on_delete:cascade]"),
+					"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"wallet": testutil.MustParsedField(t, "wallet", "relation(Wallet) [required, on_delete:cascade]"),
 				},
 			},
 		},
@@ -879,8 +875,8 @@ func TestBuildPairNavigationNameStripsIdSuffix(t *testing.T) {
 				NamePlural: "Orders",
 				FieldOrder: []string{"id", "items"},
 				Fields: map[string]*parser.ParsedField{
-					"id":    mustParsedField(t, "id", "uuid [primary]"),
-					"items": mustParsedField(t, "items", "relation(OrderItem) [many]"),
+					"id":    testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"items": testutil.MustParsedField(t, "items", "relation(OrderItem) [many]"),
 				},
 			},
 			"OrderItem": {
@@ -888,8 +884,8 @@ func TestBuildPairNavigationNameStripsIdSuffix(t *testing.T) {
 				NamePlural: "OrderItems",
 				FieldOrder: []string{"id", "orderId"},
 				Fields: map[string]*parser.ParsedField{
-					"id":      mustParsedField(t, "id", "uuid [primary]"),
-					"orderId": mustParsedField(t, "orderId", "relation(Order) [required, on_delete:cascade]"),
+					"id":      testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"orderId": testutil.MustParsedField(t, "orderId", "relation(Order) [required, on_delete:cascade]"),
 				},
 			},
 		},
@@ -938,9 +934,9 @@ func TestBuildConvertsAuthAndValidations(t *testing.T) {
 				NamePlural: "Users",
 				FieldOrder: []string{"id", "email", "password"},
 				Fields: map[string]*parser.ParsedField{
-					"id":       mustParsedField(t, "id", "uuid [primary]"),
-					"email":    mustParsedField(t, "email", "string [required, email]"),
-					"password": mustParsedField(t, "password", "string [required]"),
+					"id":       testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"email":    testutil.MustParsedField(t, "email", "string [required, email]"),
+					"password": testutil.MustParsedField(t, "password", "string [required]"),
 				},
 			},
 			"Order": {
@@ -948,9 +944,9 @@ func TestBuildConvertsAuthAndValidations(t *testing.T) {
 				NamePlural: "Orders",
 				FieldOrder: []string{"id", "total", "sku"},
 				Fields: map[string]*parser.ParsedField{
-					"id":    mustParsedField(t, "id", "uuid [primary]"),
-					"total": mustParsedField(t, "total", "decimal [min:0, max:999999]"),
-					"sku":   mustParsedField(t, "sku", "string [max:32]"),
+					"id":    testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"total": testutil.MustParsedField(t, "total", "decimal [min:0, max:999999]"),
+					"sku":   testutil.MustParsedField(t, "sku", "string [max:32]"),
 				},
 			},
 		},
@@ -1018,7 +1014,7 @@ func TestBuildWithoutAuthYieldsNilAuth(t *testing.T) {
 				Name:       "Item",
 				NamePlural: "Items",
 				FieldOrder: []string{"id"},
-				Fields:     map[string]*parser.ParsedField{"id": mustParsedField(t, "id", "uuid [primary]")},
+				Fields:     map[string]*parser.ParsedField{"id": testutil.MustParsedField(t, "id", "uuid [primary]")},
 			},
 		},
 	}

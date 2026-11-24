@@ -1,7 +1,10 @@
 // Package specmeta is the single source of truth for specification constants.
 package specmeta
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+)
 
 // FeatureFieldDef describes a field auto-injected by a feature macro.
 type FeatureFieldDef struct {
@@ -72,8 +75,14 @@ var PrimitiveFieldTypes = []string{
 	"boolean", "date", "datetime", "uuid", "json", "jsonb",
 }
 
+// IntegralFieldTypes lists the integral scalar types.
+var IntegralFieldTypes = []string{"int", "bigint"}
+
+// FloatFieldTypes lists the floating-point scalar types.
+var FloatFieldTypes = []string{"float", "decimal"}
+
 // NumericFieldTypes lists the numeric scalar types.
-var NumericFieldTypes = []string{"int", "bigint", "float", "decimal"}
+var NumericFieldTypes = append(append([]string{}, IntegralFieldTypes...), FloatFieldTypes...)
 
 // StringFieldTypes lists the string scalar types.
 var StringFieldTypes = []string{"string", "text"}
@@ -114,9 +123,27 @@ var FuncDefaults = map[string][]string{
 // DefaultFieldType is the fallback type for unresolvable fields.
 const DefaultFieldType = "string"
 
+// ContractVersion is the bridge-contract version this core implements. Bridges
+// declare their own version via `contract_version` in bridge.yaml; a declared
+// version above this constant is not supported.
+const ContractVersion = 1
+
+// EffectiveContractVersion returns the contract version to use for a declared
+// value. An absent or zero declaration (the legacy default) resolves to
+// ContractVersion; any positive declaration is taken as-is, so callers can still
+// reject a bridge that declares a newer contract than this core implements.
+func EffectiveContractVersion(declared int) int {
+	if declared > 0 {
+		return declared
+	}
+	return ContractVersion
+}
+
 var (
 	primitiveSet            map[string]bool
 	numericSet              map[string]bool
+	integralSet             map[string]bool
+	floatSet                map[string]bool
 	stringSet               map[string]bool
 	booleanSet              map[string]bool
 	fieldTypeSet            map[string]bool
@@ -143,6 +170,8 @@ var (
 func init() {
 	primitiveSet = SliceToSet(PrimitiveFieldTypes)
 	numericSet = SliceToSet(NumericFieldTypes)
+	integralSet = SliceToSet(IntegralFieldTypes)
+	floatSet = SliceToSet(FloatFieldTypes)
 	stringSet = SliceToSet(StringFieldTypes)
 	booleanSet = SliceToSet(BooleanFieldTypes)
 	fieldTypeSet = SliceToSet(FieldTypes)
@@ -171,6 +200,12 @@ func IsPrimitive(typeName string) bool { return primitiveSet[typeName] }
 
 // IsNumeric reports whether typeName is a numeric field type.
 func IsNumeric(typeName string) bool { return numericSet[typeName] }
+
+// IsIntegralType reports whether typeName is an integral field type (int or bigint).
+func IsIntegralType(typeName string) bool { return integralSet[typeName] }
+
+// IsFloatType reports whether typeName is a floating-point field type (float or decimal).
+func IsFloatType(typeName string) bool { return floatSet[typeName] }
 
 // IsStringType reports whether typeName is a string or text field type.
 func IsStringType(typeName string) bool { return stringSet[typeName] }
@@ -306,4 +341,36 @@ func IsOwnershipToken(role string) bool { return strings.HasPrefix(role, "@") }
 // ("*" public wildcard or "@..." ownership token) that is not a declared role.
 func IsReservedPermissionToken(role string) bool {
 	return IsPublicPermission(role) || IsOwnershipToken(role)
+}
+
+// IsValidIdentifier reports whether s is a valid domain.yaml identifier. The
+// rule is the one shared by entity, field, enum and role names: a non-empty
+// ASCII string starting with a letter or underscore, followed by letters,
+// digits or underscores. It is the single source of truth for this rule — the
+// parser, lexer and validator must not re-derive it.
+func IsValidIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		letter := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+		if i == 0 {
+			if !letter && c != '_' {
+				return false
+			}
+			continue
+		}
+		if !letter && (c < '0' || c > '9') && c != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+// IsIdentifierRune reports whether r can appear inside an identifier in source
+// text. It is intentionally wider than IsValidIdentifier: rename rewriting must
+// recognise Unicode identifiers that domain.yaml itself does not allow.
+func IsIdentifierRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 }

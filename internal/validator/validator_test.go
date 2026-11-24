@@ -20,7 +20,7 @@ func TestValidateDetectsMissingPrimaryKey(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"email"},
 				Fields: map[string]*parser.ParsedField{
-					"email": mustParsedField(t, "email", "string"),
+					"email": testutil.MustParsedField(t, "email", "string"),
 				},
 			},
 		},
@@ -46,8 +46,8 @@ func TestValidateRejectsOldNameEqualToFieldName(t *testing.T) {
 				Name:       "Product",
 				FieldOrder: []string{"id", "name"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"name": mustParsedField(t, "name", "string [required, old_name:name]"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"name": testutil.MustParsedField(t, "name", "string [required, old_name:name]"),
 				},
 			},
 		},
@@ -76,9 +76,9 @@ func TestValidateRejectsOldNameCollidingWithExistingField(t *testing.T) {
 				Name:       "Product",
 				FieldOrder: []string{"id", "title", "name"},
 				Fields: map[string]*parser.ParsedField{
-					"id":    mustParsedField(t, "id", "uuid [primary]"),
-					"title": mustParsedField(t, "title", "string"),
-					"name":  mustParsedField(t, "name", "string [required, old_name:title]"),
+					"id":    testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"title": testutil.MustParsedField(t, "title", "string"),
+					"name":  testutil.MustParsedField(t, "name", "string [required, old_name:title]"),
 				},
 			},
 		},
@@ -107,8 +107,8 @@ func TestValidateAcceptsValidOldName(t *testing.T) {
 				Name:       "Product",
 				FieldOrder: []string{"id", "name"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"name": mustParsedField(t, "name", "string [required, old_name:title]"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"name": testutil.MustParsedField(t, "name", "string [required, old_name:title]"),
 				},
 			},
 		},
@@ -132,8 +132,8 @@ func TestValidateDetectsDuplicatePrimaryKey(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "code"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"code": mustParsedField(t, "code", "string [primary]"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"code": testutil.MustParsedField(t, "code", "string [primary]"),
 				},
 			},
 		},
@@ -162,8 +162,8 @@ func TestValidateDetectsBrokenRelation(t *testing.T) {
 				Name:       "Product",
 				FieldOrder: []string{"id", "categoryId"},
 				Fields: map[string]*parser.ParsedField{
-					"id":         mustParsedField(t, "id", "uuid"),
-					"categoryId": mustParsedField(t, "categoryId", "relation(Category)"),
+					"id":         testutil.MustParsedField(t, "id", "uuid"),
+					"categoryId": testutil.MustParsedField(t, "categoryId", "relation(Category)"),
 				},
 			},
 		},
@@ -190,15 +190,15 @@ func TestValidateDetectsSetNullOnRequiredField(t *testing.T) {
 				Name:       "Product",
 				FieldOrder: []string{"id", "categoryId"},
 				Fields: map[string]*parser.ParsedField{
-					"id":         mustParsedField(t, "id", "uuid [primary]"),
-					"categoryId": mustParsedField(t, "categoryId", "relation(Category) [optional]"),
+					"id":         testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"categoryId": testutil.MustParsedField(t, "categoryId", "relation(Category) [optional]"),
 				},
 			},
 			"Category": {
 				Name:       "Category",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 			},
 		},
@@ -226,8 +226,8 @@ func TestValidateDetectsUndefinedEnum(t *testing.T) {
 				Name:       "Product",
 				FieldOrder: []string{"id", "status"},
 				Fields: map[string]*parser.ParsedField{
-					"id":     mustParsedField(t, "id", "uuid [primary]"),
-					"status": mustParsedField(t, "status", "enum(NoSuchEnum)"),
+					"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"status": testutil.MustParsedField(t, "status", "enum(NoSuchEnum)"),
 				},
 			},
 		},
@@ -257,9 +257,9 @@ func TestValidatePassesValidEnums(t *testing.T) {
 				Name:       "Product",
 				FieldOrder: []string{"id", "status", "tags"},
 				Fields: map[string]*parser.ParsedField{
-					"id":     mustParsedField(t, "id", "uuid [primary]"),
-					"status": mustParsedField(t, "status", "enum(ProductStatus)"),
-					"tags":   mustParsedField(t, "tags", "array(ProductStatus)"),
+					"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"status": testutil.MustParsedField(t, "status", "enum(ProductStatus)"),
+					"tags":   testutil.MustParsedField(t, "tags", "array(ProductStatus)"),
 				},
 			},
 		},
@@ -282,7 +282,7 @@ func TestValidateDetectsEmptyProjectName(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 			},
 		},
@@ -313,7 +313,7 @@ func TestValidateDetectsManyOnNonRelation(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 			},
 		},
@@ -340,7 +340,7 @@ func TestValidateDetectsOnDeleteOnNonRelation(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 			},
 		},
@@ -366,7 +366,7 @@ func TestValidateDetectsEmptyEnum(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 			},
 		},
@@ -395,7 +395,7 @@ func TestValidateDetectsEmptyIndexFields(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 				Indexes: []*parser.ParsedIndex{
 					{Fields: []string{}, Type: "btree"},
@@ -427,8 +427,8 @@ func TestValidateDetectsSortLengthMismatch(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "email"},
 				Fields: map[string]*parser.ParsedField{
-					"id":    mustParsedField(t, "id", "uuid [primary]"),
-					"email": mustParsedField(t, "email", "string"),
+					"id":    testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"email": testutil.MustParsedField(t, "email", "string"),
 				},
 				Indexes: []*parser.ParsedIndex{
 					{Fields: []string{"id", "email"}, Sort: []string{"asc"}, Type: "btree"},
@@ -448,10 +448,6 @@ func TestValidateDetectsSortLengthMismatch(t *testing.T) {
 	if !found {
 		t.Fatalf("expected error about sort length mismatch, got %v", errs)
 	}
-}
-
-func mustParsedField(t *testing.T, name, input string) *parser.ParsedField {
-	return testutil.MustParsedField(t, name, input)
 }
 
 func nonWarnings(errs []ValidationError) []ValidationError {
@@ -475,8 +471,8 @@ func TestValidateAuthEntityMissingEmailPassword(t *testing.T) {
 				Name:       "Product",
 				FieldOrder: []string{"id", "name"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"name": mustParsedField(t, "name", "string"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"name": testutil.MustParsedField(t, "name", "string"),
 				},
 			},
 		},
@@ -506,9 +502,9 @@ func TestValidateAuthEntityValidEmailPassword(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "email", "password"},
 				Fields: map[string]*parser.ParsedField{
-					"id":       mustParsedField(t, "id", "uuid [primary]"),
-					"email":    mustParsedField(t, "email", "string"),
-					"password": mustParsedField(t, "password", "string"),
+					"id":       testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"email":    testutil.MustParsedField(t, "email", "string"),
+					"password": testutil.MustParsedField(t, "password", "string"),
 				},
 			},
 		},
@@ -534,8 +530,8 @@ func TestValidateDefaultNowOnNonDatetime(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "count"},
 				Fields: map[string]*parser.ParsedField{
-					"id":    mustParsedField(t, "id", "uuid [primary]"),
-					"count": mustParsedField(t, "count", "int [default:now()]"),
+					"id":    testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"count": testutil.MustParsedField(t, "count", "int [default:now()]"),
 				},
 			},
 		},
@@ -564,8 +560,8 @@ func TestValidateDefaultNowOnDatetime(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "created"},
 				Fields: map[string]*parser.ParsedField{
-					"id":      mustParsedField(t, "id", "uuid [primary]"),
-					"created": mustParsedField(t, "created", "datetime [default:now()]"),
+					"id":      testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"created": testutil.MustParsedField(t, "created", "datetime [default:now()]"),
 				},
 			},
 		},
@@ -591,8 +587,8 @@ func TestValidateDefaultUuidOnNonUuid(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "name"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"name": mustParsedField(t, "name", "string [default:uuid()]"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"name": testutil.MustParsedField(t, "name", "string [default:uuid()]"),
 				},
 			},
 		},
@@ -639,7 +635,7 @@ func TestValidateDeployPortRange(t *testing.T) {
 						Name:       "User",
 						FieldOrder: []string{"id"},
 						Fields: map[string]*parser.ParsedField{
-							"id": mustParsedField(t, "id", "uuid [primary]"),
+							"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 						},
 					},
 				},
@@ -682,7 +678,7 @@ func TestValidateCacheConfigWarnings(t *testing.T) {
 					Name:       "User",
 					FieldOrder: []string{"id"},
 					Fields: map[string]*parser.ParsedField{
-						"id": mustParsedField(t, "id", "uuid [primary]"),
+						"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 					},
 				},
 			},
@@ -717,7 +713,7 @@ func TestValidateCacheConfigWarnings(t *testing.T) {
 					Name:       "User",
 					FieldOrder: []string{"id"},
 					Fields: map[string]*parser.ParsedField{
-						"id": mustParsedField(t, "id", "uuid [primary]"),
+						"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 					},
 				},
 			},
@@ -747,8 +743,8 @@ func TestValidateIndexOnRelationFieldWithoutIdSuffix(t *testing.T) {
 				Name:       "Product",
 				FieldOrder: []string{"id", "category"},
 				Fields: map[string]*parser.ParsedField{
-					"id":       mustParsedField(t, "id", "uuid [primary]"),
-					"category": mustParsedField(t, "category", "relation(Category)"),
+					"id":       testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"category": testutil.MustParsedField(t, "category", "relation(Category)"),
 				},
 				Indexes: []*parser.ParsedIndex{
 					{Fields: []string{"category"}, Type: "btree"},
@@ -758,7 +754,7 @@ func TestValidateIndexOnRelationFieldWithoutIdSuffix(t *testing.T) {
 				Name:       "Category",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 			},
 		},
@@ -787,8 +783,8 @@ func TestValidateIndexOnFKFieldNoWarning(t *testing.T) {
 				Name:       "Product",
 				FieldOrder: []string{"id", "categoryId"},
 				Fields: map[string]*parser.ParsedField{
-					"id":         mustParsedField(t, "id", "uuid [primary]"),
-					"categoryId": mustParsedField(t, "categoryId", "relation(Category)"),
+					"id":         testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"categoryId": testutil.MustParsedField(t, "categoryId", "relation(Category)"),
 				},
 				Indexes: []*parser.ParsedIndex{
 					{Fields: []string{"categoryId"}, Type: "btree"},
@@ -798,7 +794,7 @@ func TestValidateIndexOnFKFieldNoWarning(t *testing.T) {
 				Name:       "Category",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 			},
 		},
@@ -823,8 +819,8 @@ func TestValidateIndexOnPrimitiveField(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "email"},
 				Fields: map[string]*parser.ParsedField{
-					"id":    mustParsedField(t, "id", "uuid [primary]"),
-					"email": mustParsedField(t, "email", "string"),
+					"id":    testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"email": testutil.MustParsedField(t, "email", "string"),
 				},
 				Indexes: []*parser.ParsedIndex{
 					{Fields: []string{"email"}, Type: "btree"},
@@ -854,8 +850,8 @@ func TestValidateEnumDefaultMustMatchDeclaredValues(t *testing.T) {
 				Name:       "Product",
 				FieldOrder: []string{"id", "status"},
 				Fields: map[string]*parser.ParsedField{
-					"id":     mustParsedField(t, "id", "uuid [primary]"),
-					"status": mustParsedField(t, "status", "enum(ProductStatus) [default:DRAFTT]"),
+					"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"status": testutil.MustParsedField(t, "status", "enum(ProductStatus) [default:DRAFTT]"),
 				},
 			},
 		},
@@ -886,8 +882,8 @@ func TestValidateEnumDefaultValidValue(t *testing.T) {
 				Name:       "Product",
 				FieldOrder: []string{"id", "status"},
 				Fields: map[string]*parser.ParsedField{
-					"id":     mustParsedField(t, "id", "uuid [primary]"),
-					"status": mustParsedField(t, "status", "enum(ProductStatus) [default:DRAFT]"),
+					"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"status": testutil.MustParsedField(t, "status", "enum(ProductStatus) [default:DRAFT]"),
 				},
 			},
 		},
@@ -913,8 +909,8 @@ func TestValidateNumericValidationValueNotNumeric(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "age"},
 				Fields: map[string]*parser.ParsedField{
-					"id":  mustParsedField(t, "id", "uuid [primary]"),
-					"age": mustParsedField(t, "age", "int [gte:notanumber]"),
+					"id":  testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"age": testutil.MustParsedField(t, "age", "int [gte:notanumber]"),
 				},
 			},
 		},
@@ -944,8 +940,8 @@ func TestValidateNumericValidationValueValid(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "age"},
 				Fields: map[string]*parser.ParsedField{
-					"id":  mustParsedField(t, "id", "uuid [primary]"),
-					"age": mustParsedField(t, "age", "int [gte:0, lt:150]"),
+					"id":  testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"age": testutil.MustParsedField(t, "age", "int [gte:0, lt:150]"),
 				},
 			},
 		},
@@ -972,7 +968,7 @@ func TestValidateEntityEnumNameCollision(t *testing.T) {
 				Name:       "Status",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 			},
 		},
@@ -1002,9 +998,9 @@ func TestValidatePermissionRolesEmptyAuthRoles(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "email", "password"},
 				Fields: map[string]*parser.ParsedField{
-					"id":       mustParsedField(t, "id", "uuid [primary]"),
-					"email":    mustParsedField(t, "email", "string"),
-					"password": mustParsedField(t, "password", "string"),
+					"id":       testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"email":    testutil.MustParsedField(t, "email", "string"),
+					"password": testutil.MustParsedField(t, "password", "string"),
 				},
 				Permissions: &parser.ParsedPermissions{
 					Read: []string{"Admin"},
@@ -1036,8 +1032,8 @@ func TestValidateContradictoryStringMinMax(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "name"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"name": mustParsedField(t, "name", "string [min:10, max:5]"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"name": testutil.MustParsedField(t, "name", "string [min:10, max:5]"),
 				},
 			},
 		},
@@ -1067,8 +1063,8 @@ func TestValidateValidStringMinMax(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "name"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"name": mustParsedField(t, "name", "string [min:2, max:50]"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"name": testutil.MustParsedField(t, "name", "string [min:2, max:50]"),
 				},
 			},
 		},
@@ -1094,8 +1090,8 @@ func TestValidateContradictoryNumericGteLt(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "age"},
 				Fields: map[string]*parser.ParsedField{
-					"id":  mustParsedField(t, "id", "uuid [primary]"),
-					"age": mustParsedField(t, "age", "int [gte:100, lt:10]"),
+					"id":  testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"age": testutil.MustParsedField(t, "age", "int [gte:100, lt:10]"),
 				},
 			},
 		},
@@ -1125,8 +1121,8 @@ func TestValidateContradictoryNumericGtLte(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "score"},
 				Fields: map[string]*parser.ParsedField{
-					"id":    mustParsedField(t, "id", "uuid [primary]"),
-					"score": mustParsedField(t, "score", "int [gt:50, lte:50]"),
+					"id":    testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"score": testutil.MustParsedField(t, "score", "int [gt:50, lte:50]"),
 				},
 			},
 		},
@@ -1156,8 +1152,8 @@ func TestValidateValidNumericRange(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "age"},
 				Fields: map[string]*parser.ParsedField{
-					"id":  mustParsedField(t, "id", "uuid [primary]"),
-					"age": mustParsedField(t, "age", "int [gte:0, lt:150]"),
+					"id":  testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"age": testutil.MustParsedField(t, "age", "int [gte:0, lt:150]"),
 				},
 			},
 		},
@@ -1184,8 +1180,8 @@ func TestValidateUnusedEnumWarning(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "role"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"role": mustParsedField(t, "role", "enum(Role)"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"role": testutil.MustParsedField(t, "role", "enum(Role)"),
 				},
 			},
 		},
@@ -1217,8 +1213,8 @@ func TestValidateUsedEnumNoWarning(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "role"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"role": mustParsedField(t, "role", "enum(Role)"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"role": testutil.MustParsedField(t, "role", "enum(Role)"),
 				},
 			},
 		},
@@ -1247,14 +1243,14 @@ func TestValidateOnDeleteValueInvalid(t *testing.T) {
 				Name:       "Order",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 			},
 			"User": {
 				Name:       "User",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 			},
 		},
@@ -1280,8 +1276,8 @@ func TestValidateSeedValueTypeMismatch(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "age"},
 				Fields: map[string]*parser.ParsedField{
-					"id":  mustParsedField(t, "id", "uuid [primary]"),
-					"age": mustParsedField(t, "age", "int"),
+					"id":  testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"age": testutil.MustParsedField(t, "age", "int"),
 				},
 				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "age": true},
@@ -1314,8 +1310,8 @@ func TestValidateSeedBooleanTypeMismatch(t *testing.T) {
 				Name:       "Config",
 				FieldOrder: []string{"id", "enabled"},
 				Fields: map[string]*parser.ParsedField{
-					"id":      mustParsedField(t, "id", "uuid [primary]"),
-					"enabled": mustParsedField(t, "enabled", "boolean"),
+					"id":      testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"enabled": testutil.MustParsedField(t, "enabled", "boolean"),
 				},
 				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "enabled": "notabool"},
@@ -1348,15 +1344,15 @@ func TestValidateOnDeleteOnManyToManyWarning(t *testing.T) {
 				Name:       "Product",
 				FieldOrder: []string{"id", "tags"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"tags": mustParsedField(t, "tags", "relation(Tag) [many]"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"tags": testutil.MustParsedField(t, "tags", "relation(Tag) [many]"),
 				},
 			},
 			"Tag": {
 				Name:       "Tag",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 			},
 		},
@@ -1386,15 +1382,15 @@ func TestValidateOnDeleteOnManyToManyNoWarningWithoutOnDelete(t *testing.T) {
 				Name:       "Product",
 				FieldOrder: []string{"id", "tags"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"tags": mustParsedField(t, "tags", "relation(Tag) [many]"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"tags": testutil.MustParsedField(t, "tags", "relation(Tag) [many]"),
 				},
 			},
 			"Tag": {
 				Name:       "Tag",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 			},
 		},
@@ -1420,16 +1416,16 @@ func TestValidateReconciledOneToManyWarning(t *testing.T) {
 				Name:       "Article",
 				FieldOrder: []string{"id", "tags"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"tags": mustParsedField(t, "tags", "relation(Tag) [many]"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"tags": testutil.MustParsedField(t, "tags", "relation(Tag) [many]"),
 				},
 			},
 			"Tag": {
 				Name:       "Tag",
 				FieldOrder: []string{"id", "article"},
 				Fields: map[string]*parser.ParsedField{
-					"id":      mustParsedField(t, "id", "uuid [primary]"),
-					"article": mustParsedField(t, "article", "relation(Article)"),
+					"id":      testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"article": testutil.MustParsedField(t, "article", "relation(Article)"),
 				},
 			},
 		},
@@ -1461,16 +1457,16 @@ func TestValidateReconciledWarningKeepsFKName(t *testing.T) {
 				Name:       "Article",
 				FieldOrder: []string{"id", "tags"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"tags": mustParsedField(t, "tags", "relation(Tag) [many]"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"tags": testutil.MustParsedField(t, "tags", "relation(Tag) [many]"),
 				},
 			},
 			"Tag": {
 				Name:       "Tag",
 				FieldOrder: []string{"id", "articleId"},
 				Fields: map[string]*parser.ParsedField{
-					"id":        mustParsedField(t, "id", "uuid [primary]"),
-					"articleId": mustParsedField(t, "articleId", "relation(Article)"),
+					"id":        testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"articleId": testutil.MustParsedField(t, "articleId", "relation(Article)"),
 				},
 			},
 		},
@@ -1526,15 +1522,15 @@ func TestValidateGenuineManyToManyHasNoReconciliationWarning(t *testing.T) {
 				Name:       "Product",
 				FieldOrder: []string{"id", "tags"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"tags": mustParsedField(t, "tags", "relation(Tag) [many]"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"tags": testutil.MustParsedField(t, "tags", "relation(Tag) [many]"),
 				},
 			},
 			"Tag": {
 				Name:       "Tag",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 			},
 		},
@@ -1558,8 +1554,8 @@ func TestValidateSeedUniqueConstraintViolation(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "email"},
 				Fields: map[string]*parser.ParsedField{
-					"id":    mustParsedField(t, "id", "uuid [primary]"),
-					"email": mustParsedField(t, "email", "string [unique]"),
+					"id":    testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"email": testutil.MustParsedField(t, "email", "string [unique]"),
 				},
 				Seed: []map[string]any{
 					{"id": "11111111-1111-1111-1111-111111111111", "email": "a@test.com"},
@@ -1593,8 +1589,8 @@ func TestValidateSeedUniqueConstraintPass(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "email"},
 				Fields: map[string]*parser.ParsedField{
-					"id":    mustParsedField(t, "id", "uuid [primary]"),
-					"email": mustParsedField(t, "email", "string [unique]"),
+					"id":    testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"email": testutil.MustParsedField(t, "email", "string [unique]"),
 				},
 				Seed: []map[string]any{
 					{"id": "11111111-1111-1111-1111-111111111111", "email": "a@test.com"},
@@ -1624,7 +1620,7 @@ func TestValidateSeedInvalidUUID(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 				Seed: []map[string]any{
 					{"id": "not-a-uuid"},
@@ -1657,7 +1653,7 @@ func TestValidateSeedValidUUID(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000"},
@@ -1686,8 +1682,8 @@ func TestValidateSeedInvalidDatetime(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "createdAt"},
 				Fields: map[string]*parser.ParsedField{
-					"id":        mustParsedField(t, "id", "uuid [primary]"),
-					"createdAt": mustParsedField(t, "createdAt", "datetime"),
+					"id":        testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"createdAt": testutil.MustParsedField(t, "createdAt", "datetime"),
 				},
 				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "createdAt": "not-a-date"},
@@ -1720,8 +1716,8 @@ func TestValidateSeedValidDatetime(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "createdAt"},
 				Fields: map[string]*parser.ParsedField{
-					"id":        mustParsedField(t, "id", "uuid [primary]"),
-					"createdAt": mustParsedField(t, "createdAt", "datetime"),
+					"id":        testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"createdAt": testutil.MustParsedField(t, "createdAt", "datetime"),
 				},
 				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "createdAt": "2024-01-15T10:30:00Z"},
@@ -1750,8 +1746,8 @@ func TestValidateSeedInvalidJSON(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "metadata"},
 				Fields: map[string]*parser.ParsedField{
-					"id":       mustParsedField(t, "id", "uuid [primary]"),
-					"metadata": mustParsedField(t, "metadata", "json"),
+					"id":       testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"metadata": testutil.MustParsedField(t, "metadata", "json"),
 				},
 				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "metadata": "{invalid json}"},
@@ -1784,8 +1780,8 @@ func TestValidateSeedValidJSON(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "metadata"},
 				Fields: map[string]*parser.ParsedField{
-					"id":       mustParsedField(t, "id", "uuid [primary]"),
-					"metadata": mustParsedField(t, "metadata", "json"),
+					"id":       testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"metadata": testutil.MustParsedField(t, "metadata", "json"),
 				},
 				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "metadata": `{"key":"value"}`},
@@ -1814,7 +1810,7 @@ func TestValidatePermissionRoleIdentifierInvalid(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 				Permissions: &parser.ParsedPermissions{
 					Read: []string{"valid-role", "123invalid"},
@@ -1846,7 +1842,7 @@ func TestValidatePermissionRoleSpecialTokensAllowed(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 				Permissions: &parser.ParsedPermissions{
 					Read:   []string{"*", "@Owner"},
@@ -1875,8 +1871,8 @@ func TestValidateSeedDateTypeMismatch(t *testing.T) {
 				Name:       "Event",
 				FieldOrder: []string{"id", "started_on"},
 				Fields: map[string]*parser.ParsedField{
-					"id":         mustParsedField(t, "id", "uuid [primary]"),
-					"started_on": mustParsedField(t, "started_on", "date"),
+					"id":         testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"started_on": testutil.MustParsedField(t, "started_on", "date"),
 				},
 				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "started_on": "not-a-date"},
@@ -1909,8 +1905,8 @@ func TestValidateSeedDateValid(t *testing.T) {
 				Name:       "Event",
 				FieldOrder: []string{"id", "started_on"},
 				Fields: map[string]*parser.ParsedField{
-					"id":         mustParsedField(t, "id", "uuid [primary]"),
-					"started_on": mustParsedField(t, "started_on", "date"),
+					"id":         testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"started_on": testutil.MustParsedField(t, "started_on", "date"),
 				},
 				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "started_on": "2024-05-01"},
@@ -1942,8 +1938,8 @@ func TestValidateSeedEnumInvalidValue(t *testing.T) {
 				Name:       "Product",
 				FieldOrder: []string{"id", "status"},
 				Fields: map[string]*parser.ParsedField{
-					"id":     mustParsedField(t, "id", "uuid [primary]"),
-					"status": mustParsedField(t, "status", "enum(Status)"),
+					"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"status": testutil.MustParsedField(t, "status", "enum(Status)"),
 				},
 				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "status": "BOGUS"},
@@ -1979,8 +1975,8 @@ func TestValidateSeedEnumValidValue(t *testing.T) {
 				Name:       "Product",
 				FieldOrder: []string{"id", "status"},
 				Fields: map[string]*parser.ParsedField{
-					"id":     mustParsedField(t, "id", "uuid [primary]"),
-					"status": mustParsedField(t, "status", "enum(Status)"),
+					"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"status": testutil.MustParsedField(t, "status", "enum(Status)"),
 				},
 				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "status": "ACTIVE"},
@@ -2009,8 +2005,8 @@ func TestValidateSeedArrayInvalidValue(t *testing.T) {
 				Name:       "Item",
 				FieldOrder: []string{"id", "tags"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"tags": mustParsedField(t, "tags", "array(string)"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"tags": testutil.MustParsedField(t, "tags", "array(string)"),
 				},
 				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "tags": "not-json"},
@@ -2043,8 +2039,8 @@ func TestValidateSeedArrayValidValue(t *testing.T) {
 				Name:       "Item",
 				FieldOrder: []string{"id", "tags"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"tags": mustParsedField(t, "tags", "array(string)"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"tags": testutil.MustParsedField(t, "tags", "array(string)"),
 				},
 				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "tags": []any{"a", "b"}},
@@ -2073,8 +2069,8 @@ func TestValidateStringMinMaxNonNumeric(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "name"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"name": mustParsedField(t, "name", "string [max:abc]"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"name": testutil.MustParsedField(t, "name", "string [max:abc]"),
 				},
 			},
 		},
@@ -2103,16 +2099,16 @@ func TestValidateCircularRelationWarning(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "team"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"team": mustParsedField(t, "team", "relation(Team)"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"team": testutil.MustParsedField(t, "team", "relation(Team)"),
 				},
 			},
 			"Team": {
 				Name:       "Team",
 				FieldOrder: []string{"id", "lead"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"lead": mustParsedField(t, "lead", "relation(User)"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"lead": testutil.MustParsedField(t, "lead", "relation(User)"),
 				},
 			},
 		},
@@ -2142,15 +2138,15 @@ func TestValidateNoCircularRelationWarningForAcyclic(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "team"},
 				Fields: map[string]*parser.ParsedField{
-					"id":   mustParsedField(t, "id", "uuid [primary]"),
-					"team": mustParsedField(t, "team", "relation(Team)"),
+					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"team": testutil.MustParsedField(t, "team", "relation(Team)"),
 				},
 			},
 			"Team": {
 				Name:       "Team",
 				FieldOrder: []string{"id"},
 				Fields: map[string]*parser.ParsedField{
-					"id": mustParsedField(t, "id", "uuid [primary]"),
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 				},
 			},
 		},
@@ -2176,8 +2172,8 @@ func TestValidateNoCircularRelationWarningForSelfReference(t *testing.T) {
 				Name:       "Category",
 				FieldOrder: []string{"id", "parentId"},
 				Fields: map[string]*parser.ParsedField{
-					"id":       mustParsedField(t, "id", "uuid [primary]"),
-					"parentId": mustParsedField(t, "parentId", "relation(Category) [optional]"),
+					"id":       testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"parentId": testutil.MustParsedField(t, "parentId", "relation(Category) [optional]"),
 				},
 			},
 		},
@@ -2202,16 +2198,16 @@ func TestValidateNoCircularRelationWarningForManyToMany(t *testing.T) {
 				Name:       "Order",
 				FieldOrder: []string{"id", "items"},
 				Fields: map[string]*parser.ParsedField{
-					"id":    mustParsedField(t, "id", "uuid [primary]"),
-					"items": mustParsedField(t, "items", "relation(OrderItem) [many]"),
+					"id":    testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"items": testutil.MustParsedField(t, "items", "relation(OrderItem) [many]"),
 				},
 			},
 			"OrderItem": {
 				Name:       "OrderItem",
 				FieldOrder: []string{"id", "orderId"},
 				Fields: map[string]*parser.ParsedField{
-					"id":      mustParsedField(t, "id", "uuid [primary]"),
-					"orderId": mustParsedField(t, "orderId", "relation(Order)"),
+					"id":      testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"orderId": testutil.MustParsedField(t, "orderId", "relation(Order)"),
 				},
 			},
 		},
@@ -2237,8 +2233,8 @@ func TestValidateDefaultDateInvalid(t *testing.T) {
 				Name:       "Event",
 				FieldOrder: []string{"id", "started_on"},
 				Fields: map[string]*parser.ParsedField{
-					"id":         mustParsedField(t, "id", "uuid [primary]"),
-					"started_on": mustParsedField(t, "started_on", "date [default:not-a-date]"),
+					"id":         testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"started_on": testutil.MustParsedField(t, "started_on", "date [default:not-a-date]"),
 				},
 			},
 		},
@@ -2267,8 +2263,8 @@ func TestValidateDefaultUuidInvalid(t *testing.T) {
 				Name:       "Doc",
 				FieldOrder: []string{"id", "external_id"},
 				Fields: map[string]*parser.ParsedField{
-					"id":          mustParsedField(t, "id", "uuid [primary]"),
-					"external_id": mustParsedField(t, "external_id", "uuid [default:not-a-uuid]"),
+					"id":          testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"external_id": testutil.MustParsedField(t, "external_id", "uuid [default:not-a-uuid]"),
 				},
 			},
 		},
@@ -2301,8 +2297,8 @@ func TestValidateColumnSelfCollisionGuard(t *testing.T) {
 				Name:       "User",
 				FieldOrder: []string{"id", "isSystemTag", "isSystemTag"}, // duplicate entry
 				Fields: map[string]*parser.ParsedField{
-					"id":          mustParsedField(t, "id", "uuid [primary]"),
-					"isSystemTag": mustParsedField(t, "isSystemTag", "boolean [default:false]"),
+					"id":          testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"isSystemTag": testutil.MustParsedField(t, "isSystemTag", "boolean [default:false]"),
 				},
 			},
 		},
@@ -2337,14 +2333,14 @@ func TestValidateRejectsRelationPrimaryKey(t *testing.T) {
 						Name:       "Child",
 						FieldOrder: []string{"id"},
 						Fields: map[string]*parser.ParsedField{
-							"id": mustParsedField(t, "id", tt.pkDef),
+							"id": testutil.MustParsedField(t, "id", tt.pkDef),
 						},
 					},
 					"Parent": {
 						Name:       "Parent",
 						FieldOrder: []string{"id"},
 						Fields: map[string]*parser.ParsedField{
-							"id": mustParsedField(t, "id", "uuid [primary]"),
+							"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
 						},
 					},
 				},
@@ -2388,8 +2384,8 @@ func TestValidateRejectsNonPositiveStringBounds(t *testing.T) {
 						Name:       "Doc",
 						FieldOrder: []string{"id", "name"},
 						Fields: map[string]*parser.ParsedField{
-							"id":   mustParsedField(t, "id", "uuid [primary]"),
-							"name": mustParsedField(t, "name", tt.def),
+							"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
+							"name": testutil.MustParsedField(t, "name", tt.def),
 						},
 					},
 				},
@@ -2431,8 +2427,8 @@ func TestValidateRejectsEnumWireValueCollision(t *testing.T) {
 						Name:       "Doc",
 						FieldOrder: []string{"id", "status"},
 						Fields: map[string]*parser.ParsedField{
-							"id":     mustParsedField(t, "id", "uuid [primary]"),
-							"status": mustParsedField(t, "status", "enum(Status)"),
+							"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
+							"status": testutil.MustParsedField(t, "status", "enum(Status)"),
 						},
 					},
 				},
@@ -2477,10 +2473,10 @@ func TestValidateRejectsUnparseableNumericSeed(t *testing.T) {
 						Name:       "Doc",
 						FieldOrder: []string{"id", "count", "big", "price"},
 						Fields: map[string]*parser.ParsedField{
-							"id":    mustParsedField(t, "id", "uuid [primary]"),
-							"count": mustParsedField(t, "count", "int"),
-							"big":   mustParsedField(t, "big", "bigint"),
-							"price": mustParsedField(t, "price", "decimal"),
+							"id":    testutil.MustParsedField(t, "id", "uuid [primary]"),
+							"count": testutil.MustParsedField(t, "count", "int"),
+							"big":   testutil.MustParsedField(t, "big", "bigint"),
+							"price": testutil.MustParsedField(t, "price", "decimal"),
 						},
 						Seed: []map[string]any{{"id": "550e8400-e29b-41d4-a716-446655440000", tt.field: tt.value}},
 					},
@@ -2512,8 +2508,8 @@ func TestValidateSortsErrorsByMessageTiebreaker(t *testing.T) {
 				Name:       "Doc",
 				FieldOrder: []string{"id", "status"},
 				Fields: map[string]*parser.ParsedField{
-					"id":     mustParsedField(t, "id", "uuid [primary]"),
-					"status": mustParsedField(t, "status", "enum(Status)"),
+					"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"status": testutil.MustParsedField(t, "status", "enum(Status)"),
 				},
 			},
 		},

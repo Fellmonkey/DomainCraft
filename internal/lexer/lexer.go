@@ -103,12 +103,11 @@ func (l *Lexer) parseType(typeStr string, fd *FieldDefinition) error {
 		return nil
 	}
 
-	// Check for array(Type)
-	if strings.HasPrefix(typeStr, "array(") {
+	// Check for array(Type). The prefix/suffix handling lives in specmeta so
+	// every consumer extracts the element type the same way.
+	if specmeta.IsArrayType(typeStr) {
 		fd.Type = "array"
-		innerType := strings.TrimPrefix(typeStr, "array(")
-		innerType = strings.TrimSuffix(innerType, ")")
-		fd.TargetType = strings.TrimSpace(innerType)
+		fd.TargetType = strings.TrimSpace(specmeta.ParseArrayInner(typeStr))
 		if fd.TargetType == "" {
 			return fmt.Errorf("array type requires an element type")
 		}
@@ -129,7 +128,7 @@ func (l *Lexer) parseType(typeStr string, fd *FieldDefinition) error {
 
 	// Built-in types
 	if !specmeta.IsFieldType(typeStr) {
-		return fmt.Errorf("unknown type %q; valid types: string, int, uuid, relation, array, enum, json, text", typeStr)
+		return fmt.Errorf("unknown type %q; valid types: %s", typeStr, strings.Join(specmeta.FieldTypes, ", "))
 	}
 
 	fd.Type = typeStr
@@ -168,7 +167,7 @@ func (l *Lexer) parseModifiers(modStr string, fd *FieldDefinition) error {
 				}
 			case "on_delete":
 				if !specmeta.IsOnDeleteValue(value) {
-					return fmt.Errorf("unknown on_delete value: %s. valid: cascade, set_null, restrict, no_action", value)
+					return fmt.Errorf("unknown on_delete value: %s. valid: %s", value, strings.Join(specmeta.OnDeleteValues, ", "))
 				}
 				fd.OnDelete = value
 			case "old_name":
@@ -295,30 +294,11 @@ func (fd *FieldDefinition) Validate() error {
 	}
 
 	// old_name must be a valid identifier (like the field name itself).
-	if fd.OldName != "" && !isValidIdentifier(fd.OldName) {
+	if fd.OldName != "" && !specmeta.IsValidIdentifier(fd.OldName) {
 		return fmt.Errorf("old_name %q is not a valid field name", fd.OldName)
 	}
 
 	return nil
-}
-
-// isValidIdentifier reports whether s is a valid domain.yaml field name.
-func isValidIdentifier(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i, r := range s {
-		if i == 0 {
-			if r != '_' && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') {
-				return false
-			}
-			continue
-		}
-		if r != '_' && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
-			return false
-		}
-	}
-	return true
 }
 
 // ParseFieldString is a convenience function for parsing a field string

@@ -17,6 +17,7 @@ import (
 	"unicode"
 
 	"github.com/DomainCraft/DomainCraft/internal/fsutil"
+	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 	"github.com/DomainCraft/DomainCraft/pkg/textutil"
 )
 
@@ -119,7 +120,7 @@ func tokenOK(rs []rune, idx, length int) bool {
 }
 
 func isIdentRune(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+	return specmeta.IsIdentifierRune(r)
 }
 
 // entityCasings builds the casing-variant table for an entity rename.

@@ -62,8 +62,6 @@ func New(schema *parser.ParsedSchema) *Validator {
 	return &Validator{schema: schema}
 }
 
-var validIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
 // boolValues are valid boolean default values.
 var boolValues = map[string]bool{"true": true, "false": true}
 
@@ -372,7 +370,7 @@ func (v *Validator) validateAuth() []ValidationError {
 
 	// Roles must be valid identifiers
 	for _, role := range auth.Roles {
-		if !validIdentifier.MatchString(role) {
+		if !specmeta.IsValidIdentifier(role) {
 			errs = append(errs, invalidf("<schema>", "",
 				"auth.roles: %q is not a valid identifier", role))
 		}
@@ -446,7 +444,7 @@ func (v *Validator) singleFKBack(target *parser.ParsedEntity, sourceName string)
 func (v *Validator) validateEnums() []ValidationError {
 	var errs []ValidationError
 	for name, values := range v.schema.Enums {
-		if !validIdentifier.MatchString(name) {
+		if !specmeta.IsValidIdentifier(name) {
 			errs = append(errs, invalid("<enum>", name,
 				"enum name is not a valid identifier"))
 		}
@@ -510,7 +508,7 @@ func (v *Validator) validateEntity(entityName string, entity *parser.ParsedEntit
 	var errs []ValidationError
 
 	// Entity name must be a valid identifier.
-	if !validIdentifier.MatchString(entityName) {
+	if !specmeta.IsValidIdentifier(entityName) {
 		errs = append(errs, invalid(entityName, "",
 			"entity name is not a valid identifier"))
 	}
@@ -651,7 +649,7 @@ func (v *Validator) validateField(entityName string, fieldName string, field *pa
 	var errs []ValidationError
 
 	// Field name must be a valid identifier.
-	if !validIdentifier.MatchString(fieldName) {
+	if !specmeta.IsValidIdentifier(fieldName) {
 		errs = append(errs, invalid(entityName, fieldName,
 			"field name is not a valid identifier"))
 	}
@@ -972,7 +970,7 @@ func (v *Validator) validatePermissions(entityName string, perms *parser.ParsedP
 			if specmeta.IsReservedPermissionToken(role) {
 				continue
 			}
-			if !validIdentifier.MatchString(role) {
+			if !specmeta.IsValidIdentifier(role) {
 				errs = append(errs, warnf(entityName, "",
 					"permission '%s' role %q is not a valid identifier", operation, role))
 			}
@@ -1039,8 +1037,8 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 	var errs []ValidationError
 	ftype := strings.ToLower(field.Type)
 
-	switch ftype {
-	case "string", "text":
+	switch {
+	case specmeta.IsStringType(ftype):
 		// String-like fields accept strings or JSON string values; numbers/bools are
 		// accepted too (YAML coercion) but must not be a map/slice.
 		if _, isMap := seedValue.(map[string]any); isMap {
@@ -1050,7 +1048,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 			errs = append(errs, invalidf(entityName, fieldName,
 				"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
 		}
-	case "int", "bigint":
+	case specmeta.IsIntegralType(ftype):
 		switch n := seedValue.(type) {
 		case int, int32, int64, float32, float64:
 			// numeric OK
@@ -1064,7 +1062,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 			errs = append(errs, invalidf(entityName, fieldName,
 				"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
 		}
-	case "float", "decimal":
+	case specmeta.IsFloatType(ftype):
 		switch n := seedValue.(type) {
 		case int, int32, int64, float32, float64:
 			// numeric OK
@@ -1077,7 +1075,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 			errs = append(errs, invalidf(entityName, fieldName,
 				"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
 		}
-	case "boolean":
+	case ftype == "boolean":
 		switch v := seedValue.(type) {
 		case bool:
 			// OK
@@ -1091,7 +1089,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 			errs = append(errs, invalidf(entityName, fieldName,
 				"seed entry %d: value %v is not compatible with boolean type", entryIdx, seedValue))
 		}
-	case "date":
+	case ftype == "date":
 		s, ok := seedValue.(string)
 		if !ok {
 			errs = append(errs, invalidf(entityName, fieldName,
@@ -1100,7 +1098,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 			errs = append(errs, invalidf(entityName, fieldName,
 				"seed entry %d: value %q is not a valid date (expected YYYY-MM-DD)", entryIdx, s))
 		}
-	case "uuid":
+	case ftype == "uuid":
 		s, ok := seedValue.(string)
 		if !ok {
 			errs = append(errs, invalidf(entityName, fieldName,
@@ -1109,7 +1107,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 			errs = append(errs, invalidf(entityName, fieldName,
 				"seed entry %d: value %q is not a valid UUID (expected xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)", entryIdx, s))
 		}
-	case "datetime":
+	case ftype == "datetime":
 		s, ok := seedValue.(string)
 		if !ok {
 			errs = append(errs, invalidf(entityName, fieldName,
@@ -1119,7 +1117,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 				"seed entry %d: value %q is not a valid datetime (expected ISO 8601 format, e.g. 2024-01-15T10:30:00Z)", entryIdx,
 				s))
 		}
-	case "json", "jsonb":
+	case ftype == "json" || ftype == "jsonb":
 		// JSON values can be any valid JSON — accept any type.
 		// String values are validated as parseable JSON.
 		if s, ok := seedValue.(string); ok {
@@ -1128,7 +1126,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 					"seed entry %d: value %q is not valid JSON", entryIdx, s))
 			}
 		}
-	case "enum":
+	case ftype == "enum":
 		// The value must be one of the declared enum values.
 		sv, ok := seedValue.(string)
 		if !ok {
@@ -1144,7 +1142,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 					strings.Join(values, ", ")))
 			}
 		}
-	case "array":
+	case ftype == "array":
 		// Accept a YAML list. String values are accepted as JSON arrays.
 		switch v := seedValue.(type) {
 		case []any:
@@ -1160,7 +1158,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 			errs = append(errs, invalidf(entityName, fieldName,
 				"seed entry %d: value %v is not compatible with array type (expected a list)", entryIdx, seedValue))
 		}
-	case "relation":
+	case ftype == "relation":
 		// FK values reference the target entity's PK. Accept scalar values
 		// (string/number/bool matching the target PK type); more precise
 		// cross-entity type checking is left to the seed FK dependency check.

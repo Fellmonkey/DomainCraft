@@ -32,19 +32,13 @@ func (f Field) IsUUID() bool { return f.DatabaseType == "uuid" }
 func (f Field) IsUuid() bool { return f.IsUUID() }
 
 // IsText reports whether the field holds a string/text value.
-func (f Field) IsText() bool {
-	return f.DatabaseType == "string" || f.DatabaseType == "text"
-}
+func (f Field) IsText() bool { return specmeta.IsStringType(f.DatabaseType) }
 
 // IsInteger reports whether the field holds an integral number (int or bigint).
-func (f Field) IsInteger() bool {
-	return f.DatabaseType == "int" || f.DatabaseType == "bigint"
-}
+func (f Field) IsInteger() bool { return specmeta.IsIntegralType(f.DatabaseType) }
 
 // IsFloat reports whether the field holds a floating-point number (float or decimal).
-func (f Field) IsFloat() bool {
-	return f.DatabaseType == "float" || f.DatabaseType == "decimal"
-}
+func (f Field) IsFloat() bool { return specmeta.IsFloatType(f.DatabaseType) }
 
 // IsNumeric reports whether the field holds any numeric type.
 func (f Field) IsNumeric() bool { return specmeta.IsNumeric(f.DatabaseType) }

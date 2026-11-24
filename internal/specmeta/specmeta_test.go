@@ -484,3 +484,137 @@ func TestBuildEntityFieldsEmptyOrder(t *testing.T) {
 		t.Errorf("BuildEntityFields(nil) returned %d entries, want 0", len(result))
 	}
 }
+
+func TestNumericFieldTypesDerivedFromGroups(t *testing.T) {
+	t.Parallel()
+	want := []string{"int", "bigint", "float", "decimal"}
+	if len(NumericFieldTypes) != len(want) {
+		t.Fatalf("NumericFieldTypes = %v, want %v", NumericFieldTypes, want)
+	}
+	for i := range want {
+		if NumericFieldTypes[i] != want[i] {
+			t.Errorf("NumericFieldTypes[%d] = %q, want %q", i, NumericFieldTypes[i], want[i])
+		}
+	}
+}
+
+func TestEffectiveContractVersion(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		declared int
+		want     int
+	}{
+		{name: "absent declaration defaults to shared constant", declared: 0, want: ContractVersion},
+		{name: "negative declaration defaults to shared constant", declared: -1, want: ContractVersion},
+		{name: "explicit version is preserved", declared: 1, want: 1},
+		{name: "newer version is preserved for the caller to reject", declared: 2, want: 2},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := EffectiveContractVersion(c.declared); got != c.want {
+				t.Errorf("EffectiveContractVersion(%d) = %d, want %d", c.declared, got, c.want)
+			}
+		})
+	}
+}
+
+func TestIsIntegralType(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{name: "int", in: "int", want: true},
+		{name: "bigint", in: "bigint", want: true},
+		{name: "float is not integral", in: "float"},
+		{name: "decimal is not integral", in: "decimal"},
+		{name: "enum is not integral", in: "Status"},
+		{name: "empty", in: ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsIntegralType(c.in); got != c.want {
+				t.Errorf("IsIntegralType(%q) = %v, want %v", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestIsFloatType(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{name: "float", in: "float", want: true},
+		{name: "decimal", in: "decimal", want: true},
+		{name: "int is not float", in: "int"},
+		{name: "bigint is not float", in: "bigint"},
+		{name: "enum is not float", in: "Status"},
+		{name: "empty", in: ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsFloatType(c.in); got != c.want {
+				t.Errorf("IsFloatType(%q) = %v, want %v", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestIsValidIdentifier(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{name: "single letter", in: "A", want: true},
+		{name: "underscore", in: "_", want: true},
+		{name: "mixed case with digits", in: "Order_2Item", want: true},
+		{name: "leading digit rejected", in: "2Item"},
+		{name: "hyphen rejected", in: "order-item"},
+		{name: "space rejected", in: "order item"},
+		{name: "non-ASCII rejected", in: "продукт"},
+		{name: "empty rejected", in: ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsValidIdentifier(c.in); got != c.want {
+				t.Errorf("IsValidIdentifier(%q) = %v, want %v", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestIsIdentifierRune(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   rune
+		want bool
+	}{
+		{name: "ascii letter", in: 'a', want: true},
+		{name: "ascii digit", in: '7', want: true},
+		{name: "underscore", in: '_', want: true},
+		{name: "unicode letter", in: 'é', want: true},
+		{name: "unicode digit", in: '७', want: true},
+		{name: "dash", in: '-', want: false},
+		{name: "space", in: ' ', want: false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsIdentifierRune(c.in); got != c.want {
+				t.Errorf("IsIdentifierRune(%q) = %v, want %v", c.in, got, c.want)
+			}
+		})
+	}
+}
