@@ -11,9 +11,9 @@ import (
 	"github.com/DomainCraft/DomainCraft/internal/appdir"
 )
 
-// BridgeCacheDir returns ~/.domaincraft/bridges/.
+// CacheDir returns ~/.domaincraft/bridges/.
 // Falls back to .domaincraft/bridges in the current directory if the home directory is unavailable.
-func BridgeCacheDir() string {
+func CacheDir() string {
 	dir, err := appdir.UnionDir("bridges")
 	if err != nil {
 		return filepath.Join(".domaincraft", "bridges")
@@ -23,7 +23,7 @@ func BridgeCacheDir() string {
 
 // CachePath returns the local cache directory for a bridge entry.
 func CachePath(entry RegistryEntry) string {
-	return filepath.Join(BridgeCacheDir(), entry.ID)
+	return filepath.Join(CacheDir(), entry.ID)
 }
 
 // validateCacheID rejects bridge IDs that could resolve outside the cache

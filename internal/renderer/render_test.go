@@ -42,9 +42,9 @@ templates:
 		t.Fatalf("New() error = %v", err)
 	}
 
-	project := &ir.IRProject{
+	project := &ir.Project{
 		Name:     "TestProject",
-		Entities: []ir.IREntity{{Name: "User", NamePlural: "Users"}},
+		Entities: []ir.Entity{{Name: "User", NamePlural: "Users"}},
 	}
 	written, _, err := r.Render(project, filepath.Join(tmpDir, "out"))
 	if err != nil {
@@ -106,7 +106,7 @@ templates:
 		t.Fatalf("AttachBases() error = %v", err)
 	}
 
-	project := &ir.IRProject{Name: "TestProject"}
+	project := &ir.Project{Name: "TestProject"}
 	written, _, err := r.Render(project, filepath.Join(tmpDir, "out"))
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
@@ -199,9 +199,9 @@ templates:
 		t.Fatalf("New() error = %v", err)
 	}
 
-	project := &ir.IRProject{
+	project := &ir.Project{
 		Name:     "TestProject",
-		Entities: []ir.IREntity{{Name: "User", NamePlural: "Users"}},
+		Entities: []ir.Entity{{Name: "User", NamePlural: "Users"}},
 	}
 	outDir := filepath.Join(tmpDir, "out")
 
@@ -259,7 +259,7 @@ func TestRenderContext_HasFeature(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := RenderContext{
-				Entity: &ir.IREntity{Features: tt.features},
+				Entity: &ir.Entity{Features: tt.features},
 			}
 			if tt.name == "nil entity" {
 				ctx.Entity = nil
@@ -274,7 +274,7 @@ func TestRenderContext_HasFeature(t *testing.T) {
 func TestRenderContext_HasAudit(t *testing.T) {
 	t.Parallel()
 	ctx := RenderContext{
-		Entity: &ir.IREntity{Features: map[string]bool{"audit": true}},
+		Entity: &ir.Entity{Features: map[string]bool{"audit": true}},
 	}
 	if !ctx.HasAudit() {
 		t.Error("HasAudit() = false, want true")
@@ -289,7 +289,7 @@ func TestRenderContext_HasAudit(t *testing.T) {
 func TestRenderContext_HasSoftDelete(t *testing.T) {
 	t.Parallel()
 	ctx := RenderContext{
-		Entity: &ir.IREntity{Features: map[string]bool{"soft_delete": true}},
+		Entity: &ir.Entity{Features: map[string]bool{"soft_delete": true}},
 	}
 	if !ctx.HasSoftDelete() {
 		t.Error("HasSoftDelete() = false, want true")
@@ -299,7 +299,7 @@ func TestRenderContext_HasSoftDelete(t *testing.T) {
 func TestRenderContext_HasOptimisticLock(t *testing.T) {
 	t.Parallel()
 	ctx := RenderContext{
-		Entity: &ir.IREntity{Features: map[string]bool{"optimistic_lock": true}},
+		Entity: &ir.Entity{Features: map[string]bool{"optimistic_lock": true}},
 	}
 	if !ctx.HasOptimisticLock() {
 		t.Error("HasOptimisticLock() = false, want true")
@@ -309,7 +309,7 @@ func TestRenderContext_HasOptimisticLock(t *testing.T) {
 func TestRenderContext_HasAuditLog(t *testing.T) {
 	t.Parallel()
 	ctx := RenderContext{
-		Entity: &ir.IREntity{Features: map[string]bool{"audit_log": true}},
+		Entity: &ir.Entity{Features: map[string]bool{"audit_log": true}},
 	}
 	if !ctx.HasAuditLog() {
 		t.Error("HasAuditLog() = false, want true")
@@ -323,9 +323,9 @@ func TestRenderContext_Permissions(t *testing.T) {
 		t.Error("Permissions() should return nil for nil entity")
 	}
 
-	perms := &ir.IRPermissions{Read: []string{"Admin"}}
+	perms := &ir.Permissions{Read: []string{"Admin"}}
 	ctx2 := RenderContext{
-		Entity: &ir.IREntity{Permissions: perms},
+		Entity: &ir.Entity{Permissions: perms},
 	}
 	if ctx2.Permissions() != perms {
 		t.Error("Permissions() should return entity permissions")
@@ -340,8 +340,8 @@ func TestRenderContext_PrimaryKey(t *testing.T) {
 	}
 
 	ctx2 := RenderContext{
-		Entity: &ir.IREntity{
-			Fields: []ir.IRField{
+		Entity: &ir.Entity{
+			Fields: []ir.Field{
 				{Name: "id", IsPrimary: true},
 				{Name: "name"},
 			},
@@ -388,7 +388,7 @@ templates:
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	written, _, err := r.Render(&ir.IRProject{Name: "P"}, filepath.Join(tmp, "out"))
+	written, _, err := r.Render(&ir.Project{Name: "P"}, filepath.Join(tmp, "out"))
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
 	}
@@ -432,7 +432,7 @@ templates:
 		return r
 	}
 
-	project := &ir.IRProject{Name: "P"}
+	project := &ir.Project{Name: "P"}
 
 	// No migration plan set -> hasMigration is false, no file written.
 	r := newRenderer(t, "hasMigration")
@@ -484,7 +484,7 @@ templates:
 		return r
 	}
 
-	project := &ir.IRProject{Name: "P", Entities: []ir.IREntity{{Name: "Order", NamePlural: "Orders"}}}
+	project := &ir.Project{Name: "P", Entities: []ir.Entity{{Name: "Order", NamePlural: "Orders"}}}
 
 	// No mock data -> hasMockData is false.
 	r := newRenderer(t)
@@ -536,7 +536,7 @@ templates:
 		return r
 	}
 
-	project := &ir.IRProject{Name: "P", Entities: []ir.IREntity{{Name: "Order", NamePlural: "Orders"}}}
+	project := &ir.Project{Name: "P", Entities: []ir.Entity{{Name: "Order", NamePlural: "Orders"}}}
 
 	// No seed -> hasSeed is false.
 	r := newRenderer(t)
@@ -563,21 +563,21 @@ templates:
 func TestRenderContext_SeedAccessor(t *testing.T) {
 	t.Parallel()
 	ctx := RenderContext{
-		Entity:   &ir.IREntity{Name: "Order"},
+		Entity:   &ir.Entity{Name: "Order"},
 		SeedData: &ir.SeedDataset{Entities: []ir.SeedEntity{{Name: "Order", Records: []ir.SeedRecord{{Fields: []ir.SeedValue{{Field: "id", Value: "x"}}}}}}},
 	}
 	got := ctx.Seed()
 	if len(got) != 1 || len(got[0].Fields) != 1 || got[0].Fields[0].Value != "x" {
 		t.Errorf("Seed() = %+v, want one normalized record", got)
 	}
-	if empty := (RenderContext{Entity: &ir.IREntity{Name: "Order"}}).Seed(); empty != nil {
+	if empty := (RenderContext{Entity: &ir.Entity{Name: "Order"}}).Seed(); empty != nil {
 		t.Errorf("Seed() with no dataset should be nil, got %+v", empty)
 	}
 }
 
 func TestRenderContext_DTOAccessors(t *testing.T) {
 	t.Parallel()
-	e := &ir.IREntity{Name: "User", Fields: []ir.IRField{
+	e := &ir.Entity{Name: "User", Fields: []ir.Field{
 		{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 		{Name: "name", DatabaseType: "string"},
 		{Name: "password", DatabaseType: "string"},

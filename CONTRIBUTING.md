@@ -36,7 +36,7 @@ domain.yaml → Parser → Lexer → Validator → IR Builder → Renderer → G
                                                       → Snapshot (.domaincraft/snapshot.json)
 ```
 
-The **IR** is the contract. Templates read a fully linked `IRProject` — the core never contains C# or TypeScript. Composition is `extends` + `layer` + `--replace` (see [Axes and layers](https://fellmonkey.github.io/domaincraft-site/docs/concepts/three-axes/) and [Architecture](https://fellmonkey.github.io/domaincraft-site/docs/concepts/architecture/)).
+The **IR** is the contract. Templates read a fully linked `Project` — the core never contains C# or TypeScript. Composition is `extends` + `layer` + `--replace` (see [Axes and layers](https://fellmonkey.github.io/domaincraft-site/docs/concepts/three-axes/) and [Architecture](https://fellmonkey.github.io/domaincraft-site/docs/concepts/architecture/)).
 
 ## Creating a new bridge
 

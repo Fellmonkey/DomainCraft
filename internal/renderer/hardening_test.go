@@ -59,7 +59,7 @@ templates:
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	if _, _, err := r.Render(&ir.IRProject{Name: "P"}, out); err == nil {
+	if _, _, err := r.Render(&ir.Project{Name: "P"}, out); err == nil {
 		t.Fatal("Render accepted a symlink at the final target component")
 	}
 
@@ -101,7 +101,7 @@ templates:
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	if _, _, err := r.Render(&ir.IRProject{Name: "P"}, out); err == nil {
+	if _, _, err := r.Render(&ir.Project{Name: "P"}, out); err == nil {
 		t.Fatal("Render succeeded despite an execute error")
 	}
 
@@ -156,7 +156,7 @@ templates:
 			if err != nil {
 				t.Fatalf("New() error = %v", err)
 			}
-			if _, _, err := r.Render(&ir.IRProject{Name: "P"}, out); err == nil {
+			if _, _, err := r.Render(&ir.Project{Name: "P"}, out); err == nil {
 				t.Fatal("Render succeeded despite a parse error in the second template")
 			}
 

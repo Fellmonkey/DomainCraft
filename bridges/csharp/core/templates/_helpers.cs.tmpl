@@ -1,7 +1,7 @@
 {{- /* Shared named templates for the C# bridge. Loaded via bridge.yaml "helpers" field. */ -}}
 
 {{- /* seedValueExpression converts a seed data value to a C# expression.
-     Context: dict with "Field" (IRField-like) and "Value" (the seed value).
+     Context: dict with "Field" (Field-like) and "Value" (the seed value).
      Used by both seed-seeder.cs.tmpl and controller.cs.tmpl Seed action.
      The literal syntax is loaded from type_mappings.yaml; this template only
      decides the password-hash special case and the array recursion. */ -}}
@@ -41,7 +41,7 @@ _passwordHasher.HashPassword({{ literalValue $dbType $value }})
 
 {{- /* defaultValueExpression generates a C# default value expression for a field.
      Uses .DefaultValue from YAML when available, falls back to type-based defaults.
-     Context: IRField-like dict with .DatabaseType, .DefaultValue, .DefaultIsFunc. */ -}}
+     Context: Field-like dict with .DatabaseType, .DefaultValue, .DefaultIsFunc. */ -}}
 {{- define "defaultValueExpression" -}}
 {{- if .DefaultValue -}}{{ template "defaultValueLiteral" . }}
 {{- else -}}{{ literalDefault .DatabaseType }}
@@ -49,7 +49,7 @@ _passwordHasher.HashPassword({{ literalValue $dbType $value }})
 {{- end -}}
 
 {{- /* authOrAuthorize emits the auth attribute from the CORE-computed permission plan.
-     Context: dict with "Plan" (IRPermissionPlan or nil), "Entity", "Op".
+     Context: dict with "Plan" (PermissionPlan or nil), "Entity", "Op".
      The plan already decomposes the roles into IsPublic / HasOwner / Roles, so
      this bridge no longer parses "*" wildcards or "@Owner" tokens. */ -}}
 {{- define "authOrAuthorize" -}}
@@ -70,19 +70,19 @@ _passwordHasher.HashPassword({{ literalValue $dbType $value }})
 {{- /* ownerCheck emits the boolean expression that guards an @Owner operation: forbid
      unless the caller is the owner OR holds at least one explicit role from the
      plan's Roles (the bypass roles are already extracted by the core).
-     Context: dict with "Plan" (IRPermissionPlan) and "Var" (the entity expression). */ -}}
+     Context: dict with "Plan" (PermissionPlan) and "Var" (the entity expression). */ -}}
 {{- define "ownerCheck" -}}
 {{- $plan := .Plan -}}
 {{- $var := .Var -}}
 {{- if gt (len $plan.Roles) 0 }}!_permissionService.HasAnyRole(new[] { {{- range $i, $r := $plan.Roles }}{{ if $i }}, {{ end }}"{{ $r }}"{{- end }} }) && {{ end }}!_permissionService.IsOwner({{ $var }}){{- end -}}
 
 {{- /* validationAttributes emits C# validation attributes from the CORE's normalized
-     validation rules (IRField.ValidationRules()). The core has already classified
+     validation rules (Field.ValidationRules()). The core has already classified
      each rule (required / email / url / ipv4 / regex / min_length / max_length /
      min_value / max_value) AND assigned a stable Code + default Message, so this
      bridge only maps each rule to a DataAnnotations attribute — it neither
      re-derives which modifier is a length vs a numeric bound, nor hardcodes the
-     message text. Context: IRField. */ -}}
+     message text. Context: Field. */ -}}
 {{- define "validationAttributes" -}}
 {{- $field := . -}}
 {{- $rules := .ValidationRules -}}
@@ -140,7 +140,7 @@ _passwordHasher.HashPassword({{ literalValue $dbType $value }})
 {{- end -}}
 
 {{- /* dtoFieldProperties emits C# properties for a DTO field (used in Dto, CreateRequest, UpdateRequest).
-     Context: IRField (or dict with .Name, .IsRelation, .IsMany, .DatabaseType, .IsNullable, .IsHidden, .IsPrimary). */ -}}
+     Context: Field (or dict with .Name, .IsRelation, .IsMany, .DatabaseType, .IsNullable, .IsHidden, .IsPrimary). */ -}}
 {{- define "dtoFieldProperties" -}}
 {{- if .IsRelation -}}
 {{- if .IsMany }}
@@ -160,7 +160,7 @@ _passwordHasher.HashPassword({{ literalValue $dbType $value }})
 {{- end -}}
 
 {{- /* requestFieldProperties emits C# properties for Create/Update request DTOs with validation attributes.
-     Context: IRField. */ -}}
+     Context: Field. */ -}}
 {{- define "requestFieldProperties" -}}
 {{- if .IsRelation -}}
 {{- if not .IsMany }}
@@ -175,7 +175,7 @@ _passwordHasher.HashPassword({{ literalValue $dbType $value }})
 {{- end -}}
 
 {{- /* mapFieldToDto emits a DTO mapping line for one field.
-     Context: IRField. */ -}}
+     Context: Field. */ -}}
 {{- define "mapFieldToDto" -}}
 {{- if .IsRelation -}}
 {{- if .IsMany }}
@@ -189,7 +189,7 @@ _passwordHasher.HashPassword({{ literalValue $dbType $value }})
 {{- end -}}
 
 {{- /* mapRequestToEntity emits a request-to-entity mapping line for one field.
-     Context: IRField. */ -}}
+     Context: Field. */ -}}
 {{- define "mapRequestToEntity" -}}
 {{- if .IsRelation -}}
 {{- if not .IsMany }}
@@ -203,7 +203,7 @@ _passwordHasher.HashPassword({{ literalValue $dbType $value }})
 {{/* ===== Test helpers: shared by the split tests/*.cs.tmpl templates ===== */}}
 
 {{- /* testFieldValue emits a single C# object-initializer line for one field.
-     Context: IRField. Relations map onto the FK-named entity property. Scalar
+     Context: Field. Relations map onto the FK-named entity property. Scalar
      literal syntax (Guid.NewGuid, 1L, 1.0m, DateTime.UtcNow, new List<...>) is
      loaded from type_mappings.yaml; this template keeps only the test-specific
      value choices (email/url/name strings, relation FK lookups). */ -}}
@@ -275,7 +275,7 @@ _passwordHasher.HashPassword({{ literalValue $dbType $value }})
      required scalar fields, skipping identity/relations/feature fields and the
      email/password/role fields (set explicitly by CreateDbUserAsync). Used so a
      Db-context-direct user insert satisfies every NOT NULL column the auth entity
-     declares. Context: the auth IREntity. */ -}}
+     declares. Context: the auth Entity. */ -}}
 {{- define "testAuthEntityFields" }}
 {{- range .Fields }}
 {{- $n := .Name | lower }}
@@ -313,7 +313,7 @@ _passwordHasher.HashPassword({{ literalValue $dbType $value }})
 {{- end }}
 
 {{- /* testRequestBody builds a CLR entity object-initializer (relations → FK entity
-     property). Context: IRField. */ -}}
+     property). Context: Field. */ -}}
 {{- define "testRequestBody" }}
 {{- range .Fields }}
 {{- if and (not .IsPrimary) (not .IsMany) }}

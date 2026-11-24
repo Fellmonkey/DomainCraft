@@ -41,7 +41,7 @@ func versionFunc(_ js.Value, _ []js.Value) any {
 }
 
 func specmetaFunc(_ js.Value, _ []js.Value) any {
-	return marshal(specmeta.SpecmetaJSON())
+	return marshal(specmeta.JSON())
 }
 
 func validate(_ js.Value, args []js.Value) any {

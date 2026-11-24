@@ -6,14 +6,14 @@ import "github.com/DomainCraft/DomainCraft/internal/specmeta"
 // array field, the type itself otherwise — is a user-declared enum rather than
 // a built-in primitive. Bridges use this instead of re-deriving the enum check
 // from a raw DatabaseType string.
-func (f IRField) IsEnum() bool {
+func (f Field) IsEnum() bool {
 	return !specmeta.IsPrimitive(specmeta.ParseArrayInner(f.DatabaseType))
 }
 
 // EnumTypeName returns the effective type name of the field: the enum type name
 // for an enum field, the element type for an array field, or the field's own
 // DatabaseType otherwise. It mirrors the old `enumTypeName` template function.
-func (f IRField) EnumTypeName() string {
+func (f Field) EnumTypeName() string {
 	return specmeta.ParseArrayInner(f.DatabaseType)
 }
 
@@ -23,43 +23,43 @@ func (f IRField) EnumTypeName() string {
 // EnumTypeName/ArrayElementType).
 
 // IsUUID reports whether the field holds a UUID.
-func (f IRField) IsUUID() bool { return f.DatabaseType == "uuid" }
+func (f Field) IsUUID() bool { return f.DatabaseType == "uuid" }
 
 // IsUuid reports whether the field holds a UUID.
 //
 // Deprecated: use IsUUID. Kept as an alias for bridges using the old casing.
 //nolint:revive // deprecated bridge alias; renaming breaks existing bridge templates
-func (f IRField) IsUuid() bool { return f.IsUUID() }
+func (f Field) IsUuid() bool { return f.IsUUID() }
 
 // IsText reports whether the field holds a string/text value.
-func (f IRField) IsText() bool {
+func (f Field) IsText() bool {
 	return f.DatabaseType == "string" || f.DatabaseType == "text"
 }
 
 // IsInteger reports whether the field holds an integral number (int or bigint).
-func (f IRField) IsInteger() bool {
+func (f Field) IsInteger() bool {
 	return f.DatabaseType == "int" || f.DatabaseType == "bigint"
 }
 
 // IsFloat reports whether the field holds a floating-point number (float or decimal).
-func (f IRField) IsFloat() bool {
+func (f Field) IsFloat() bool {
 	return f.DatabaseType == "float" || f.DatabaseType == "decimal"
 }
 
 // IsNumeric reports whether the field holds any numeric type.
-func (f IRField) IsNumeric() bool { return specmeta.IsNumeric(f.DatabaseType) }
+func (f Field) IsNumeric() bool { return specmeta.IsNumeric(f.DatabaseType) }
 
 // IsBoolean reports whether the field holds a boolean.
-func (f IRField) IsBoolean() bool { return f.DatabaseType == "boolean" }
+func (f Field) IsBoolean() bool { return f.DatabaseType == "boolean" }
 
 // IsDate reports whether the field holds a date (no time component).
-func (f IRField) IsDate() bool { return f.DatabaseType == "date" }
+func (f Field) IsDate() bool { return f.DatabaseType == "date" }
 
 // IsDateTime reports whether the field holds a datetime.
-func (f IRField) IsDateTime() bool { return f.DatabaseType == "datetime" }
+func (f Field) IsDateTime() bool { return f.DatabaseType == "datetime" }
 
 // IsJSON reports whether the field holds a JSON document (json or jsonb).
-func (f IRField) IsJSON() bool {
+func (f Field) IsJSON() bool {
 	return f.DatabaseType == "json" || f.DatabaseType == "jsonb"
 }
 
@@ -67,40 +67,40 @@ func (f IRField) IsJSON() bool {
 //
 // Deprecated: use IsJSON.
 //nolint:revive // deprecated bridge alias; renaming breaks existing bridge templates
-func (f IRField) IsJson() bool { return f.IsJSON() }
+func (f Field) IsJson() bool { return f.IsJSON() }
 
 // IsJSONB reports whether the field holds a jsonb document specifically
 // (as opposed to a plain json column). Bridges use this to choose between
 // ordered (numeric) and text-only JSON path operators.
-func (f IRField) IsJSONB() bool { return f.DatabaseType == "jsonb" }
+func (f Field) IsJSONB() bool { return f.DatabaseType == "jsonb" }
 
 // IsJsonB reports whether the field holds a jsonb document.
 //
 // Deprecated: use IsJSONB.
 //nolint:revive // deprecated bridge alias; renaming breaks existing bridge templates
-func (f IRField) IsJsonB() bool { return f.IsJSONB() }
+func (f Field) IsJsonB() bool { return f.IsJSONB() }
 
 // IsString reports whether the field holds a bounded string column
 // (as opposed to an unbounded text column, which also satisfies IsText).
-func (f IRField) IsString() bool { return f.DatabaseType == "string" }
+func (f Field) IsString() bool { return f.DatabaseType == "string" }
 
 // IsTextOnly reports whether the field holds an unbounded text column
 // (as opposed to a bounded string column, which also satisfies IsText).
-func (f IRField) IsTextOnly() bool { return f.DatabaseType == "text" }
+func (f Field) IsTextOnly() bool { return f.DatabaseType == "text" }
 
 // IsBigInt reports whether the field holds a 64-bit integer (bigint),
 // distinct from the 32-bit int.
-func (f IRField) IsBigInt() bool { return f.DatabaseType == "bigint" }
+func (f Field) IsBigInt() bool { return f.DatabaseType == "bigint" }
 
 // IsDecimal reports whether the field holds an arbitrary-precision decimal,
 // distinct from the binary float.
-func (f IRField) IsDecimal() bool { return f.DatabaseType == "decimal" }
+func (f Field) IsDecimal() bool { return f.DatabaseType == "decimal" }
 
 // IsPatchable reports whether the field participates in a merge-patch (PATCH)
 // request body: scalar fields that are not server-managed, plus single
 // (non-collection) foreign keys. Collections, enums, JSON blobs, arrays,
 // identity and server-managed fields are excluded.
-func (f IRField) IsPatchable() bool {
+func (f Field) IsPatchable() bool {
 	if f.IsFeatureField() || f.IsSensitive() || f.IsReadonly || f.IsPrimary {
 		return false
 	}

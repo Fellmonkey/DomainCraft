@@ -15,17 +15,17 @@ func TestComputeMigrationPlanCreateAndDropTables(t *testing.T) {
 		},
 	}
 
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Product",
 				NamePlural: "Products",
-				Fields:     []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
+				Fields:     []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
 			},
 			{
 				Name:       "Order",
 				NamePlural: "Orders",
-				Fields:     []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
+				Fields:     []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
 			},
 		},
 	}
@@ -58,13 +58,13 @@ func TestComputeMigrationPlanRenameTable(t *testing.T) {
 		},
 	}
 
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Item",
 				OldName:    "Product",
 				NamePlural: "Items",
-				Fields:     []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
+				Fields:     []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
 			},
 		},
 	}
@@ -94,12 +94,12 @@ func TestComputeMigrationPlanColumnOps(t *testing.T) {
 		},
 	}
 
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Product",
 				NamePlural: "Products",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{
 						Name:                  "name",
@@ -154,7 +154,7 @@ func TestComputeMigrationPlanNilInputs(t *testing.T) {
 	if plan := ComputeMigrationPlan(nil, nil); !plan.IsEmpty() {
 		t.Error("nil inputs should produce an empty plan")
 	}
-	if plan := ComputeMigrationPlan(&Snapshot{}, &ir.IRProject{}); !plan.IsEmpty() {
+	if plan := ComputeMigrationPlan(&Snapshot{}, &ir.Project{}); !plan.IsEmpty() {
 		t.Error("empty inputs should produce an empty plan")
 	}
 }
@@ -167,12 +167,12 @@ func TestComputeMigrationPlanRenameWithTypeChange(t *testing.T) {
 			"Product": {Fields: map[string]string{"id": "uuid", "title": "string"}},
 		},
 	}
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Product",
 				NamePlural: "Products",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{
 						Name:                  "name",

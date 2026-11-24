@@ -4,7 +4,7 @@ import "testing"
 
 func TestEnumValuesWireValue(t *testing.T) {
 	t.Parallel()
-	p := &IRProject{
+	p := &Project{
 		Enums: map[string][]string{
 			"OrderStatus": {"PENDING", "IN_PROGRESS", "Shipped"},
 			"Single":      {"Draft"},
@@ -50,7 +50,7 @@ func TestEnumValuesWireValue(t *testing.T) {
 
 func TestEnumValuesNilProject(t *testing.T) {
 	t.Parallel()
-	var p *IRProject
+	var p *Project
 	if got := p.EnumValues("X"); got != nil {
 		t.Errorf("nil project EnumValues = %v, want nil", got)
 	}
@@ -68,7 +68,7 @@ func TestIRIndexDatabaseName(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			if got := (IRIndex{Name: c.name}).DatabaseName(); got != c.want {
+			if got := (Index{Name: c.name}).DatabaseName(); got != c.want {
 				t.Errorf("DatabaseName(%q) = %q, want %q", c.name, got, c.want)
 			}
 		})

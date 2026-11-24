@@ -31,7 +31,7 @@ func TestIRFieldTypePredicates(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			f := IRField{DatabaseType: c.dbType}
+			f := Field{DatabaseType: c.dbType}
 			if got := f.IsUuid(); got != c.isUUID {
 				t.Errorf("%q IsUuid() = %v, want %v", c.dbType, got, c.isUUID)
 			}
@@ -89,7 +89,7 @@ func TestIRFieldSpecificTypePredicates(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			f := IRField{DatabaseType: c.dbType}
+			f := Field{DatabaseType: c.dbType}
 			if got := f.IsString(); got != c.isString {
 				t.Errorf("%q IsString() = %v, want %v", c.dbType, got, c.isString)
 			}
@@ -110,19 +110,19 @@ func TestIRFieldIsPatchable(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
-		f    IRField
+		f    Field
 		want bool
 	}{
-		{"scalar", IRField{Name: "title", DatabaseType: "string"}, true},
-		{"single-fk", IRField{Name: "order", DatabaseType: "uuid", IsRelation: true}, true},
-		{"collection-fk", IRField{Name: "items", DatabaseType: "uuid", IsRelation: true, IsMany: true}, false},
-		{"array", IRField{Name: "tags", DatabaseType: "array(string)"}, false},
-		{"enum", IRField{Name: "status", DatabaseType: "Status"}, false},
-		{"json", IRField{Name: "meta", DatabaseType: "json"}, false},
-		{"primary", IRField{Name: "id", DatabaseType: "uuid", IsPrimary: true}, false},
-		{"readonly", IRField{Name: "slug", DatabaseType: "string", IsReadonly: true}, false},
-		{"sensitive", IRField{Name: "password", DatabaseType: "string"}, false},
-		{"feature", IRField{Name: "version", DatabaseType: "int"}, false},
+		{"scalar", Field{Name: "title", DatabaseType: "string"}, true},
+		{"single-fk", Field{Name: "order", DatabaseType: "uuid", IsRelation: true}, true},
+		{"collection-fk", Field{Name: "items", DatabaseType: "uuid", IsRelation: true, IsMany: true}, false},
+		{"array", Field{Name: "tags", DatabaseType: "array(string)"}, false},
+		{"enum", Field{Name: "status", DatabaseType: "Status"}, false},
+		{"json", Field{Name: "meta", DatabaseType: "json"}, false},
+		{"primary", Field{Name: "id", DatabaseType: "uuid", IsPrimary: true}, false},
+		{"readonly", Field{Name: "slug", DatabaseType: "string", IsReadonly: true}, false},
+		{"sensitive", Field{Name: "password", DatabaseType: "string"}, false},
+		{"feature", Field{Name: "version", DatabaseType: "int"}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -136,27 +136,27 @@ func TestIRFieldIsPatchable(t *testing.T) {
 
 func TestIRFieldIsTextOnly(t *testing.T) {
 	t.Parallel()
-	if !(IRField{DatabaseType: "text"}).IsTextOnly() {
+	if !(Field{DatabaseType: "text"}).IsTextOnly() {
 		t.Error("text should be IsTextOnly")
 	}
-	if (IRField{DatabaseType: "string"}).IsTextOnly() {
+	if (Field{DatabaseType: "string"}).IsTextOnly() {
 		t.Error("string should not be IsTextOnly")
 	}
 }
 
 func TestIREntityTableNameAndForeignKeyColumnName(t *testing.T) {
 	t.Parallel()
-	e := IREntity{Name: "IPv4Rule", NamePlural: "IPv4Rules"}
+	e := Entity{Name: "IPv4Rule", NamePlural: "IPv4Rules"}
 	if got := e.TableName(); got != "i_pv4rules" {
 		t.Errorf("TableName() = %q, want %q (acronyms must match ToDatabaseColumnName)", got, "i_pv4rules")
 	}
 
-	r := IRRelation{FieldName: "ipv4Address"}
+	r := Relation{FieldName: "ipv4Address"}
 	if got := r.ForeignKeyColumnName(); got != "ipv4address_id" {
 		t.Errorf("ForeignKeyColumnName() = %q, want %q (must match ToDatabaseColumnName, not template snakecase)", got, "ipv4address_id")
 	}
 	// A field already suffixed with Id must not get a double Id.
-	if got := (IRRelation{FieldName: "orderId"}).ForeignKeyColumnName(); got != "order_id" {
+	if got := (Relation{FieldName: "orderId"}).ForeignKeyColumnName(); got != "order_id" {
 		t.Errorf("ForeignKeyColumnName(orderId) = %q, want order_id", got)
 	}
 }
@@ -195,7 +195,7 @@ func TestKindOf(t *testing.T) {
 
 func TestIRPermissionsIsPublic(t *testing.T) {
 	t.Parallel()
-	p := &IRPermissions{Read: []string{"*"}, Create: []string{"Admin"}, Update: nil, Delete: []string{}}
+	p := &Permissions{Read: []string{"*"}, Create: []string{"Admin"}, Update: nil, Delete: []string{}}
 	if !p.IsPublic("read") {
 		t.Error("IsPublic(read) = false, want true")
 	}
@@ -208,7 +208,7 @@ func TestIRPermissionsIsPublic(t *testing.T) {
 	if p.IsPublic("delete") {
 		t.Error("IsPublic(delete) = true, want false")
 	}
-	var nilPerms *IRPermissions
+	var nilPerms *Permissions
 	if nilPerms.IsPublic("read") {
 		t.Error("nil IsPublic(read) = true, want false")
 	}
@@ -225,7 +225,7 @@ func TestIREndpointAuthPolicy(t *testing.T) {
 		"delete": "Delete",
 	}
 	for op, want := range cases {
-		if got := (IREndpoint{Operation: op}).AuthPolicy(); got != want {
+		if got := (Endpoint{Operation: op}).AuthPolicy(); got != want {
 			t.Errorf("AuthPolicy(%q) = %q, want %q", op, got, want)
 		}
 	}

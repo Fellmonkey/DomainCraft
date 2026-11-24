@@ -5,19 +5,19 @@ import (
 	"testing"
 )
 
-func testEntity() IREntity {
-	category := IREntity{
+func testEntity() Entity {
+	category := Entity{
 		Name: "Category",
-		Fields: []IRField{
+		Fields: []Field{
 			{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 			{Name: "name", DatabaseType: "string"},
 			{Name: "slug", DatabaseType: "string"},
 			{Name: "sortOrder", DatabaseType: "int"},
 		},
 	}
-	return IREntity{
+	return Entity{
 		Name: "Product",
-		Fields: []IRField{
+		Fields: []Field{
 			{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 			{Name: "name", DatabaseType: "string"},
 			{Name: "description", DatabaseType: "text"},
@@ -33,7 +33,7 @@ func testEntity() IREntity {
 			{Name: "categoryId", DatabaseType: "uuid", IsRelation: true, RelationTarget: "Category"},
 			{Name: "createdAt", DatabaseType: "datetime"}, // feature field
 		},
-		RelationsOut: []IRRelation{
+		RelationsOut: []Relation{
 			{FieldName: "categoryId", TargetEntity: &category, NavigationName: "Category", IsMany: false},
 		},
 	}
@@ -43,7 +43,7 @@ func TestSearchableSortableFilterableFields(t *testing.T) {
 	t.Parallel()
 	e := testEntity()
 
-	names := func(fields []IRField) []string {
+	names := func(fields []Field) []string {
 		var out []string
 		for _, f := range fields {
 			out = append(out, f.Name)
@@ -81,7 +81,7 @@ func TestFilterOperators(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			f := IRField{DatabaseType: c.dbType}
+			f := Field{DatabaseType: c.dbType}
 			got := f.FilterOperators()
 			if len(got) == 0 && len(c.want) == 0 {
 				return
@@ -95,7 +95,7 @@ func TestFilterOperators(t *testing.T) {
 
 func TestAllFilterOperators(t *testing.T) {
 	t.Parallel()
-	got := (IRProject{}).AllFilterOperators()
+	got := (Project{}).AllFilterOperators()
 	want := []FilterOp{OpEq, OpNe, OpGt, OpGte, OpLt, OpLte, OpIn, OpContains, OpStartsWith, OpEndsWith}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("AllFilterOperators() = %v, want %v", got, want)
@@ -170,7 +170,7 @@ func TestCursorField(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			e := IREntity{Fields: []IRField{{Name: "id", DatabaseType: c.pkType, IsPrimary: true}}}
+			e := Entity{Fields: []Field{{Name: "id", DatabaseType: c.pkType, IsPrimary: true}}}
 			got := e.CursorField()
 			if (got != nil) != c.want {
 				t.Errorf("CursorField(pk=%s) = %v, want non-nil=%v", c.pkType, got != nil, c.want)
@@ -179,7 +179,7 @@ func TestCursorField(t *testing.T) {
 	}
 
 	// No PK -> nil.
-	if got := (IREntity{Fields: []IRField{{Name: "name"}}}).CursorField(); got != nil {
+	if got := (Entity{Fields: []Field{{Name: "name"}}}).CursorField(); got != nil {
 		t.Errorf("CursorField() with no PK = %v, want nil", got)
 	}
 }

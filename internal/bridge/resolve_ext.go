@@ -134,9 +134,9 @@ func IsOfficialBundled(dir string) bool {
 	return false
 }
 
-// BridgeStatus describes where a bridge is available from and whether it is
+// Status describes where a bridge is available from and whether it is
 // current. It is computed without network access unless CheckRemote is true.
-type BridgeStatus struct {
+type Status struct {
 	// Embedded is true when the bridge ships inside this binary (go:embed).
 	Embedded bool
 	// Cached is true when the bridge is materialized in the local cache.
@@ -155,8 +155,8 @@ type BridgeStatus struct {
 //     and cached — are reported, with no network traffic.
 //   - CheckRemote=true (used by `--check-updates`): additionally probes the
 //     remote and reports whether a newer supported version exists.
-func (e RegistryEntry) Status(checkRemote bool) BridgeStatus {
-	s := BridgeStatus{}
+func (e RegistryEntry) Status(checkRemote bool) Status {
+	s := Status{}
 	if e.Path != "" {
 		if _, err := domaincraft.Bridges.ReadDir("bridges/" + filepath.ToSlash(e.Path)); err == nil {
 			s.Embedded = true

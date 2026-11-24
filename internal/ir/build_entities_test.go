@@ -615,7 +615,7 @@ func TestBuildResolvesTargetEntityAfterTopoSort(t *testing.T) {
 		t.Fatalf("Build() error = %v", err)
 	}
 
-	byName := make(map[string]*IREntity, len(projectIR.Entities))
+	byName := make(map[string]*Entity, len(projectIR.Entities))
 	for i := range projectIR.Entities {
 		byName[projectIR.Entities[i].Name] = &projectIR.Entities[i]
 	}
@@ -665,14 +665,14 @@ func TestBuildResolvesTargetEntityAfterTopoSort(t *testing.T) {
 	}
 }
 
-func targetName(e *IREntity) string {
+func targetName(e *Entity) string {
 	if e == nil {
 		return "<nil>"
 	}
 	return e.Name
 }
 
-func findEntity(project *IRProject, name string) *IREntity {
+func findEntity(project *Project, name string) *Entity {
 	if project == nil {
 		return nil
 	}
@@ -811,7 +811,7 @@ func TestBuildReconcilesOneToManyDeclaredOnBothSides(t *testing.T) {
 
 	// The [many] relation must be classified as the collection side of a
 	// one-to-many (paired with the FK declared on WalletTransaction).
-	var transactions *IRRelation
+	var transactions *Relation
 	for i := range wallet.RelationsOut {
 		if wallet.RelationsOut[i].FieldName == "transactions" {
 			transactions = &wallet.RelationsOut[i]
@@ -838,7 +838,7 @@ func TestBuildReconcilesOneToManyDeclaredOnBothSides(t *testing.T) {
 	if wt == nil {
 		t.Fatal("WalletTransaction entity not found")
 	}
-	var walletRel *IRRelation
+	var walletRel *Relation
 	for i := range wt.RelationsOut {
 		if wt.RelationsOut[i].FieldName == "wallet" {
 			walletRel = &wt.RelationsOut[i]
@@ -907,7 +907,7 @@ func TestBuildPairNavigationNameStripsIdSuffix(t *testing.T) {
 		t.Fatal("Order entity not found")
 	}
 
-	var items *IRRelation
+	var items *Relation
 	for i := range order.RelationsOut {
 		if order.RelationsOut[i].FieldName == "items" {
 			items = &order.RelationsOut[i]
@@ -985,7 +985,7 @@ func TestBuildConvertsAuthAndValidations(t *testing.T) {
 		t.Error("register explicitly disabled but got true")
 	}
 
-	var order *IREntity
+	var order *Entity
 	for i := range projectIR.Entities {
 		if projectIR.Entities[i].Name == "Order" {
 			order = &projectIR.Entities[i]

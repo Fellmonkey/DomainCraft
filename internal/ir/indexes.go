@@ -14,8 +14,8 @@ import (
 // This is the single source of truth for a bridge's index rendering — a bridge
 // no longer needs to remember that per-field uniqueness also produces an index.
 // The result is sorted by name for deterministic output.
-func (e IREntity) AllIndexes() []IRIndex {
-	result := make([]IRIndex, 0, len(e.Indexes)+1)
+func (e Entity) AllIndexes() []Index {
+	result := make([]Index, 0, len(e.Indexes)+1)
 
 	// Copy declared indexes (normalizing empty Sort to asc-per-field).
 	for _, idx := range e.Indexes {
@@ -41,7 +41,7 @@ func (e IREntity) AllIndexes() []IRIndex {
 		if covered[f.Name] {
 			continue
 		}
-		result = append(result, IRIndex{
+		result = append(result, Index{
 			Name:   "idx_" + textutil.ToDatabaseColumnName(e.NamePlural) + "_" + textutil.ToDatabaseColumnName(f.Name),
 			Fields: []string{f.Name},
 			Sort:   []string{"asc"},
@@ -49,7 +49,7 @@ func (e IREntity) AllIndexes() []IRIndex {
 		})
 	}
 
-	slices.SortFunc(result, func(a, b IRIndex) int { return cmp.Compare(a.Name, b.Name) })
+	slices.SortFunc(result, func(a, b Index) int { return cmp.Compare(a.Name, b.Name) })
 	return result
 }
 
@@ -58,7 +58,7 @@ func (e IREntity) AllIndexes() []IRIndex {
 // `IX_{{ .Name | snakecase }}`, which double-prefixes and re-snake_cases a name
 // the core already computed (the template `snakecase` diverges from the core's
 // column naming on acronyms).
-func (i IRIndex) DatabaseName() string {
+func (i Index) DatabaseName() string {
 	return "IX_" + i.Name
 }
 

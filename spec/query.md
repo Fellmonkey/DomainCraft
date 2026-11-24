@@ -4,8 +4,8 @@ The core defines **one** list-query grammar — search, sort, filter and
 pagination — that every bridge serializes into its own query layer (LINQ,
 Prisma `where`/`orderBy`, Mongo `$match`/`$sort`, Appwrite `Query.*`, SQL
 `WHERE`/`ORDER BY`, …). The core emits the *schema* a bridge's runtime validator
-consumes — `IREntity.FilterablePaths()`, `SortableFields()`,
-`SearchableFields()`, and the pagination policy on `IRProject.Pagination` — and
+consumes — `Entity.FilterablePaths()`, `SortableFields()`,
+`SearchableFields()`, and the pagination policy on `Project.Pagination` — and
 the bridge parses and validates the query strings at runtime against that
 schema. The grammar below is the contract the bridge's parser must implement.
 
@@ -118,7 +118,7 @@ sort := key ( "," key )*
 key  := [ "-" | "+" ] field        # "-" = descending, "+"/bare = ascending
 ```
 
-- `field` is a scalar field name from `IREntity.SortableFields()`, matched
+- `field` is a scalar field name from `Entity.SortableFields()`, matched
   case-insensitively and canonicalized to the IR field name.
 - The primary key, relations, enums, arrays, JSON blobs, hidden and feature
   fields are **not** sortable (the PK is the implicit default order, not an
@@ -138,10 +138,10 @@ List endpoints accept two paging modes plus sizing controls:
 
 - **Offset (default):** `page` + `pageSize` (and `limit`, an alias for
   `pageSize`; when both are given, `limit` wins). The effective page size is
-  clamped to `1 .. MaxPageSize` (`IRProject.Pagination`), `page` is clamped to
+  clamped to `1 .. MaxPageSize` (`Project.Pagination`), `page` is clamped to
   `>= 1`. Supports `sort`.
 - **Keyset (cursor):** `cursor` + `pageSize`. Available only when the primary
-  key is a monotonic integer (`int`/`bigint`) — `IREntity.CursorField()` returns
+  key is a monotonic integer (`int`/`bigint`) — `Entity.CursorField()` returns
   the PK then, nil otherwise. `cursor` is the primary key of the last row seen;
   the bridge returns rows `WHERE pk > cursor ORDER BY pk` and sets `nextCursor`
   to the last row's PK (or `null` when no further rows follow). `sort` is
@@ -154,7 +154,7 @@ offset-mode only; cursor clients read `nextCursor` (null = end).
 
 ## Relation expansion
 
-A bridge eager-loads the entity's relations (`IREntity.EagerLoadRelations()`).
+A bridge eager-loads the entity's relations (`Entity.EagerLoadRelations()`).
 List endpoints accept `include`, a comma-separated list of relation field names
 (the JSON camelCase names); it restricts which `[many]` collections are
 loaded:

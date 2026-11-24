@@ -4,10 +4,10 @@ import "slices"
 
 // sortEntities reorders the slice by FK dependencies using Kahn's algorithm.
 // The order is deterministic: ties are broken by entity name.
-// It returns a new slice because relations hold *IREntity pointers into the
+// It returns a new slice because relations hold *Entity pointers into the
 // original backing array; the original must stay intact until every pointer has
 // been rebound to its new location.
-func sortEntities(entities []IREntity) []IREntity {
+func sortEntities(entities []Entity) []Entity {
 	byName := make(map[string]int, len(entities))
 	for i, e := range entities {
 		byName[e.Name] = i
@@ -75,12 +75,12 @@ func sortEntities(entities []IREntity) []IREntity {
 	// Build the reordered slice. The source `entities` backing array is left
 	// untouched, so every TargetEntity pointer still points to valid memory we
 	// can read the name from while rebinding it to the new slice.
-	sorted := make([]IREntity, 0, len(entities))
+	sorted := make([]Entity, 0, len(entities))
 	for _, name := range order {
 		sorted = append(sorted, entities[byName[name]])
 	}
 
-	relocated := make(map[string]*IREntity, len(sorted))
+	relocated := make(map[string]*Entity, len(sorted))
 	for i := range sorted {
 		relocated[sorted[i].Name] = &sorted[i]
 	}

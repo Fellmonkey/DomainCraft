@@ -30,7 +30,7 @@ type Options struct {
 }
 
 // Generate builds deterministic mock seed for every entity in the project.
-func Generate(project *ir.IRProject, opts Options) *ir.SeedDataset {
+func Generate(project *ir.Project, opts Options) *ir.SeedDataset {
 	if project == nil {
 		return &ir.SeedDataset{}
 	}
@@ -88,7 +88,7 @@ func Generate(project *ir.IRProject, opts Options) *ir.SeedDataset {
 // same typed SeedRecord shape Generate produces. Values are coerced to native
 // Go types based on the field's IR database type, so a bridge serializes both
 // explicit and generated seed through one code path.
-func Normalize(project *ir.IRProject) *ir.SeedDataset {
+func Normalize(project *ir.Project) *ir.SeedDataset {
 	if project == nil {
 		return &ir.SeedDataset{}
 	}
@@ -124,7 +124,7 @@ func Normalize(project *ir.IRProject) *ir.SeedDataset {
 }
 
 // primaryKey returns the entity's primary key field, or nil.
-func primaryKey(entity *ir.IREntity) *ir.IRField {
+func primaryKey(entity *ir.Entity) *ir.Field {
 	for i := range entity.Fields {
 		if entity.Fields[i].IsPrimary {
 			return &entity.Fields[i]
@@ -135,7 +135,7 @@ func primaryKey(entity *ir.IREntity) *ir.IRField {
 
 // valueFor produces one field value for generated mock seed, honoring type,
 // validations, defaults and relations.
-func valueFor(field ir.IRField, project *ir.IRProject, generated map[string][]any, counter *int, record int) any {
+func valueFor(field ir.Field, project *ir.Project, generated map[string][]any, counter *int, record int) any {
 	// Default value wins when the model declares one (and it's not a function).
 	if field.DefaultValue != "" && !field.DefaultIsFunc {
 		return coerceValue(field.DefaultValue, field.DatabaseType)
@@ -154,7 +154,7 @@ func valueFor(field ir.IRField, project *ir.IRProject, generated map[string][]an
 // can back a one-to-one relation without colliding with a sibling row. When no
 // parent was generated yet (self-reference or a dependency cycle) it falls
 // back to nil.
-func relationValue(field ir.IRField, generated map[string][]any, record int) any {
+func relationValue(field ir.Field, generated map[string][]any, record int) any {
 	if field.IsMany {
 		return nil
 	}
@@ -169,7 +169,7 @@ func relationValue(field ir.IRField, generated map[string][]any, record int) any
 }
 
 // scalarValue produces a scalar value from the field's type and constraints.
-func scalarValue(field ir.IRField, project *ir.IRProject, counter *int, record int) any {
+func scalarValue(field ir.Field, project *ir.Project, counter *int, record int) any {
 	dbType := field.DatabaseType
 
 	if field.IsArray() {
@@ -206,8 +206,8 @@ func scalarValue(field ir.IRField, project *ir.IRProject, counter *int, record i
 }
 
 // innerValue produces a scalar for an array element type.
-func innerValue(dbType string, field ir.IRField, project *ir.IRProject, counter *int, record int) any {
-	inner := ir.IRField{Name: field.Name, DatabaseType: dbType}
+func innerValue(dbType string, field ir.Field, project *ir.Project, counter *int, record int) any {
+	inner := ir.Field{Name: field.Name, DatabaseType: dbType}
 	if specmeta.IsPrimitive(strings.ToLower(dbType)) {
 		return scalarValue(inner, project, counter, record)
 	}
@@ -219,7 +219,7 @@ func innerValue(dbType string, field ir.IRField, project *ir.IRProject, counter 
 
 // stringValue returns a valid mock string, honoring email/url validations and
 // min/max length constraints (via the normalized ValidationRules contract).
-func stringValue(field ir.IRField, record int) string {
+func stringValue(field ir.Field, record int) string {
 	isEmail, isURL := false, false
 	minLen, maxLen := "", ""
 	for _, r := range field.ValidationRules() {
@@ -264,7 +264,7 @@ func stringValue(field ir.IRField, record int) string {
 
 // intValue returns an int honoring the numeric min/max bounds (inclusive or
 // exclusive) from the normalized ValidationRules contract.
-func intValue(field ir.IRField, record int) int64 {
+func intValue(field ir.Field, record int) int64 {
 	v := int64(record + 1)
 	for _, r := range field.ValidationRules() {
 		n, err := strconv.ParseInt(r.Value, 10, 64)
@@ -287,7 +287,7 @@ func intValue(field ir.IRField, record int) int64 {
 
 // floatValue returns a float honoring the numeric min/max bounds (inclusive or
 // exclusive) from the normalized ValidationRules contract.
-func floatValue(field ir.IRField, record int) float64 {
+func floatValue(field ir.Field, record int) float64 {
 	v := float64(record+1) + 0.5
 	for _, r := range field.ValidationRules() {
 		n, err := strconv.ParseFloat(r.Value, 64)

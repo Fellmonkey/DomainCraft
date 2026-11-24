@@ -250,7 +250,7 @@ func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
 	applyAddons(opts, irProject)
 
 	// --- Schema snapshot / migration diff ---
-	snapPath := snapshot.SnapshotPath(opts.outputDir)
+	snapPath := snapshot.Path(opts.outputDir)
 	oldSnapshot, err := snapshot.Load(snapPath)
 	if err != nil {
 		return fmt.Errorf("load schema snapshot: %w", err)
@@ -823,7 +823,7 @@ func bridgeUpdateNotice(entryID string, _ *bridge.Update) string {
 
 // generateAdminPanel renders the optional admin panel bridge into the output
 // directory and returns the extra file manifest entries.
-func generateAdminPanel(opts *cliOptions, irProject *ir.IRProject, seedData, mockDataset *ir.SeedDataset, log *logger.Logger) ([]renderer.RenderedFile, error) {
+func generateAdminPanel(opts *cliOptions, irProject *ir.Project, seedData, mockDataset *ir.SeedDataset, log *logger.Logger) ([]renderer.RenderedFile, error) {
 	resolver := bridge.NewResolver(bridge.Default()).WithEnsureOptions(bridgeEnsureOptions(opts, log))
 
 	adminID := opts.adminBridge
@@ -1111,7 +1111,7 @@ func customMark(f snapshot.FileRef) string {
 // applyAddons parses the --addons flag into the IR project's Addons set,
 // validating each name against specmeta. Unknown addons are silently ignored so
 // bridges that don't know a given addon simply render their non-addon templates.
-func applyAddons(opts *cliOptions, project *ir.IRProject) {
+func applyAddons(opts *cliOptions, project *ir.Project) {
 	if strings.TrimSpace(opts.addons) == "" {
 		return
 	}

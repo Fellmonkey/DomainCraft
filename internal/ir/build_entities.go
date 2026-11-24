@@ -20,13 +20,13 @@ func oldDatabaseColumnName(field *parser.ParsedField) string {
 	return textutil.ToDatabaseColumnName(field.OldName)
 }
 
-// Build converts ParsedSchema into IRProject.
-func Build(schema *parser.ParsedSchema) (*IRProject, error) {
+// Build converts ParsedSchema into Project.
+func Build(schema *parser.ParsedSchema) (*Project, error) {
 	if schema == nil {
 		return nil, fmt.Errorf("parsed schema is nil")
 	}
 
-	irProject := &IRProject{
+	irProject := &Project{
 		Name:        schema.Project.Name,
 		Description: schema.Project.Description,
 		Database:    schema.Database,
@@ -35,11 +35,11 @@ func Build(schema *parser.ParsedSchema) (*IRProject, error) {
 		Platform:    schema.Project.Platform,
 		Enums:       copyEnumsSorted(schema.Enums),
 		EnumOrder:   sortedEnumKeys(schema.Enums),
-		Entities:    make([]IREntity, 0, len(schema.Entities)),
+		Entities:    make([]Entity, 0, len(schema.Entities)),
 	}
 
 	if schema.Project.Cache != nil {
-		irProject.Cache = &IRCacheConfig{
+		irProject.Cache = &CacheConfig{
 			Enabled:          schema.Project.Cache.Enabled,
 			Provider:         schema.Project.Cache.Provider,
 			ConnectionString: schema.Project.Cache.ConnectionString,
@@ -47,25 +47,25 @@ func Build(schema *parser.ParsedSchema) (*IRProject, error) {
 		}
 	}
 	if schema.Project.CORS != nil {
-		irProject.CORS = &IRCORSConfig{
+		irProject.CORS = &CORSConfig{
 			Enabled: schema.Project.CORS.Enabled,
 			Origins: append([]string(nil), schema.Project.CORS.Origins...),
 		}
 	}
 	if schema.Project.Deploy != nil {
-		irProject.Deploy = &IRDeployConfig{
+		irProject.Deploy = &DeployConfig{
 			Domain: schema.Project.Deploy.Domain,
 			Port:   schema.Project.Deploy.Port,
 		}
 	}
 	if schema.Project.Versioning != nil {
-		irProject.Versioning = &IRVersioningConfig{
+		irProject.Versioning = &VersioningConfig{
 			Enabled:        schema.Project.Versioning.Enabled,
 			DefaultVersion: schema.Project.Versioning.DefaultVersion,
 		}
 	}
 	if schema.Project.RateLimit != nil {
-		irProject.RateLimit = &IRRateLimitConfig{
+		irProject.RateLimit = &RateLimitConfig{
 			Enabled:       schema.Project.RateLimit.Enabled,
 			Policy:        schema.Project.RateLimit.Policy,
 			PermitLimit:   schema.Project.RateLimit.PermitLimit,
@@ -73,13 +73,13 @@ func Build(schema *parser.ParsedSchema) (*IRProject, error) {
 		}
 	}
 	if schema.Project.Pagination != nil {
-		irProject.Pagination = &IRPaginationConfig{
+		irProject.Pagination = &PaginationConfig{
 			DefaultPageSize: schema.Project.Pagination.DefaultPageSize,
 			MaxPageSize:     schema.Project.Pagination.MaxPageSize,
 		}
 	}
 	if schema.Project.Infrastructure != nil {
-		irProject.Infrastructure = &IRInfrastructure{
+		irProject.Infrastructure = &Infrastructure{
 			Queue:   schema.Project.Infrastructure.Queue,
 			Cache:   schema.Project.Infrastructure.Cache,
 			Secrets: schema.Project.Infrastructure.Secrets,
@@ -88,22 +88,22 @@ func Build(schema *parser.ParsedSchema) (*IRProject, error) {
 	}
 
 	// Pass 1: build entities
-	entityIndex := make(map[string]*IREntity, len(schema.Entities))
+	entityIndex := make(map[string]*Entity, len(schema.Entities))
 	for _, entityName := range schema.EntityOrder {
 		sourceEntity := schema.Entities[entityName]
 		if sourceEntity == nil {
 			continue
 		}
 
-		irEntity := IREntity{
+		irEntity := Entity{
 			Name:         sourceEntity.Name,
 			OldName:      sourceEntity.OldName,
 			NamePlural:   sourceEntity.NamePlural,
 			Features:     copyFeatureMap(sourceEntity.Features),
-			Fields:       make([]IRField, 0, len(sourceEntity.FieldOrder)),
-			RelationsOut: make([]IRRelation, 0),
-			RelationsIn:  make([]IRRelation, 0),
-			Indexes:      make([]IRIndex, 0, len(sourceEntity.Indexes)),
+			Fields:       make([]Field, 0, len(sourceEntity.FieldOrder)),
+			RelationsOut: make([]Relation, 0),
+			RelationsIn:  make([]Relation, 0),
+			Indexes:      make([]Index, 0, len(sourceEntity.Indexes)),
 			Seed:         sourceEntity.Seed,
 			Permissions:  convertPermissions(sourceEntity.Permissions),
 		}
@@ -119,7 +119,7 @@ func Build(schema *parser.ParsedSchema) (*IRProject, error) {
 				return nil, fmt.Errorf("field '%s.%s': %w", sourceEntity.Name, field.Name, err)
 			}
 
-			irEntity.Fields = append(irEntity.Fields, IRField{
+			irEntity.Fields = append(irEntity.Fields, Field{
 				Name:                  field.Name,
 				OldName:               field.OldName,
 				DatabaseType:          databaseType,
@@ -141,7 +141,7 @@ func Build(schema *parser.ParsedSchema) (*IRProject, error) {
 		}
 
 		for _, idx := range sourceEntity.Indexes {
-			irEntity.Indexes = append(irEntity.Indexes, IRIndex{
+			irEntity.Indexes = append(irEntity.Indexes, Index{
 				Name:   idx.Name,
 				Fields: append([]string(nil), idx.Fields...),
 				Type:   idx.Type,
@@ -174,22 +174,22 @@ func Build(schema *parser.ParsedSchema) (*IRProject, error) {
 	return irProject, nil
 }
 
-func convertValidations(source map[string]string) []IRValidation {
+func convertValidations(source map[string]string) []Validation {
 	if len(source) == 0 {
 		return nil
 	}
-	result := make([]IRValidation, 0, len(source))
+	result := make([]Validation, 0, len(source))
 	for _, key := range slices.Sorted(maps.Keys(source)) {
-		result = append(result, IRValidation{Name: key, Value: source[key]})
+		result = append(result, Validation{Name: key, Value: source[key]})
 	}
 	return result
 }
 
-func convertPermissions(source *parser.ParsedPermissions) *IRPermissions {
+func convertPermissions(source *parser.ParsedPermissions) *Permissions {
 	if source == nil {
 		return nil
 	}
-	return &IRPermissions{
+	return &Permissions{
 		Read:   append([]string(nil), source.Read...),
 		Create: append([]string(nil), source.Create...),
 		Update: append([]string(nil), source.Update...),
@@ -254,7 +254,7 @@ func resolveArrayType(targetType string) string {
 	return "array(string)"
 }
 
-func convertAuth(source *parser.AuthConfig, schema *parser.ParsedSchema) *IRAuthConfig {
+func convertAuth(source *parser.AuthConfig, schema *parser.ParsedSchema) *AuthConfig {
 	if source == nil || source.Type == "" || source.Type == "none" {
 		return nil
 	}
@@ -274,11 +274,11 @@ func convertAuth(source *parser.AuthConfig, schema *parser.ParsedSchema) *IRAuth
 	me := source.Endpoints.HasMe()
 	setup := source.Endpoints.HasSetup()
 
-	return &IRAuthConfig{
+	return &AuthConfig{
 		Type:   source.Type,
 		Entity: entity,
 		Roles:  append([]string(nil), source.Roles...),
-		Endpoints: IRAuthEndpoints{
+		Endpoints: AuthEndpoints{
 			HasLogin:    login,
 			HasRegister: register,
 			HasMe:       me,

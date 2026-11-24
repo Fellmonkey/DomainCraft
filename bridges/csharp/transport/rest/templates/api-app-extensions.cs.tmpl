@@ -72,7 +72,7 @@ public static class ApplicationBuilderExtensions
 
         app.UseOutputCache();
 
-        // Unique-constraint names are core-owned (IRIndex.DatabaseName()). Build a
+        // Unique-constraint names are core-owned (Index.DatabaseName()). Build a
         // map from the PostgreSQL constraint name to the field that must be unique,
         // so a unique violation is reported as a stable, field-specific 409 instead
         // of a bare 500 (see spec/errors.md → UNIQUE_CONFLICT).

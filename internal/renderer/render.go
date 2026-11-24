@@ -107,7 +107,7 @@ func rollbackWrites(staged, committed []stagedWrite) {
 // written paths and the file manifest. Rendering is staged in temp files and
 // committed only after every template succeeded; a failure at any point removes
 // the staged files and restores any output files that were already replaced.
-func (r *Renderer) Render(project *ir.IRProject, outputDir string) ([]string, []RenderedFile, error) {
+func (r *Renderer) Render(project *ir.Project, outputDir string) ([]string, []RenderedFile, error) {
 	if project == nil {
 		return nil, nil, errors.New("IR project is nil")
 	}
@@ -327,7 +327,7 @@ func (r *Renderer) Render(project *ir.IRProject, outputDir string) ([]string, []
 	return written, manifest, nil
 }
 
-func (r *Renderer) shouldRender(spec TemplateSpec, project *ir.IRProject, pkgs map[string]string) bool {
+func (r *Renderer) shouldRender(spec TemplateSpec, project *ir.Project, pkgs map[string]string) bool {
 	// Entity-level When conditions are checked per-context in shouldRenderContext.
 	// Project-level When conditions are checked here.
 	if spec.When == "" || spec.For == "entity" {
@@ -402,7 +402,7 @@ func (r *Renderer) shouldRenderContext(spec TemplateSpec, context RenderContext)
 // When the renderer is composed (extends chain), registry_packages from all
 // bridges are merged base-first so inner layers can declare their own
 // dependencies; the adapter's values win on conflicts.
-func (r *Renderer) resolvePackages(project *ir.IRProject) map[string]string {
+func (r *Renderer) resolvePackages(project *ir.Project) map[string]string {
 	framework := ""
 	if project != nil {
 		framework = project.Platform
@@ -472,7 +472,7 @@ func (r *Renderer) cacheNamespace() string {
 	return b.String()
 }
 
-func (r *Renderer) renderContexts(scope string, project *ir.IRProject, pkgs map[string]string) ([]RenderContext, error) {
+func (r *Renderer) renderContexts(scope string, project *ir.Project, pkgs map[string]string) ([]RenderContext, error) {
 	cfg := r.config()
 	switch strings.ToLower(strings.TrimSpace(scope)) {
 	case "", "entity":

@@ -2,13 +2,13 @@ package ir
 
 import "strings"
 
-// IRValidationRule is a normalized, language-agnostic validation rule. The core
+// ValidationRule is a normalized, language-agnostic validation rule. The core
 // derives these from the field's type, nullability and the declared validation
 // modifiers, so a bridge never re-parses modifier names or re-derives which
 // modifier is a length bound vs a numeric bound. It just maps each Kind (and its
 // stable Code) to its own syntax (DataAnnotations, FluentValidation,
 // class-validator, etc.).
-type IRValidationRule struct {
+type ValidationRule struct {
 	// Kind is the semantic rule kind: required, email, url, ipv4, regex,
 	// min_length, max_length, min_value, max_value.
 	Kind string
@@ -68,9 +68,9 @@ func validationRuleMeta(kind, value string, exclusive bool) (code, message strin
 }
 
 // newRule builds a normalized rule with its stable code and default message.
-func newRule(kind, value string, exclusive bool) IRValidationRule {
+func newRule(kind, value string, exclusive bool) ValidationRule {
 	code, message := validationRuleMeta(kind, value, exclusive)
-	return IRValidationRule{Kind: kind, Code: code, Value: value, Exclusive: exclusive, Message: message}
+	return ValidationRule{Kind: kind, Code: code, Value: value, Exclusive: exclusive, Message: message}
 }
 
 // ValidationRules returns the field's validations as a normalized, ordered list
@@ -85,8 +85,8 @@ func newRule(kind, value string, exclusive bool) IRValidationRule {
 //	                               min_value / max_value on numeric types
 //	gte / lte                   -> inclusive min_value / max_value
 //	gt / lt                     -> min_value / max_value with Exclusive=true
-func (f IRField) ValidationRules() []IRValidationRule {
-	rules := make([]IRValidationRule, 0, len(f.Validations)+1)
+func (f Field) ValidationRules() []ValidationRule {
+	rules := make([]ValidationRule, 0, len(f.Validations)+1)
 
 	if !f.IsNullable && !f.IsPrimary {
 		// Non-nullable fields are required by construction. (A nullable field

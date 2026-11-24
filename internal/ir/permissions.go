@@ -6,7 +6,7 @@ import (
 	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 )
 
-// IRPermissionPlan is the core-computed authorization plan for one operation
+// PermissionPlan is the core-computed authorization plan for one operation
 // (read/create/update/delete). The bridge no longer parses `*` wildcards or
 // `@Owner` tokens in its templates — it receives the already-decomposed plan:
 //   - IsPublic  — `*` is present: the endpoint is anonymous (no [Authorize]).
@@ -16,7 +16,7 @@ import (
 //
 // A role is either the public wildcard, an ownership token, or a declared role
 // (validated against auth.roles elsewhere).
-type IRPermissionPlan struct {
+type PermissionPlan struct {
 	Operation string   // read | create | update | delete
 	IsPublic  bool     // wildcard "*" → anonymous access
 	HasOwner  bool     // ownership token ("@...") → owner-scoped check
@@ -27,7 +27,7 @@ type IRPermissionPlan struct {
 // ("@..."). Bridges use this to decide whether an entity needs owner-scoped
 // row permissions (e.g. Appwrite row-level security) without parsing the
 // role lists themselves.
-func (p *IRPermissions) HasOwnerToken() bool {
+func (p *Permissions) HasOwnerToken() bool {
 	if p == nil {
 		return false
 	}
@@ -42,7 +42,7 @@ func (p *IRPermissions) HasOwnerToken() bool {
 // IsPublic reports whether the named operation is declared public (its role
 // list contains the "*" wildcard). It returns false when no permissions block
 // exists or the operation has no wildcard.
-func (p *IRPermissions) IsPublic(operation string) bool {
+func (p *Permissions) IsPublic(operation string) bool {
 	plan := p.Plan(operation)
 	return plan != nil && plan.IsPublic
 }
@@ -50,7 +50,7 @@ func (p *IRPermissions) IsPublic(operation string) bool {
 // Plan computes the authorization plan for the named operation. It returns nil
 // when the entity declares no permissions for that operation (meaning the
 // bridge falls back to its "no permissions defined" default).
-func (p *IRPermissions) Plan(operation string) *IRPermissionPlan {
+func (p *Permissions) Plan(operation string) *PermissionPlan {
 	if p == nil {
 		return nil
 	}
@@ -68,7 +68,7 @@ func (p *IRPermissions) Plan(operation string) *IRPermissionPlan {
 		return nil
 	}
 
-	plan := &IRPermissionPlan{Operation: operation}
+	plan := &PermissionPlan{Operation: operation}
 	for _, r := range roles {
 		switch {
 		case r == "*":
@@ -84,7 +84,7 @@ func (p *IRPermissions) Plan(operation string) *IRPermissionPlan {
 
 // PermissionPlan returns the authorization plan for the named operation on the
 // current entity. It returns nil when the entity has no permissions block.
-func (e IREntity) PermissionPlan(operation string) *IRPermissionPlan {
+func (e Entity) PermissionPlan(operation string) *PermissionPlan {
 	if e.Permissions == nil {
 		return nil
 	}

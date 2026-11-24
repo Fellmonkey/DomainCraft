@@ -68,8 +68,8 @@ func (s TemplateSpec) TargetPatterns() []string {
 
 // RenderContext is passed to templates.
 type RenderContext struct {
-	Project  *ir.IRProject
-	Entity   *ir.IREntity
+	Project  *ir.Project
+	Entity   *ir.Entity
 	Bridge   *BridgeConfig     // Bridge-level config available as .Bridge
 	Packages map[string]string // Resolved package versions for the current platform
 	// Migration is the abstract schema-migration plan computed by the core from
@@ -119,7 +119,7 @@ func (c RenderContext) HasOptimisticLock() bool {
 }
 
 // Permissions exposes the current entity permissions to templates.
-func (c RenderContext) Permissions() *ir.IRPermissions {
+func (c RenderContext) Permissions() *ir.Permissions {
 	if c.Entity == nil {
 		return nil
 	}
@@ -127,7 +127,7 @@ func (c RenderContext) Permissions() *ir.IRPermissions {
 }
 
 // PermissionPlan exposes the core-computed authorization plan for one operation.
-func (c RenderContext) PermissionPlan(operation string) *ir.IRPermissionPlan {
+func (c RenderContext) PermissionPlan(operation string) *ir.PermissionPlan {
 	if c.Entity == nil {
 		return nil
 	}
@@ -135,7 +135,7 @@ func (c RenderContext) PermissionPlan(operation string) *ir.IRPermissionPlan {
 }
 
 // Endpoints exposes the standard HTTP endpoint contract for the current entity.
-func (c RenderContext) Endpoints() []ir.IREndpoint {
+func (c RenderContext) Endpoints() []ir.Endpoint {
 	if c.Entity == nil {
 		return nil
 	}
@@ -143,7 +143,7 @@ func (c RenderContext) Endpoints() []ir.IREndpoint {
 }
 
 // AllIndexes exposes the normalized index list (declared + implicit unique).
-func (c RenderContext) AllIndexes() []ir.IRIndex {
+func (c RenderContext) AllIndexes() []ir.Index {
 	if c.Entity == nil {
 		return nil
 	}
@@ -227,7 +227,7 @@ func (c RenderContext) HasCacheable() bool {
 }
 
 // ReadFields exposes the current entity's read-DTO projection to templates.
-func (c RenderContext) ReadFields() []ir.IRField {
+func (c RenderContext) ReadFields() []ir.Field {
 	if c.Entity == nil {
 		return nil
 	}
@@ -235,7 +235,7 @@ func (c RenderContext) ReadFields() []ir.IRField {
 }
 
 // CreateFields exposes the current entity's create-DTO projection to templates.
-func (c RenderContext) CreateFields() []ir.IRField {
+func (c RenderContext) CreateFields() []ir.Field {
 	if c.Entity == nil {
 		return nil
 	}
@@ -243,7 +243,7 @@ func (c RenderContext) CreateFields() []ir.IRField {
 }
 
 // UpdateFields exposes the current entity's update-DTO projection to templates.
-func (c RenderContext) UpdateFields() []ir.IRField {
+func (c RenderContext) UpdateFields() []ir.Field {
 	if c.Entity == nil {
 		return nil
 	}
@@ -253,7 +253,7 @@ func (c RenderContext) UpdateFields() []ir.IRField {
 // PatchFields exposes the current entity's patch-DTO projection to templates:
 // the core's patchable surface (scalars + single foreign keys) plus the
 // optimistic-lock concurrency token.
-func (c RenderContext) PatchFields() []ir.IRField {
+func (c RenderContext) PatchFields() []ir.Field {
 	if c.Entity == nil {
 		return nil
 	}
@@ -261,7 +261,7 @@ func (c RenderContext) PatchFields() []ir.IRField {
 }
 
 // SearchableFields exposes the scalar text fields eligible for free-text search.
-func (c RenderContext) SearchableFields() []ir.IRField {
+func (c RenderContext) SearchableFields() []ir.Field {
 	if c.Entity == nil {
 		return nil
 	}
@@ -269,7 +269,7 @@ func (c RenderContext) SearchableFields() []ir.IRField {
 }
 
 // SortableFields exposes the scalar fields a list endpoint may order by.
-func (c RenderContext) SortableFields() []ir.IRField {
+func (c RenderContext) SortableFields() []ir.Field {
 	if c.Entity == nil {
 		return nil
 	}
@@ -277,8 +277,8 @@ func (c RenderContext) SortableFields() []ir.IRField {
 }
 
 // FilterableFields exposes the scalar fields that may be filtered by value,
-// each carrying its supported operators via IRField.FilterOperators().
-func (c RenderContext) FilterableFields() []ir.IRField {
+// each carrying its supported operators via Field.FilterOperators().
+func (c RenderContext) FilterableFields() []ir.Field {
 	if c.Entity == nil {
 		return nil
 	}
@@ -327,7 +327,7 @@ func (c RenderContext) HasMockData() bool {
 
 // CursorField returns the keyset-pagination cursor field (the PK when it is a
 // monotonic integer), or nil when keyset is unsupported for this entity.
-func (c RenderContext) CursorField() *ir.IRField {
+func (c RenderContext) CursorField() *ir.Field {
 	if c.Entity == nil {
 		return nil
 	}
@@ -335,7 +335,7 @@ func (c RenderContext) CursorField() *ir.IRField {
 }
 
 // PrimaryKey returns the primary key field of the current entity, or nil if not found.
-func (c RenderContext) PrimaryKey() *ir.IRField {
+func (c RenderContext) PrimaryKey() *ir.Field {
 	if c.Entity == nil {
 		return nil
 	}

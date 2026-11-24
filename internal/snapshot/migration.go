@@ -25,15 +25,15 @@ func tableName(entityName string) string {
 }
 
 // ComputeMigrationPlan builds the abstract migration tree.
-func ComputeMigrationPlan(old *Snapshot, project *ir.IRProject) *ir.MigrationPlan {
+func ComputeMigrationPlan(old *Snapshot, project *ir.Project) *ir.MigrationPlan {
 	plan := &ir.MigrationPlan{}
 	if old == nil || project == nil {
 		return plan
 	}
 
 	oldEntities := old.Entities
-	newByOldName := make(map[string]*ir.IREntity, len(project.Entities)) // old_name -> new entity
-	newByName := make(map[string]*ir.IREntity, len(project.Entities))    // name -> new entity
+	newByOldName := make(map[string]*ir.Entity, len(project.Entities)) // old_name -> new entity
+	newByName := make(map[string]*ir.Entity, len(project.Entities))    // name -> new entity
 	for i := range project.Entities {
 		e := &project.Entities[i]
 		newByName[e.Name] = e
@@ -134,9 +134,9 @@ func ComputeMigrationPlan(old *Snapshot, project *ir.IRProject) *ir.MigrationPla
 
 // diffColumns appends AddColumn / DropColumn / RenameColumn / AlterColumn ops
 // for one surviving entity.
-func diffColumns(plan *ir.MigrationPlan, oldState EntityState, e *ir.IREntity) {
+func diffColumns(plan *ir.MigrationPlan, oldState EntityState, e *ir.Entity) {
 	oldFields := oldState.Fields // field name -> IR database type
-	newFieldByName := make(map[string]*ir.IRField, len(e.Fields))
+	newFieldByName := make(map[string]*ir.Field, len(e.Fields))
 	for i := range e.Fields {
 		f := &e.Fields[i]
 		newFieldByName[f.Name] = f
@@ -257,7 +257,7 @@ func diffColumns(plan *ir.MigrationPlan, oldState EntityState, e *ir.IREntity) {
 }
 
 // renameTarget returns the new field name that renames from oldField, or "".
-func renameTarget(e *ir.IREntity, oldField string) string {
+func renameTarget(e *ir.Entity, oldField string) string {
 	for i := range e.Fields {
 		if e.Fields[i].OldName == oldField {
 			return e.Fields[i].Name

@@ -1,13 +1,13 @@
 package specmeta
 
-// SpecmetaJSON returns every specmeta constant as a JSON-ready map. This is the
+// JSON returns every specmeta constant as a JSON-ready map. This is the
 // single source of the shape exposed to the GUI via the WASM bridge
 // (cmd/wasm-validator -> goSpecmeta). The GUI loads it once at boot into its
 // live SPECMETA object — no other copy is shipped.
 //
 // Keep the keys in sync with the Specmeta type in
 // domaincraft-studio/src/lib/specmeta.ts.
-func SpecmetaJSON() map[string]any {
+func JSON() map[string]any {
 	return map[string]any{
 		"primitiveFieldTypes":        PrimitiveFieldTypes,
 		"stringFieldTypes":           StringFieldTypes,

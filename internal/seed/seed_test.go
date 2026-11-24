@@ -9,13 +9,13 @@ import (
 
 func TestGenerateBasicTypes(t *testing.T) {
 	t.Parallel()
-	project := &ir.IRProject{
+	project := &ir.Project{
 		Enums: map[string][]string{"Status": {"pending", "active"}},
-		Entities: []ir.IREntity{
+		Entities: []ir.Entity{
 			{
 				Name:       "Product",
 				NamePlural: "Products",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{Name: "name", DatabaseType: "string"},
 					{Name: "price", DatabaseType: "decimal"},
@@ -67,17 +67,17 @@ func TestGenerateBasicTypes(t *testing.T) {
 
 func TestGenerateReferencesParentPK(t *testing.T) {
 	t.Parallel()
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Category",
 				NamePlural: "Categories",
-				Fields:     []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
+				Fields:     []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
 			},
 			{
 				Name:       "Product",
 				NamePlural: "Products",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{Name: "categoryId", DatabaseType: "uuid", IsRelation: true, RelationTarget: "Category"},
 					{Name: "images", DatabaseType: "uuid", IsRelation: true, IsMany: true, RelationTarget: "Image"},
@@ -109,11 +109,11 @@ func TestGenerateReferencesParentPK(t *testing.T) {
 
 func TestNormalizeCoercesTypes(t *testing.T) {
 	t.Parallel()
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name: "Doc",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{Name: "title", DatabaseType: "string"},
 					{Name: "count", DatabaseType: "int"},
@@ -159,10 +159,10 @@ func TestNormalizeCoercesTypes(t *testing.T) {
 
 func TestNormalizeSkipsEntitiesWithoutSeed(t *testing.T) {
 	t.Parallel()
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
-			{Name: "Empty", Fields: []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}}},
-			{Name: "Seeded", Fields: []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}}, Seed: []map[string]any{{"id": "x"}}},
+	project := &ir.Project{
+		Entities: []ir.Entity{
+			{Name: "Empty", Fields: []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}}},
+			{Name: "Seeded", Fields: []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}}, Seed: []map[string]any{{"id": "x"}}},
 		},
 	}
 	ds := Normalize(project)
@@ -173,11 +173,11 @@ func TestNormalizeSkipsEntitiesWithoutSeed(t *testing.T) {
 
 func TestNormalizeIncludesRelationFlags(t *testing.T) {
 	t.Parallel()
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name: "Order",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{Name: "customerId", DatabaseType: "uuid", IsRelation: true, RelationTarget: "Customer"},
 				},
@@ -197,17 +197,17 @@ func TestNormalizeIncludesRelationFlags(t *testing.T) {
 
 func TestGenerateHonorsNumericBounds(t *testing.T) {
 	t.Parallel()
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name: "Bounds",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
-					{Name: "qtyInclusiveMin", DatabaseType: "int", Validations: []ir.IRValidation{{Name: "gte", Value: "10"}}},
-					{Name: "qtyExclusiveMin", DatabaseType: "int", Validations: []ir.IRValidation{{Name: "gt", Value: "5"}}},
-					{Name: "qtyExclusiveMax", DatabaseType: "bigint", Validations: []ir.IRValidation{{Name: "lt", Value: "3"}}},
-					{Name: "qtyClampedByExclusiveMax", DatabaseType: "int", Validations: []ir.IRValidation{{Name: "lt", Value: "1"}}},
-					{Name: "priceInclusiveMax", DatabaseType: "decimal", Validations: []ir.IRValidation{{Name: "lte", Value: "0.25"}}},
+					{Name: "qtyInclusiveMin", DatabaseType: "int", Validations: []ir.Validation{{Name: "gte", Value: "10"}}},
+					{Name: "qtyExclusiveMin", DatabaseType: "int", Validations: []ir.Validation{{Name: "gt", Value: "5"}}},
+					{Name: "qtyExclusiveMax", DatabaseType: "bigint", Validations: []ir.Validation{{Name: "lt", Value: "3"}}},
+					{Name: "qtyClampedByExclusiveMax", DatabaseType: "int", Validations: []ir.Validation{{Name: "lt", Value: "1"}}},
+					{Name: "priceInclusiveMax", DatabaseType: "decimal", Validations: []ir.Validation{{Name: "lte", Value: "0.25"}}},
 				},
 			},
 		},
@@ -244,16 +244,16 @@ func TestGenerateHonorsNumericBounds(t *testing.T) {
 
 func TestGenerateHonorsStringValidations(t *testing.T) {
 	t.Parallel()
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name: "Strings",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
-					{Name: "email", DatabaseType: "string", Validations: []ir.IRValidation{{Name: "email"}}},
-					{Name: "homepage", DatabaseType: "string", Validations: []ir.IRValidation{{Name: "url"}}},
-					{Name: "padded", DatabaseType: "string", Validations: []ir.IRValidation{{Name: "min", Value: "30"}}},
-					{Name: "short", DatabaseType: "string", Validations: []ir.IRValidation{{Name: "max", Value: "4"}}},
+					{Name: "email", DatabaseType: "string", Validations: []ir.Validation{{Name: "email"}}},
+					{Name: "homepage", DatabaseType: "string", Validations: []ir.Validation{{Name: "url"}}},
+					{Name: "padded", DatabaseType: "string", Validations: []ir.Validation{{Name: "min", Value: "30"}}},
+					{Name: "short", DatabaseType: "string", Validations: []ir.Validation{{Name: "max", Value: "4"}}},
 				},
 			},
 		},
@@ -280,12 +280,12 @@ func TestGenerateHonorsStringValidations(t *testing.T) {
 
 func TestNormalizeCoerceEdgeCases(t *testing.T) {
 	t.Parallel()
-	project := &ir.IRProject{
+	project := &ir.Project{
 		Enums: map[string][]string{"Status": {"draft", "live"}},
-		Entities: []ir.IREntity{
+		Entities: []ir.Entity{
 			{
 				Name: "Edges",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{Name: "count", DatabaseType: "int"},
 					{Name: "big", DatabaseType: "bigint"},
@@ -359,13 +359,13 @@ func TestGenerateClampsNonPositiveMaxLength(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			project := &ir.IRProject{
-				Entities: []ir.IREntity{
+			project := &ir.Project{
+				Entities: []ir.Entity{
 					{
 						Name: "Item",
-						Fields: []ir.IRField{
+						Fields: []ir.Field{
 							{Name: "id", DatabaseType: "uuid", IsPrimary: true},
-							{Name: "name", DatabaseType: "string", Validations: []ir.IRValidation{{Name: "max", Value: tt.max}}},
+							{Name: "name", DatabaseType: "string", Validations: []ir.Validation{{Name: "max", Value: tt.max}}},
 						},
 					},
 				},
@@ -382,15 +382,15 @@ func TestGenerateClampsNonPositiveMaxLength(t *testing.T) {
 
 func TestGenerateRotatesRelationPKs(t *testing.T) {
 	t.Parallel()
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:   "Category",
-				Fields: []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
+				Fields: []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
 			},
 			{
 				Name: "Product",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{Name: "categoryId", DatabaseType: "uuid", IsRelation: true, IsUnique: true, RelationTarget: "Category"},
 				},
@@ -419,17 +419,17 @@ func TestRelationValueRotatesParentPKs(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name   string
-		field  ir.IRField
+		field  ir.Field
 		pks    []any
 		record int
 		want   any
 	}{
-		{name: "first parent", field: ir.IRField{RelationTarget: "Category"}, pks: []any{"a", "b", "c"}, record: 0, want: "a"},
-		{name: "second parent", field: ir.IRField{RelationTarget: "Category"}, pks: []any{"a", "b", "c"}, record: 1, want: "b"},
-		{name: "wraps around", field: ir.IRField{RelationTarget: "Category"}, pks: []any{"a", "b", "c"}, record: 3, want: "a"},
-		{name: "single parent", field: ir.IRField{RelationTarget: "Category"}, pks: []any{"a"}, record: 5, want: "a"},
-		{name: "no parents", field: ir.IRField{RelationTarget: "Category"}, pks: nil, record: 2},
-		{name: "many relation", field: ir.IRField{RelationTarget: "Category", IsMany: true}, pks: []any{"a", "b"}, record: 0},
+		{name: "first parent", field: ir.Field{RelationTarget: "Category"}, pks: []any{"a", "b", "c"}, record: 0, want: "a"},
+		{name: "second parent", field: ir.Field{RelationTarget: "Category"}, pks: []any{"a", "b", "c"}, record: 1, want: "b"},
+		{name: "wraps around", field: ir.Field{RelationTarget: "Category"}, pks: []any{"a", "b", "c"}, record: 3, want: "a"},
+		{name: "single parent", field: ir.Field{RelationTarget: "Category"}, pks: []any{"a"}, record: 5, want: "a"},
+		{name: "no parents", field: ir.Field{RelationTarget: "Category"}, pks: nil, record: 2},
+		{name: "many relation", field: ir.Field{RelationTarget: "Category", IsMany: true}, pks: []any{"a", "b"}, record: 0},
 	}
 
 	for _, tt := range tests {
@@ -444,11 +444,11 @@ func TestRelationValueRotatesParentPKs(t *testing.T) {
 
 func TestGenerateUsesDeclaredDefaultOverMock(t *testing.T) {
 	t.Parallel()
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name: "Defaults",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{Name: "country", DatabaseType: "string", DefaultValue: "DE"},
 					{Name: "attempts", DatabaseType: "int", DefaultValue: "3"},

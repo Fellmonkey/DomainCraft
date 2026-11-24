@@ -27,20 +27,3 @@ linters:
       # file-permission and path-taint rules target production code.
       - path: '(.+)_test\.go$'
         linters: [gosec]
-      # The IR* prefix is the documented template contract. Renaming these
-      # exported types would break every shipped bridge and the WASM GUI.
-      - path: 'internal/ir/.*\.go'
-        linters: [revive]
-        text: 'stutters'
-      # specmeta names mirror domain.yaml keys one-to-one.
-      - path: 'internal/specmeta/.*\.go'
-        linters: [revive]
-        text: 'stutters'
-      # SnapshotPath is part of the snapshot file layout contract.
-      - path: 'internal/snapshot/snapshot\.go'
-        linters: [revive]
-        text: 'stutters'
-      # Bridge service names are referenced by CLI help and registry docs.
-      - path: 'internal/bridge/.*\.go'
-        linters: [revive]
-        text: 'stutters'

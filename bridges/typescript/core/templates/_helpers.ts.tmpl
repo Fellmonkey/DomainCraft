@@ -10,7 +10,7 @@
 {{ end }}
 
 {{- /* readFieldLine: one member of the read-DTO interface for a field.
-       Context: IRField. A to-many relation becomes `Target[]`, a to-one relation
+       Context: Field. A to-many relation becomes `Target[]`, a to-one relation
        and a scalar become the FK id / scalar value (nullable -> `| null`). */ -}}
 {{ define "readFieldLine" -}}
 {{- $f := . -}}
@@ -39,7 +39,7 @@
 {{- end -}}
 
 {{- /* zodField: the full Zod schema (base + validations) for a field.
-       Context: dict "Field" (IRField), "Project". Validations come from the SAME
+       Context: dict "Field" (Field), "Project". Validations come from the SAME
        source as the server's rules, so client and server can never drift. */ -}}
 {{ define "zodField" -}}
 {{- $f := .Field -}}
@@ -58,7 +58,7 @@
 {{- end -}}
 
 {{- /* conditionType: the typed filter condition a field's type maps to.
-       Context: dict "Field" (IRField). */ -}}
+       Context: dict "Field" (Field). */ -}}
 {{ define "conditionType" -}}
 {{- $f := .Field -}}
 {{- if $f.IsText }}TextCondition

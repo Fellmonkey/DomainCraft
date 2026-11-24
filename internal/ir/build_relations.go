@@ -11,7 +11,7 @@ import (
 // entity. It must run as a separate pass from the inverse pass below so the
 // inverse logic always sees the complete set of RelationsOut regardless of
 // entity declaration order.
-func buildForwardRelations(entities []IREntity, schema *parser.ParsedSchema, entityIndex map[string]*IREntity) error {
+func buildForwardRelations(entities []Entity, schema *parser.ParsedSchema, entityIndex map[string]*Entity) error {
 	for i := range entities {
 		irEntity := &entities[i]
 		sourceEntity := schema.Entities[irEntity.Name]
@@ -30,7 +30,7 @@ func buildForwardRelations(entities []IREntity, schema *parser.ParsedSchema, ent
 				return fmt.Errorf("relation target '%s' referenced by '%s.%s' does not exist", field.TargetEntity, irEntity.Name, field.Name)
 			}
 
-			irEntity.RelationsOut = append(irEntity.RelationsOut, IRRelation{
+			irEntity.RelationsOut = append(irEntity.RelationsOut, Relation{
 				FieldName:        field.Name,
 				TargetEntity:     targetEntity,
 				NavigationName:   field.NavigationName(),
@@ -51,7 +51,7 @@ func buildForwardRelations(entities []IREntity, schema *parser.ParsedSchema, ent
 // relationship — not a many-to-many. The FK lives on B; A's [many] is its
 // collection navigation. Without this reconciliation a bridge would generate a
 // spurious join table in addition to the FK.
-func reconcileOneToMany(entities []IREntity) {
+func reconcileOneToMany(entities []Entity) {
 	for i := range entities {
 		entity := &entities[i]
 		for j := range entity.RelationsOut {
@@ -75,7 +75,7 @@ func reconcileOneToMany(entities []IREntity) {
 // resolveInverseNavs (Pass 2c) resolves each forward relation's inverse-navigation
 // name to the actual collection on the target entity. For OrderItem→Order the
 // inverse should be "Items" (Order's forward nav), not the computed "OrderItems".
-func resolveInverseNavs(entities []IREntity) {
+func resolveInverseNavs(entities []Entity) {
 	for i := range entities {
 		entity := &entities[i]
 		for j := range entity.RelationsOut {
@@ -96,7 +96,7 @@ func resolveInverseNavs(entities []IREntity) {
 // buildIncomingRelations (Pass 3d) builds inverse (incoming) relations. Each
 // incoming relation is a collection navigation on the target that points back
 // to the owning entity.
-func buildIncomingRelations(entities []IREntity) {
+func buildIncomingRelations(entities []Entity) {
 	usedInverse := make(map[string]map[string]bool) // target entity -> defined inverse nav names
 	for i := range entities {
 		entity := &entities[i]
@@ -130,7 +130,7 @@ func buildIncomingRelations(entities []IREntity) {
 			}
 			usedInverse[target.Name][invName] = true
 			rel.InverseNavName = invName
-			target.RelationsIn = append(target.RelationsIn, IRRelation{
+			target.RelationsIn = append(target.RelationsIn, Relation{
 				FieldName:        rel.FieldName,
 				TargetEntity:     entity,
 				InverseNavName:   invName,
@@ -145,7 +145,7 @@ func buildIncomingRelations(entities []IREntity) {
 
 // findSingleBack returns the target entity's forward single (non-many) FK
 // relation that points back to sourceName, or nil if none exists.
-func findSingleBack(target *IREntity, sourceName string) *IRRelation {
+func findSingleBack(target *Entity, sourceName string) *Relation {
 	if target == nil {
 		return nil
 	}
@@ -161,7 +161,7 @@ func findSingleBack(target *IREntity, sourceName string) *IRRelation {
 // hasForwardManyTo reports whether target declares a forward IsMany relation
 // that points back to entityName. When true, the inverse collection for that
 // relationship already lives on target as its own field.
-func hasForwardManyTo(target *IREntity, entityName string) bool {
+func hasForwardManyTo(target *Entity, entityName string) bool {
 	if target == nil {
 		return false
 	}

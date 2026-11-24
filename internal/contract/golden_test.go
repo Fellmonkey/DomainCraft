@@ -31,7 +31,7 @@ var updateGolden = flag.Bool("update", false, "regenerate golden files")
 // a follow-up once that resolution moves into an importable package.
 var leafBridges = []string{"csharp-core", "ts-core", "admin-alpine", "appwrite"}
 
-func loadGoldenProject(t *testing.T) *ir.IRProject {
+func loadGoldenProject(t *testing.T) *ir.Project {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("testdata", "domain.yaml"))
 	if err != nil {
@@ -97,7 +97,7 @@ func resolveChain(t *testing.T, entryDir string) []string {
 // renderChain renders proj through a resolved bridge chain (top-first) and
 // returns a path→sha256 map of the produced files (relative to the output dir,
 // forward slashes).
-func renderChain(t *testing.T, chain []string, proj *ir.IRProject) map[string]string {
+func renderChain(t *testing.T, chain []string, proj *ir.Project) map[string]string {
 	t.Helper()
 	out := t.TempDir()
 	r, err := renderer.New(chain[0], nil)

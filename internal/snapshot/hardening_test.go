@@ -14,7 +14,7 @@ import (
 func TestSaveReplacesSnapshotWithoutTempLeftovers(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := SnapshotPath(dir)
+	path := Path(dir)
 
 	if err := Save(path, New("demo", testProject("Product"), nil)); err != nil {
 		t.Fatalf("initial Save() error = %v", err)

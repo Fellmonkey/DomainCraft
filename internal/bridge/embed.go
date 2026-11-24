@@ -31,7 +31,7 @@ func TryMaterializeEmbedded(entry RegistryEntry, opts *EnsureOptions) (bool, err
 	dst := CachePath(entry)
 	// The cache may be attacker-controlled (a planted symlink would redirect
 	// writes outside it), so check the whole path before creating anything.
-	if err := refuseSymlinks(BridgeCacheDir(), dst); err != nil {
+	if err := refuseSymlinks(CacheDir(), dst); err != nil {
 		return false, fmt.Errorf("materialize embedded bridge %q: %w", entry.ID, err)
 	}
 	if err := os.MkdirAll(dst, 0o755); err != nil { //nolint:gosec // bridge cache dirs must stay readable across CLI runs

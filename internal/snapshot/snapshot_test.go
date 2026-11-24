@@ -14,7 +14,7 @@ import (
 func TestSaveLoadRoundtrip(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := SnapshotPath(dir)
+	path := Path(dir)
 
 	snap := New("csharp-restful", testProject("Product"), []renderer.RenderedFile{
 		{Path: "src/Domain/Entities/Product.cs", Entity: "Product", Written: true},
@@ -107,13 +107,13 @@ func TestComputeDiffRenameAndTypeChange(t *testing.T) {
 	}
 
 	// Product -> Item (via old_name) and id type changed uuid -> int.
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Item",
 				OldName:    "Product",
 				NamePlural: "Items",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "int", IsPrimary: true},
 					{Name: "name", DatabaseType: "string"},
 				},
@@ -248,12 +248,12 @@ func TestComputeDiffFieldRename(t *testing.T) {
 	}
 
 	// name: string [required, old_name: title] — title -> name, same string type.
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Product",
 				NamePlural: "Products",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{
 						Name:                  "name",
@@ -306,12 +306,12 @@ func TestComputeDiffChainedFieldRename(t *testing.T) {
 		},
 	}
 
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Product",
 				NamePlural: "Products",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{
 						Name:                  "description",
@@ -348,7 +348,7 @@ func TestComputeDiffFieldRenameSkipsTypeChangeOnly(t *testing.T) {
 		Entities: map[string]EntityState{"Product": {Fields: map[string]string{"price": "int"}}},
 	}
 	project := testProject("Product")
-	project.Entities[0].Fields = []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}, {Name: "price", DatabaseType: "decimal", DatabaseColumnName: "price"}}
+	project.Entities[0].Fields = []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}, {Name: "price", DatabaseType: "decimal", DatabaseColumnName: "price"}}
 
 	diff := ComputeDiff(old, project, dir)
 	if len(diff.FieldRenames) != 0 {
@@ -446,13 +446,13 @@ func TestComputeDiffEntityRenameOnly(t *testing.T) {
 	}
 
 	// Product -> Item, fields unchanged.
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Item",
 				OldName:    "Product",
 				NamePlural: "Items",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{Name: "name", DatabaseType: "string"},
 				},
@@ -496,13 +496,13 @@ func TestComputeDiffEntityRenameWithoutFiles(t *testing.T) {
 		},
 	}
 
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Item",
 				OldName:    "Product",
 				NamePlural: "Items",
-				Fields:     []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
+				Fields:     []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
 			},
 		},
 	}
@@ -534,12 +534,12 @@ func TestComputeDiffFieldRenameWithTypeChange(t *testing.T) {
 	}
 
 	// title: string -> name: text [old_name: title] — rename AND type change.
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Product",
 				NamePlural: "Products",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{
 						Name:                  "name",
@@ -602,13 +602,13 @@ func TestComputeDiffSimultaneousChanges(t *testing.T) {
 	// Product -> Item (rename), title -> name (field rename), price int -> decimal (type change).
 	// Category: deleted.
 	// User: unchanged.
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Item",
 				OldName:    "Product",
 				NamePlural: "Items",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{
 						Name:                  "name",
@@ -623,7 +623,7 @@ func TestComputeDiffSimultaneousChanges(t *testing.T) {
 			{
 				Name:       "User",
 				NamePlural: "Users",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{Name: "email", DatabaseType: "string"},
 				},
@@ -699,24 +699,24 @@ func TestComputeDiffMultipleRenames(t *testing.T) {
 	}
 
 	// Product -> Item, Category -> Group, User unchanged.
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Item",
 				OldName:    "Product",
 				NamePlural: "Items",
-				Fields:     []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
+				Fields:     []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
 			},
 			{
 				Name:       "Group",
 				OldName:    "Category",
 				NamePlural: "Groups",
-				Fields:     []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
+				Fields:     []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
 			},
 			{
 				Name:       "User",
 				NamePlural: "Users",
-				Fields:     []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
+				Fields:     []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
 			},
 		},
 	}
@@ -767,10 +767,10 @@ func TestComputeDiffExistingFileFiltersDeleted(t *testing.T) {
 	}
 }
 
-func testProject(entityName string) *ir.IRProject {
-	return &ir.IRProject{
-		Entities: []ir.IREntity{
-			{Name: entityName, NamePlural: entityName + "s", Fields: []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}}},
+func testProject(entityName string) *ir.Project {
+	return &ir.Project{
+		Entities: []ir.Entity{
+			{Name: entityName, NamePlural: entityName + "s", Fields: []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}}},
 		},
 	}
 }

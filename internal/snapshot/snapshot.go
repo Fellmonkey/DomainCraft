@@ -57,8 +57,8 @@ type Snapshot struct {
 	Entities         map[string]EntityState  `json:"entities"`
 }
 
-// SnapshotPath returns the absolute path of the snapshot for an output dir.
-func SnapshotPath(outputDir string) string {
+// Path returns the absolute path of the snapshot for an output dir.
+func Path(outputDir string) string {
 	return filepath.Join(outputDir, DirName, FileName)
 }
 
@@ -98,7 +98,7 @@ func Save(path string, snap *Snapshot) error {
 }
 
 // New builds a fresh snapshot from the current IR and the renderer file manifest.
-func New(bridge string, project *ir.IRProject, files []renderer.RenderedFile) *Snapshot {
+func New(bridge string, project *ir.Project, files []renderer.RenderedFile) *Snapshot {
 	entities := make(map[string]EntityState, len(project.Entities))
 	for _, e := range project.Entities {
 		fields := make(map[string]string, len(e.Fields))
@@ -205,13 +205,13 @@ func (d *Diff) HasSchemaChanges() bool {
 
 // ComputeDiff compares an old snapshot against the current IR project.
 // File lists are filtered to those that still exist on disk under outputDir.
-func ComputeDiff(old *Snapshot, project *ir.IRProject, outputDir string) *Diff {
+func ComputeDiff(old *Snapshot, project *ir.Project, outputDir string) *Diff {
 	diff := &Diff{}
 	if old == nil || project == nil {
 		return diff
 	}
 
-	newEntities := make(map[string]ir.IREntity, len(project.Entities))
+	newEntities := make(map[string]ir.Entity, len(project.Entities))
 	renamedByOld := make(map[string]string) // old name -> new name
 	for _, e := range project.Entities {
 		newEntities[e.Name] = e
