@@ -1,6 +1,8 @@
 package validator
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -1397,6 +1399,69 @@ func TestValidateReconciledOneToManyWarning(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected warning about [many] reconciled into a one-to-many, got %v", errs)
+	}
+}
+
+// Regression: the hint must print the FK field name as declared. Appending a
+// second "Id" to a field already named `articleId` produced `articleIdId`.
+func TestValidateReconciledWarningKeepsFKName(t *testing.T) {
+	schema := &parser.ParsedSchema{
+		Project:     parser.ProjectConfig{Name: "Test"},
+		EntityOrder: []string{"Article", "Tag"},
+		Entities: map[string]*parser.ParsedEntity{
+			"Article": {
+				Name:       "Article",
+				FieldOrder: []string{"id", "tags"},
+				Fields: map[string]*parser.ParsedField{
+					"id":   mustParsedField(t, "id", "uuid [primary]"),
+					"tags": mustParsedField(t, "tags", "relation(Tag) [many]"),
+				},
+			},
+			"Tag": {
+				Name:       "Tag",
+				FieldOrder: []string{"id", "articleId"},
+				Fields: map[string]*parser.ParsedField{
+					"id":        mustParsedField(t, "id", "uuid [primary]"),
+					"articleId": mustParsedField(t, "articleId", "relation(Article)"),
+				},
+			},
+		},
+	}
+	schema.Entities["Article"].Fields["id"].IsPrimary = true
+	schema.Entities["Tag"].Fields["id"].IsPrimary = true
+
+	found := false
+	for _, e := range New(schema).Validate() {
+		if !e.Warning || !strings.Contains(e.Message, "reconciled with FK") {
+			continue
+		}
+		found = true
+		if strings.Contains(e.Message, "articleIdId") {
+			t.Fatalf("FK name duplicated in warning: %s", e.Message)
+		}
+		if !strings.Contains(e.Message, "FK 'articleId' on Tag") {
+			t.Fatalf("warning lost the FK name: %s", e.Message)
+		}
+	}
+	if !found {
+		t.Fatal("expected a reconciliation warning")
+	}
+}
+
+// The shipped example must not emit warnings: an example is a template users copy.
+func TestExampleDomainHasNoWarnings(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "examples", "domain.yaml"))
+	if err != nil {
+		t.Fatalf("read example: %v", err)
+	}
+	schema, err := parser.ParseYAML(data)
+	if err != nil {
+		t.Fatalf("parse example: %v", err)
+	}
+	for _, e := range New(schema).Validate() {
+		if e.Warning {
+			t.Errorf("example emits a warning: %s", e.Error())
+		}
 	}
 }
 

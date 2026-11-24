@@ -6,3 +6,5 @@
 # How to add a row: run the fix's re-run on the generated code (or the Studio /
 # unit test), put the check name in the first column, the issue or PR number
 # in the second, and one line on what broke in the third.
+internal/validator/validator_test.go::TestValidateReconciledWarningKeepsFKName	#3	FK field ending in Id got a second Id in the reconciliation warning
+internal/validator/validator_test.go::TestExampleDomainHasNoWarnings	#3	shipped example emitted a reconciliation warning

@@ -145,7 +145,6 @@ entities:
       totalAmount: decimal [required, gte:0]
       notes: string [optional, max:1000]
       shippingAddress: json [optional]
-      items: relation(OrderItem) [many]
       paidAt: datetime [optional]
       subtotal: decimal [required, gte:0]
       tax: decimal [optional, gte:0]

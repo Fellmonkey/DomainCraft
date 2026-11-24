@@ -626,7 +626,7 @@ func (v *Validator) validateField(entityName string, fieldName string, field *pa
 					errs = append(errs, ValidationError{
 						Entity:  entityName,
 						Field:   fieldName,
-						Message: fmt.Sprintf("[many] relation is reconciled with FK '%s' on %s into a one-to-many relationship (collection on %s, FK %sId on %s); remove one side if you meant a many-to-many join", back.Name, field.TargetEntity, entityName, back.Name, field.TargetEntity),
+						Message: fmt.Sprintf("[many] relation is reconciled with FK '%s' on %s into a one-to-many relationship (collection on %s); remove one side if you meant a many-to-many join", back.Name, field.TargetEntity, entityName),
 						Warning: true,
 					})
 				}
