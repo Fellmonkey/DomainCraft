@@ -11,6 +11,10 @@ import (
 func TestSafeRelPathKeepsPathsInsideOutputDir(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		name    string
@@ -38,8 +42,8 @@ func TestSafeRelPathKeepsPathsInsideOutputDir(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("safeRelPath(%q) error = %v, wantErr %v", tt.path, err, tt.wantErr)
 			}
-			if err == nil && !strings.HasPrefix(got, root+string(filepath.Separator)) && got != root {
-				t.Fatalf("safeRelPath(%q) = %q, outside %q", tt.path, got, root)
+			if err == nil && !strings.HasPrefix(got, absRoot+string(filepath.Separator)) && got != absRoot {
+				t.Fatalf("safeRelPath(%q) = %q, outside %q", tt.path, got, absRoot)
 			}
 		})
 	}
