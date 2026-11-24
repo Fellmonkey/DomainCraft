@@ -96,14 +96,16 @@ func TestValidateReleaseURL(t *testing.T) {
 }
 
 func TestRedactURL(t *testing.T) {
+	// D3: all callers now use the strictest format — scheme and host only.
 	cases := []struct {
 		name string
 		raw  string
 		want string
 	}{
-		{"credentials and query", "https://user:secret@github.com/dc?token=abc#f", "https://github.com/dc"},
-		{"plain", updateAssetURL("dc"), updateAssetURL("dc")},
-		{"malformed", "https://[::1", "<invalid-url>"},
+		{"credentials and query", "https://user:secret@github.com/dc?token=abc#f", "https://github.com"},
+		{"plain", updateAssetURL("dc"), "https://github.com"},
+		{"port is dropped", "https://github.com:8443/dc", "https://github.com"},
+		{"malformed", "https://[::1", "<invalid url>"},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {

@@ -2,16 +2,15 @@ package bridge
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/DomainCraft/DomainCraft/internal/netutil"
+	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 	"gopkg.in/yaml.v3"
 )
 
@@ -52,14 +51,10 @@ func parseBridgeContractVersion(data []byte) (int, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return 0, fmt.Errorf("parse bridge contract version: %w", err)
 	}
-	switch {
-	case cfg.ContractVersion == 0:
-		return 1, nil
-	case cfg.ContractVersion < 0:
+	if cfg.ContractVersion < 0 {
 		return 0, fmt.Errorf("invalid contract_version %d", cfg.ContractVersion)
-	default:
-		return cfg.ContractVersion, nil
 	}
+	return specmeta.EffectiveContractVersion(cfg.ContractVersion), nil
 }
 
 // shouldApplyContract verifies that a bridge declaring contractVersion is
@@ -279,50 +274,10 @@ func githubAPIHead(entry RegistryEntry) (branch, commit string, err error) {
 const maxProbeBodyBytes = 1 << 20
 
 // httpGetBody performs a GET bound to the CLI's command context and returns the
-// response body. It reads one byte past the limit so an oversized body fails
-// instead of being silently truncated into a plausible-looking manifest.
+// response body. The bounded GET, status check and redaction live in netutil;
+// this wrapper keeps the package's test seam and the 10s probe client.
 func httpGetBody(rawURL string) ([]byte, error) {
-	scope := redactedURLScope(rawURL)
-	req, err := http.NewRequestWithContext(CommandContext(), http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build probe request for %s: %w", scope, redactURLError(err))
-	}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("probe request to %s failed: %w", scope, redactURLError(err))
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("http %d for %s", resp.StatusCode, scope)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxProbeBodyBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("read response from %s: %w", scope, err)
-	}
-	if len(body) > maxProbeBodyBytes {
-		return nil, fmt.Errorf("response from %s exceeds %d bytes", scope, maxProbeBodyBytes)
-	}
-	return body, nil
-}
-
-// redactURLError drops the raw URL carried by *url.Error (userinfo and query
-// could be secrets) while keeping the underlying reason for %w wrapping.
-func redactURLError(err error) error {
-	var urlErr *url.Error
-	if errors.As(err, &urlErr) && urlErr.Err != nil {
-		return urlErr.Err
-	}
-	return err
-}
-
-// redactedURLScope reduces a URL to scheme and host for error messages, so
-// credentials and query strings from a bridge's config never reach the log.
-func redactedURLScope(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme == "" || u.Hostname() == "" {
-		return "<invalid url>"
-	}
-	return u.Scheme + "://" + u.Hostname()
+	return netutil.BoundedGet(CommandContext(), httpClient, rawURL, int64(maxProbeBodyBytes), nil)
 }
 
 // runGit runs a git command in dir and returns its trimmed stdout.

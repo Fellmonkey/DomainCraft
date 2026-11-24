@@ -16,6 +16,7 @@ import (
 
 	"github.com/DomainCraft/DomainCraft/internal/appdir"
 	"github.com/DomainCraft/DomainCraft/internal/fsutil"
+	"github.com/DomainCraft/DomainCraft/internal/netutil"
 	"github.com/DomainCraft/DomainCraft/internal/packages"
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
 
@@ -297,17 +298,10 @@ func parseAllowedURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// redactURL strips credentials, query and fragment from a URL before it is
-// embedded in an error message.
+// redactURL reduces a URL to scheme and host before it is embedded in an error
+// message. Kept as a seam for the update tests; the redaction is shared.
 func redactURL(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "<invalid-url>"
-	}
-	u.User = nil
-	u.RawQuery = ""
-	u.Fragment = ""
-	return u.String()
+	return netutil.RedactedURL(raw)
 }
 
 // releaseChecksum reads the SHA-256 digest for name from the release's
@@ -356,42 +350,27 @@ func verifyFileSHA256(path, want string) error {
 	return nil
 }
 
+// validateReleaseRedirect keeps a redirect from moving the download off the
+// release-host allowlist. Signed query strings on GitHub's asset redirects are
+// allowed here; validateReleaseURL still rejects them on URLs from release JSON.
+func validateReleaseRedirect(u *url.URL) error {
+	_, err := parseAllowedURL(u.String())
+	return err
+}
+
 // httpGetBody performs a GET bound to commandCtx and returns the response body,
-// capping it at maxResponseBody bytes. An oversized body is an error, not a
-// silently truncated success.
+// capping it at maxResponseBody bytes. The shared helper owns the status check,
+// cap and redaction; this package supplies the client, context and redirect
+// policy.
 func httpGetBody(rawURL string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(commandCtx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build request for %s: %w", redactURL(rawURL), err)
-	}
-	resp, err := httpClient.Do(req) //nolint:bodyclose // readResponseBody closes the body
-	if err != nil {
-		return nil, fmt.Errorf("request %s: %w", redactURL(rawURL), err)
-	}
-	return readResponseBody(resp, rawURL)
+	return netutil.BoundedGet(commandCtx, httpClient, rawURL, maxResponseBody, validateReleaseRedirect)
 }
 
 // readResponseBody reads at most maxResponseBody+1 bytes so an oversized
 // response is rejected instead of being silently truncated into a valid binary.
+// It stays as a test seam for the response-level checks.
 func readResponseBody(resp *http.Response, rawURL string) ([]byte, error) {
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("http %d for %s", resp.StatusCode, redactURL(rawURL))
-	}
-	// A redirect must not move the download off the allowlist either.
-	if resp.Request != nil && resp.Request.URL != nil {
-		if _, err := parseAllowedURL(resp.Request.URL.String()); err != nil {
-			return nil, fmt.Errorf("redirect from %s: %w", redactURL(rawURL), err)
-		}
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", redactURL(rawURL), err)
-	}
-	if int64(len(data)) > maxResponseBody {
-		return nil, fmt.Errorf("response from %s exceeds %d bytes", redactURL(rawURL), maxResponseBody)
-	}
-	return data, nil
+	return netutil.ReadBoundedBody(resp, rawURL, maxResponseBody, validateReleaseRedirect)
 }
 
 // downloadBinary fetches a release asset into a temp file and returns its path.

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/DomainCraft/DomainCraft/internal/bridge"
+	"github.com/DomainCraft/DomainCraft/internal/netutil"
 )
 
 // maxRegistryResponseBytes caps a version index read from a registry.
@@ -144,12 +145,9 @@ func restrictedRegistryDialer(ctx context.Context, network, addr string) (net.Co
 
 // redactedRegistryURL keeps only scheme and host for error messages, so
 // credentials and query strings from a bridge's config never reach the log.
+// The redaction itself is shared with the other network callers.
 func redactedRegistryURL(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme == "" || u.Hostname() == "" {
-		return "<invalid url>"
-	}
-	return u.Scheme + "://" + u.Hostname()
+	return netutil.RedactedURL(raw)
 }
 
 // ResolveVersion queries a package registry (e.g. NuGet) for the latest stable version
