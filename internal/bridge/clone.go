@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -95,10 +96,14 @@ func EnsureBridge(entry RegistryEntry, opts *EnsureOptions) (string, error) {
 			return "", err
 		}
 
-		// Verify the cloned repo contains bridge.yaml.
+		// Verify the cloned repo contains bridge.yaml. Fail closed: the missing
+		// manifest stays the primary error even if cleanup also fails.
 		if !IsCached(entry) {
-			_ = os.RemoveAll(cacheDir)
-			return "", fmt.Errorf("cloned bridge %q does not contain bridge.yaml", entry.ID)
+			missing := fmt.Errorf("cloned bridge %q does not contain bridge.yaml", entry.ID)
+			if err := os.RemoveAll(cacheDir); err != nil {
+				return "", errors.Join(missing, fmt.Errorf("remove incomplete cache %q: %w", cacheDir, err))
+			}
+			return "", missing
 		}
 
 		if err := WriteMeta(entry, newMetaFromCache(entry)); err != nil {
@@ -214,8 +219,11 @@ func CloneBridge(entry RegistryEntry) error {
 	cmd := exec.CommandContext(commandCtx, "git", "clone", "--depth", "1", url, cacheDir) //nolint:gosec // args passed separately; no shell interpretation
 	cmd.Env = gitScrubbedEnv()
 	if out, err := cmd.CombinedOutput(); err != nil {
-		_ = os.RemoveAll(cacheDir)
-		return fmt.Errorf("clone %s: %w: %s", url, err, out)
+		cloneErr := fmt.Errorf("clone %s: %w: %s", url, err, out)
+		if rerr := os.RemoveAll(cacheDir); rerr != nil {
+			return errors.Join(cloneErr, fmt.Errorf("remove incomplete cache %q: %w", cacheDir, rerr))
+		}
+		return cloneErr
 	}
 	return nil
 }

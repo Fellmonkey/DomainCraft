@@ -88,3 +88,10 @@ internal/fsutil/fsutil_test.go::TestAtomicWritePreservesExistingFileMode	#5	atom
 internal/snapshot/rewrite_test.go::TestRewriteFilePreservesExistingMode	#5	prune rewrite silently changed permissions of custom files
 internal/snapshot/hardening_test.go::TestMigrationPlanTableNameMatchesIRForAcronymEntity	#5	migration plan and IR derived table names through two different rules
 internal/snapshot/hardening_test.go::TestCasingVariants	#5	four parallel casing tables could drift during entity renames
+cmd/domaincraft/commands_prune_test.go::TestPruneCLICleanupFailureKeepsSnapshot	#5	prune reported success and advanced the snapshot after a failed cleanup
+cmd/domaincraft/commands_hardening_test.go::TestSanitizeCommandLine	#5	bridge command lines were displayed with terminal control bytes intact
+cmd/domaincraft/commands_update_security_test.go::TestDownloadBinaryChmodFailure	#5	self-update ignored a failed chmod on the downloaded binary
+cmd/domaincraft/commands_update_security_test.go::TestReplaceExecutableJoinsRenameFailures	#5	self-update lost both rename errors and the restore result
+internal/bridge/hardening_test.go::TestValidateFetchBranch	#5	cache-supplied branch could become a git option during fetch
+internal/bridge/hardening_test.go::TestApplyUpdateJoinsFastPathFailureWithCloneFailure	#5	update fallback reported only the re-clone failure
+internal/bridge/update_contract_test.go::TestCoreContractVersionMatchesSpecmeta	#5	bridge contract version had an independent definition

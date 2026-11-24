@@ -11,6 +11,12 @@ import (
 	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 )
 
+// embeddedBridgeRel builds the path of a bundled bridge inside the embedded
+// filesystem. All embedded-tree lookups use this one spelling.
+func embeddedBridgeRel(entryPath string) string {
+	return "bridges/" + filepath.ToSlash(entryPath)
+}
+
 // TryMaterializeEmbedded copies the embedded copy of an official bridge into its
 // cache directory. It returns (true, nil) when the bridge is embedded and was
 // materialized, (false, nil) when it is not embedded (caller should clone), and
@@ -23,7 +29,7 @@ func TryMaterializeEmbedded(entry RegistryEntry, opts *EnsureOptions) (bool, err
 	if entry.Path == "" {
 		return false, nil
 	}
-	rel := "bridges/" + filepath.ToSlash(entry.Path)
+	rel := embeddedBridgeRel(entry.Path)
 	if _, err := domaincraft.Bridges.ReadDir(rel); err != nil {
 		return false, nil // not embedded in this binary
 	}

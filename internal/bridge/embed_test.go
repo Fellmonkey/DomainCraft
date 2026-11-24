@@ -37,6 +37,16 @@ func TestTryMaterializeEmbedded(t *testing.T) {
 	}
 }
 
+// F27: the embedded tree path has one spelling for all lookups.
+func TestEmbeddedBridgeRel(t *testing.T) {
+	if got := embeddedBridgeRel("csharp/core"); got != "bridges/csharp/core" {
+		t.Errorf("embeddedBridgeRel = %q, want bridges/csharp/core", got)
+	}
+	if got := embeddedBridgeRel(filepath.FromSlash("csharp/core")); got != "bridges/csharp/core" {
+		t.Errorf("embeddedBridgeRel with OS separators = %q, want bridges/csharp/core", got)
+	}
+}
+
 func TestEmbeddedContainsRegistryBridges(t *testing.T) {
 	reg := Default()
 	for _, e := range reg.All() {

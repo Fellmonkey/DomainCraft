@@ -94,3 +94,48 @@ func TestLooksLikePath(t *testing.T) {
 		}
 	}
 }
+
+// F27: FindMonorepoBridge walks up to the filesystem root and takes the first
+// (nearest) match — the shared walk must preserve that order.
+func TestFindMonorepoBridgeWalksUp(t *testing.T) {
+	root := t.TempDir()
+	bridgeDir := makeMonorepoBridge(t, root, "csharp/core")
+	deep := filepath.Join(root, "a", "b", "c")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := FindMonorepoBridge(deep, "csharp/core"); got != bridgeDir {
+		t.Errorf("FindMonorepoBridge(%q) = %q, want %q", deep, got, bridgeDir)
+	}
+	if got := FindMonorepoBridge(deep, ""); got != "" {
+		t.Errorf("FindMonorepoBridge with empty relPath = %q, want empty", got)
+	}
+
+	// A nearer candidate wins over the one at the monorepo root.
+	inner := filepath.Join(root, "a", "bridges", "csharp", "core")
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(inner, "bridge.yaml"), []byte("name: inner\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := FindMonorepoBridge(deep, "csharp/core"); got != inner {
+		t.Errorf("FindMonorepoBridge(%q) = %q, want nearest match %q", deep, got, inner)
+	}
+}
+
+// F27: monorepoRoot uses the same upward walk with a different visitor.
+func TestMonorepoRootWalksUp(t *testing.T) {
+	root := t.TempDir()
+	makeMonorepoBridge(t, root, "csharp/core")
+	deep := filepath.Join(root, "a", "b", "c")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := monorepoRoot(deep); got != root {
+		t.Errorf("monorepoRoot(%q) = %q, want %q", deep, got, root)
+	}
+	if got := monorepoRoot(t.TempDir()); got != "" {
+		t.Errorf("monorepoRoot outside a monorepo = %q, want empty", got)
+	}
+}

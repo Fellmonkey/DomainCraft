@@ -312,3 +312,138 @@ func TestHTTPProbeUsesCommandContext(t *testing.T) {
 		t.Fatal("httpGetBody ignored the cancelled command context")
 	}
 }
+
+// F31: the branch handed to `git fetch` may come from cache metadata, so it
+// must pass the same strict git-ref grammar used for pinned refs.
+func TestValidateFetchBranch(t *testing.T) {
+	tests := []struct {
+		name    string
+		branch  string
+		wantErr bool
+	}{
+		{name: "main", branch: "main"},
+		{name: "feature branch", branch: "feature/branch"},
+		{name: "release with plus", branch: "release+build"},
+		{name: "tag-like name", branch: "v1.2.3"},
+		{name: "empty", branch: "", wantErr: true},
+		{name: "leading dash", branch: "--upload-pack=sh", wantErr: true},
+		{name: "dash branch", branch: "-dangerous", wantErr: true},
+		{name: "dotdot traversal", branch: "release/../../main", wantErr: true},
+		{name: "double slash", branch: "feature//branch", wantErr: true},
+		{name: "at brace expression", branch: "main@{1}", wantErr: true},
+		{name: "leading slash", branch: "/main", wantErr: true},
+		{name: "trailing slash", branch: "main/", wantErr: true},
+		{name: "newline", branch: "main\n--exec", wantErr: true},
+		{name: "lock suffix", branch: "branch.lock", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateFetchBranch(tt.branch)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateFetchBranch(%q) = %v, wantErr %v", tt.branch, err, tt.wantErr)
+			}
+			if tt.wantErr && !strings.Contains(err.Error(), "invalid fetch branch") {
+				t.Errorf("error = %q, want it to name the invalid fetch branch", err)
+			}
+		})
+	}
+}
+
+// F31 wiring: a hostile branch from either source (Update or cache metadata)
+// is rejected before git runs. Without the guard ApplyUpdate falls through to
+// a clone, so the validation error is the observable contract here.
+func TestApplyUpdateRejectsUnsafeFetchBranch(t *testing.T) {
+	root := t.TempDir()
+	appdir.SetBaseForTesting(root)
+	defer appdir.SetBaseForTesting("")
+
+	entry := cacheEntry("unsafe-branch", "owner/unsafe-branch")
+	bad := "--upload-pack=sh"
+
+	// Keep the no-guard baseline offline too: rewrite the clone URL to a
+	// missing local path so an unguarded fall-through fails without network.
+	home := t.TempDir()
+	missing := filepath.ToSlash(filepath.Join(home, "missing.git"))
+	cfg := "[url \"file:///" + missing + "\"]\n\tinsteadOf = https://github.com/owner/unsafe-branch.git\n"
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	// Source 1: the Update passed by the caller.
+	if _, err := ApplyUpdate(entry, &Update{Entry: entry, RemoteBranch: bad}); err == nil ||
+		!strings.Contains(err.Error(), "invalid fetch branch") {
+		t.Errorf("ApplyUpdate with hostile Update branch = %v, want validation error", err)
+	}
+
+	// Source 2: the branch recorded in cache metadata.
+	if err := WriteMeta(entry, &CacheMeta{ID: entry.ID, Source: entry.GitHub, Branch: bad}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyUpdate(entry, nil); err == nil ||
+		!strings.Contains(err.Error(), "invalid fetch branch") {
+		t.Errorf("ApplyUpdate with hostile metadata branch = %v, want validation error", err)
+	}
+}
+
+// F32: when the in-place update fails and the fallback re-clone also fails,
+// both causes and the cache path are reported, with the original failure first.
+func TestApplyUpdateJoinsFastPathFailureWithCloneFailure(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	root := t.TempDir()
+	appdir.SetBaseForTesting(root)
+	defer appdir.SetBaseForTesting("")
+
+	remote := filepath.Join(root, "remote.git")
+	testGit(t, root, "init", "--bare", "-b", "main", "remote.git")
+	testGit(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
+
+	src := filepath.Join(root, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	makeBridgeRepo(t, src, "main")
+	testGit(t, src, "remote", "add", "origin", remote)
+	testGit(t, src, "push", "-q", "-u", "origin", "main")
+
+	entry := cacheEntry("joined-errors", "owner/joined-errors")
+	cacheDir := CachePath(entry)
+	testGit(t, root, "clone", "-q", remote, cacheDir)
+
+	// A syntactically valid but nonexistent branch makes the fetch fail, so the
+	// update takes the re-clone fallback.
+	if err := WriteMeta(entry, &CacheMeta{ID: entry.ID, Source: entry.GitHub, Version: "1.0.0", Branch: "missing-branch"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rewrite the clone URL to a missing local path: the fallback fails fast,
+	// offline, and the original fetch cause must survive in the joined error.
+	home := t.TempDir()
+	missing := filepath.ToSlash(filepath.Join(home, "missing.git"))
+	cfg := "[url \"file:///" + missing + "\"]\n\tinsteadOf = https://github.com/owner/joined-errors.git\n"
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	_, err := ApplyUpdate(entry, nil)
+	if err == nil {
+		t.Fatal("ApplyUpdate succeeded despite a failed fetch and re-clone")
+	}
+	msg := err.Error()
+	fetch := strings.Index(msg, `fetch branch "missing-branch"`)
+	clone := strings.Index(msg, "re-clone bridge")
+	if fetch < 0 {
+		t.Errorf("error = %q, want the original fetch failure", msg)
+	}
+	if clone < 0 || !strings.Contains(msg, cacheDir) {
+		t.Errorf("error = %q, want the re-clone failure with cache path %q", msg, cacheDir)
+	}
+	if fetch >= 0 && clone >= 0 && fetch > clone {
+		t.Errorf("error = %q, want the original fetch failure before the cleanup failure", msg)
+	}
+}

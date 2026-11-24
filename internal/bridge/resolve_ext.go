@@ -38,6 +38,23 @@ func ResolveExtendsRef(ref, fromDir string, resolver *Resolver) (string, error) 
 	return resolver.Resolve(ref)
 }
 
+// walkUpFromDir visits dir and each ancestor up to the filesystem root,
+// stopping as soon as visit reports a match. Both monorepo lookups share this
+// walk so their search order and stopping rule cannot drift.
+func walkUpFromDir(dir string, visit func(cur string) bool) {
+	cur := dir
+	for {
+		if visit(cur) {
+			return
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return
+		}
+		cur = parent
+	}
+}
+
 // FindMonorepoBridge walks up from dir looking for <root>/bridges/<relPath>
 // containing a bridge.yaml. It returns the bridge directory, or "" when relPath
 // is empty or no such bridge exists anywhere up the tree. The walk stops at the
@@ -47,41 +64,38 @@ func FindMonorepoBridge(dir, relPath string) string {
 	if relPath == "" {
 		return ""
 	}
-	cur := dir
-	for {
+	found := ""
+	walkUpFromDir(dir, func(cur string) bool {
 		candidate := filepath.Join(cur, "bridges", filepath.FromSlash(relPath))
 		if info, err := os.Stat(filepath.Join(candidate, "bridge.yaml")); err == nil && !info.IsDir() {
-			return candidate
+			found = candidate
+			return true
 		}
-		parent := filepath.Dir(cur)
-		if parent == cur {
-			return ""
-		}
-		cur = parent
-	}
+		return false
+	})
+	return found
 }
 
 // monorepoRoot walks up from dir looking for the root of the DomainCraft
 // monorepo: a directory with a bridges/ tree and a go.mod declaring this module.
 // It returns "" when dir is not inside such a tree.
 func monorepoRoot(dir string) string {
-	cur, err := filepath.Abs(dir)
+	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return ""
 	}
-	for {
+	found := ""
+	walkUpFromDir(abs, func(cur string) bool {
 		if info, err := os.Stat(filepath.Join(cur, "bridges")); err == nil && info.IsDir() {
 			if data, err := os.ReadFile(filepath.Join(cur, "go.mod")); err == nil && //nolint:gosec // path walked upward from the validated bridge dir
 				strings.Contains(string(data), "module github.com/DomainCraft/DomainCraft") {
-				return cur
+				found = cur
+				return true
 			}
 		}
-		parent := filepath.Dir(cur)
-		if parent == cur {
-			return ""
-		}
-		cur = parent
-	}
+		return false
+	})
+	return found
 }
 
 // samePath compares two absolute paths using the filesystem's case rules.
@@ -105,7 +119,7 @@ func MonorepoRelPath(dir, entryPath string) string {
 	if entryPath == "" || !filepath.IsLocal(filepath.FromSlash(entryPath)) {
 		return ""
 	}
-	embedded := "bridges/" + filepath.ToSlash(entryPath)
+	embedded := embeddedBridgeRel(entryPath)
 	if _, err := domaincraft.Bridges.ReadDir(embedded); err != nil {
 		return "" // not a bundled bridge in this binary
 	}
@@ -158,7 +172,7 @@ type Status struct {
 func (e RegistryEntry) Status(checkRemote bool) Status {
 	s := Status{}
 	if e.Path != "" {
-		if _, err := domaincraft.Bridges.ReadDir("bridges/" + filepath.ToSlash(e.Path)); err == nil {
+		if _, err := domaincraft.Bridges.ReadDir(embeddedBridgeRel(e.Path)); err == nil {
 			s.Embedded = true
 		}
 	}

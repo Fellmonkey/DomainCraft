@@ -4,7 +4,23 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 )
+
+// TestCoreContractVersionMatchesSpecmeta pins the single source of truth: the
+// bridge gate must move with specmeta.ContractVersion after a contract bump.
+func TestCoreContractVersionMatchesSpecmeta(t *testing.T) {
+	if CoreContractVersion != specmeta.ContractVersion {
+		t.Errorf("CoreContractVersion = %d, specmeta.ContractVersion = %d", CoreContractVersion, specmeta.ContractVersion)
+	}
+	if err := shouldApplyContract(specmeta.ContractVersion); err != nil {
+		t.Errorf("contract equal to specmeta version must be accepted: %v", err)
+	}
+	if err := shouldApplyContract(specmeta.ContractVersion + 1); err == nil {
+		t.Error("contract newer than specmeta version must be rejected")
+	}
+}
 
 func TestParseBridgeContractVersion(t *testing.T) {
 	cases := []struct {

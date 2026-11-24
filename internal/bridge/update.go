@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -28,9 +29,10 @@ var httpGetBodyFn = httpGetBody
 const DefaultUpdateInterval = 24 * time.Hour
 
 // CoreContractVersion is the bridge-contract version the current core
-// implements. It must match renderer.ContractVersion. An upstream bridge
-// declaring a higher contract is unsupported and must never be applied.
-const CoreContractVersion = 1
+// implements. It aliases specmeta.ContractVersion so a bump needs one edit.
+// An upstream bridge declaring a higher contract is unsupported and must never
+// be applied.
+const CoreContractVersion = specmeta.ContractVersion
 
 // parseBridgeContractVersion reads `contract_version` from bridge.yaml bytes.
 // An absent field means contract v1. Any other unreadable value is an error:
@@ -142,6 +144,17 @@ func CheckForUpdate(entry RegistryEntry, interval time.Duration) (*Update, error
 	}, nil
 }
 
+// validateFetchBranch applies the strict git-ref grammar used for pinned refs
+// to the branch name passed to `git fetch`. The branch can come from cache
+// metadata, so an attacker-controlled value must never become a git option or a
+// revision expression.
+func validateFetchBranch(branch string) error {
+	if err := validatePinRef(branch); err != nil {
+		return fmt.Errorf("invalid fetch branch %q: %w", branch, err)
+	}
+	return nil
+}
+
 // ApplyUpdate brings a cached bridge up to the upstream default branch,
 // preserving the checkout via a shallow fetch + hard reset (a full re-clone is
 // used as a fallback if the in-place update fails). It returns the new version.
@@ -164,9 +177,17 @@ func ApplyUpdate(entry RegistryEntry, u *Update) (string, error) {
 	} else if meta, err := ReadMeta(entry); err == nil && meta != nil && meta.Branch != "" {
 		branch = meta.Branch
 	}
+	if err := validateFetchBranch(branch); err != nil {
+		return "", err
+	}
 
-	// Fast path: update the existing checkout in place.
-	if _, err := runGit(cacheDir, "fetch", "--depth", "1", "origin", branch); err == nil {
+	// Fast path: update the existing checkout in place. Keep why it failed so a
+	// fallback failure reports the original cause as well as the cleanup.
+	var fastPathErrs []error
+	if _, err := runGit(cacheDir, "fetch", "--depth", "1", "origin", branch); err != nil {
+		fastPathErrs = append(fastPathErrs,
+			fmt.Errorf("fetch branch %q of bridge %q in %q: %w", branch, entry.ID, cacheDir, err))
+	} else {
 		// Contract gate: never apply an upstream bridge this core cannot support.
 		// The manifest must be readable — fail closed when it is not.
 		out, serr := runGit(cacheDir, "show", "FETCH_HEAD:bridge.yaml")
@@ -180,18 +201,24 @@ func ApplyUpdate(entry RegistryEntry, u *Update) (string, error) {
 		if cerr := shouldApplyContract(contract); cerr != nil {
 			return "", cerr
 		}
-		if _, err := runGit(cacheDir, "reset", "--hard", "FETCH_HEAD"); err == nil {
+		if _, err := runGit(cacheDir, "reset", "--hard", "FETCH_HEAD"); err != nil {
+			fastPathErrs = append(fastPathErrs,
+				fmt.Errorf("reset bridge %q in %q to FETCH_HEAD: %w", entry.ID, cacheDir, err))
+		} else {
 			return finishUpdate(entry, branch, pin)
 		}
 		// reset failed — fall through to a clean re-clone
 	}
 
-	// Fallback: the existing checkout is unusable; replace it entirely.
+	// Fallback: the existing checkout is unusable; replace it entirely. Report
+	// the in-place failure (primary) alongside any cleanup/re-clone failure.
 	if err := os.RemoveAll(cacheDir); err != nil {
-		return "", err
+		return "", errors.Join(append(fastPathErrs,
+			fmt.Errorf("remove cache dir %q: %w", cacheDir, err))...)
 	}
 	if err := CloneBridge(entry); err != nil {
-		return "", err
+		return "", errors.Join(append(fastPathErrs,
+			fmt.Errorf("re-clone bridge %q into %q: %w", entry.ID, cacheDir, err))...)
 	}
 	return finishUpdate(entry, branch, pin)
 }
