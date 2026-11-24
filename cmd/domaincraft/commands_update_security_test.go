@@ -532,7 +532,7 @@ func TestReplaceExecutableRemoveOldFailure(t *testing.T) {
 		}
 		return os.Remove(path)
 	}
-	renameFn = func(src, dst string) error {
+	renameFn = func(src, _ string) error {
 		if src == tmp {
 			return errors.New("locked")
 		}

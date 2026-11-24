@@ -35,7 +35,7 @@ templates:
 			}
 			out := filepath.Join(dir, "out")
 			project := &ir.Project{Name: "Bench"}
-			for i := 0; i < size; i++ {
+			for i := range size {
 				name := fmt.Sprintf("E%04d", i)
 				project.Entities = append(project.Entities, ir.Entity{Name: name, NamePlural: name + "s"})
 				target := filepath.Join(out, "src", name+".txt")

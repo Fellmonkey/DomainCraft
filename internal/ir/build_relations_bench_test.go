@@ -71,7 +71,7 @@ func benchmarkHubSchema(n int) *parser.ParsedSchema {
 	}
 	hub.Fields["id"] = &parser.ParsedField{FieldDefinition: &lexer.FieldDefinition{Name: "id", Type: "uuid", IsPrimary: true}}
 	hub.FieldOrder = append(hub.FieldOrder, "id")
-	for i := 0; i < n; i++ {
+	for i := range n {
 		leaf := fmt.Sprintf("Leaf%04d", i)
 		hub.Fields[leaf] = &parser.ParsedField{FieldDefinition: &lexer.FieldDefinition{
 			Name: leaf, Type: "relation", TargetEntity: leaf, IsMany: true,

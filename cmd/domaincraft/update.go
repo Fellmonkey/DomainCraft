@@ -401,7 +401,7 @@ func downloadBinary(rawURL string) (string, error) {
 	}
 	if runtime.GOOS != "windows" {
 		// A non-executable download must never reach the install step.
-		if err := chmodFn(tmp.Name(), 0o755); err != nil { //nolint:gosec // the downloaded binary must be executable
+		if err := chmodFn(tmp.Name(), 0o755); err != nil {
 			_ = os.Remove(tmp.Name())
 			return "", fmt.Errorf("make downloaded update executable: %w", err)
 		}

@@ -364,7 +364,7 @@ func TestRollbackErrorKeepsOriginalPrimary(t *testing.T) {
 	if !strings.HasPrefix(got.Error(), primary.Error()) {
 		t.Errorf("primary error is not first: %q", got.Error())
 	}
-	if rollbackError(primary, nil) != primary {
+	if !errors.Is(rollbackError(primary, nil), primary) {
 		t.Error("no-op rollback must return the original error unchanged")
 	}
 }

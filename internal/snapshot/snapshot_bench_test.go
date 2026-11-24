@@ -32,9 +32,9 @@ func benchmarkDiffData(b *testing.B, entities int, onDisk, custom bool) (string,
 		Name:     "NewProject",
 		Entities: make([]ir.Entity, 0, entities),
 	}
-	for i := 0; i < entities; i++ {
+	for i := range entities {
 		name := fmt.Sprintf("E%04d", i)
-		for j := 0; j < 5; j++ {
+		for j := range 5 {
 			rel := fmt.Sprintf("src/%s/f%d.g.cs", name, j)
 			if onDisk {
 				abs := filepath.Join(dir, filepath.FromSlash(rel))

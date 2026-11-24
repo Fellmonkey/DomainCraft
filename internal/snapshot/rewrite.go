@@ -127,15 +127,15 @@ func isIdentRune(r rune) bool {
 // rewrite (content and paths). Callers pass the base form they need: PascalCase
 // for entities and fields, the declared identifier for a project namespace.
 // withPlural adds the plural forms on top of Pascal / camel / UPPER.
-func casingVariants(old, new string, withPlural bool) map[string]string {
+func casingVariants(oldName, newName string, withPlural bool) map[string]string {
 	variants := map[string]string{
-		old:                     new,                     // Product -> Item
-		textutil.CamelCase(old): textutil.CamelCase(new), // product -> item
-		strings.ToUpper(old):    strings.ToUpper(new),    // PRODUCT -> ITEM
+		oldName:                     newName,                     // Product -> Item
+		textutil.CamelCase(oldName): textutil.CamelCase(newName), // product -> item
+		strings.ToUpper(oldName):    strings.ToUpper(newName),    // PRODUCT -> ITEM
 	}
 	if withPlural {
-		oldPlural := textutil.Pluralize(old)
-		newPlural := textutil.Pluralize(new)
+		oldPlural := textutil.Pluralize(oldName)
+		newPlural := textutil.Pluralize(newName)
 		variants[oldPlural] = newPlural                                         // Products -> Items
 		variants[textutil.CamelCase(oldPlural)] = textutil.CamelCase(newPlural) // products -> items
 		variants[strings.ToUpper(oldPlural)] = strings.ToUpper(newPlural)       // PRODUCTS -> ITEMS
