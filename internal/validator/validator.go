@@ -14,6 +14,7 @@ import (
 
 	"github.com/DomainCraft/DomainCraft/internal/parser"
 	"github.com/DomainCraft/DomainCraft/internal/specmeta"
+	"github.com/DomainCraft/DomainCraft/pkg/textutil"
 )
 
 // ValidationError describes a logical validation error.
@@ -56,6 +57,7 @@ type Validator struct {
 	schema *parser.ParsedSchema
 }
 
+// New creates a Validator for the parsed schema.
 func New(schema *parser.ParsedSchema) *Validator {
 	return &Validator{schema: schema}
 }
@@ -65,6 +67,7 @@ var validIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // boolValues are valid boolean default values.
 var boolValues = map[string]bool{"true": true, "false": true}
 
+// Validate returns all logical errors and warnings in deterministic order.
 func (v *Validator) Validate() []ValidationError {
 	if v == nil || v.schema == nil {
 		return []ValidationError{{Entity: "<schema>", Message: "schema is nil"}}
@@ -105,7 +108,10 @@ func (v *Validator) Validate() []ValidationError {
 		if c := cmp.Compare(a.Entity, b.Entity); c != 0 {
 			return c
 		}
-		return cmp.Compare(a.Field, b.Field)
+		if c := cmp.Compare(a.Field, b.Field); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Message, b.Message)
 	})
 
 	return errs
@@ -449,18 +455,22 @@ func (v *Validator) validateEnums() []ValidationError {
 				"enum must have at least one value"))
 			continue
 		}
-		seen := make(map[string]bool, len(values))
+		// The IR derives each enum's wire value with textutil.ToDatabaseColumnName.
+		// Use the same canonicalization here: two declared values that map to one
+		// wire value produce duplicate members in every bridge.
+		seen := make(map[string]string, len(values))
 		for _, val := range values {
 			if val == "" {
 				errs = append(errs, invalid("<enum>", name,
 					"enum value must not be empty"))
 			}
-			lower := strings.ToLower(val)
-			if seen[lower] {
-				errs = append(errs, warnf("<enum>", name,
-					"duplicate enum value %q (case-insensitive collision)", val))
+			wire := textutil.ToDatabaseColumnName(val)
+			if first, exists := seen[wire]; exists {
+				errs = append(errs, invalidf("<enum>", name,
+					"enum values %q and %q map to the same wire value %q", first, val, wire))
+				continue
 			}
-			seen[lower] = true
+			seen[wire] = val
 		}
 	}
 
@@ -520,6 +530,17 @@ func (v *Validator) validateEntity(entityName string, entity *parser.ParsedEntit
 		// Must not have duplicate primary keys.
 		errs = append(errs, invalidf(entityName, "",
 			"entity has %d primary keys; expected exactly one", pkCount))
+	} else {
+		// A relation cannot be a primary key: the IR resolves relation types
+		// through the target's primary key, which recurses on relation-PK cycles.
+		for _, fieldName := range entity.FieldOrder {
+			field := entity.Fields[fieldName]
+			if field != nil && field.IsPrimary && field.IsRelation() {
+				errs = append(errs, invalidf(entityName, fieldName,
+					"primary key cannot be a relation field (target '%s'); use a scalar id field", field.TargetEntity))
+				break
+			}
+		}
 	}
 
 	// Duplicate feature names.
@@ -697,6 +718,10 @@ func (v *Validator) validateField(entityName string, fieldName string, field *pa
 			errs = append(errs, invalid(entityName, fieldName,
 				"primary key cannot be an array type"))
 		}
+		if field.IsRelation() {
+			errs = append(errs, invalidf(entityName, fieldName,
+				"primary key cannot be a relation field (target '%s'); use a scalar id field", field.TargetEntity))
+		}
 	}
 
 	// Enum reference.
@@ -735,9 +760,14 @@ func (v *Validator) validateField(entityName string, fieldName string, field *pa
 		// Validate that numeric validation values are actually numeric
 		// (numeric modifiers AND string min/max, which are also numeric).
 		if (specmeta.IsNumericValidationModifier(mod) || mod == "min" || mod == "max") && val != "" {
-			if _, err := strconv.ParseFloat(val, 64); err != nil {
+			if n, err := strconv.ParseFloat(val, 64); err != nil {
 				errs = append(errs, invalidf(entityName, fieldName,
 					"validation '%s' value %q is not a valid number", mod, val))
+			} else if isString && (mod == "min" || mod == "max") && n <= 0 {
+				// String length bounds drive seed truncation; a non-positive
+				// maximum would slice with a negative index.
+				errs = append(errs, invalidf(entityName, fieldName,
+					"validation '%s' must be positive for string length, got %q", mod, val))
 			}
 		}
 	}
@@ -755,13 +785,7 @@ func (v *Validator) validateField(entityName string, fieldName string, field *pa
 	// Enum default must be one of the declared enum values.
 	if field.Type == "enum" && field.TargetType != "" && field.DefaultValue != "" && !field.DefaultIsFunc {
 		if enumValues, ok := v.schema.Enums[field.TargetType]; ok {
-			found := false
-			for _, v := range enumValues {
-				if v == field.DefaultValue {
-					found = true
-					break
-				}
-			}
+			found := slices.Contains(enumValues, field.DefaultValue)
 			if !found {
 				errs = append(errs, invalidf(entityName, fieldName,
 					"default value '%s' is not a declared value of enum '%s'; valid values: %s", field.DefaultValue, field.TargetType,
@@ -814,13 +838,7 @@ func validateFuncDefault(entityName, fieldName, ftype, funcName string) []Valida
 			"unknown default function '%s()'", funcName))
 		return errs
 	}
-	allowed := false
-	for _, t := range allowedTypes {
-		if ftype == t {
-			allowed = true
-			break
-		}
-	}
+	allowed := slices.Contains(allowedTypes, ftype)
 	if !allowed {
 		errs = append(errs, invalidf(entityName, fieldName,
 			"default '%s()' is not valid for type %s; allowed types: %s", funcName, ftype, strings.Join(allowedTypes, ", ")))
@@ -1033,21 +1051,28 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 				"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
 		}
 	case "int", "bigint":
-		switch seedValue.(type) {
+		switch n := seedValue.(type) {
 		case int, int32, int64, float32, float64:
 			// numeric OK
 		case string:
-			// string representation — OK if it parses
+			// A string must parse; otherwise seed coercion silently yields 0.
+			if _, err := strconv.ParseInt(n, 10, 64); err != nil {
+				errs = append(errs, invalidf(entityName, fieldName,
+					"seed entry %d: value %q is not a valid %s", entryIdx, n, ftype))
+			}
 		default:
 			errs = append(errs, invalidf(entityName, fieldName,
 				"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
 		}
 	case "float", "decimal":
-		switch seedValue.(type) {
+		switch n := seedValue.(type) {
 		case int, int32, int64, float32, float64:
 			// numeric OK
 		case string:
-			// string representation — OK
+			if _, err := strconv.ParseFloat(n, 64); err != nil {
+				errs = append(errs, invalidf(entityName, fieldName,
+					"seed entry %d: value %q is not a valid %s", entryIdx, n, ftype))
+			}
 		default:
 			errs = append(errs, invalidf(entityName, fieldName,
 				"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
@@ -1112,13 +1137,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 			break
 		}
 		if values, defined := v.schema.Enums[field.TargetType]; defined {
-			found := false
-			for _, val := range values {
-				if val == sv {
-					found = true
-					break
-				}
-			}
+			found := slices.Contains(values, sv)
 			if !found {
 				errs = append(errs, invalidf(entityName, fieldName,
 					"seed entry %d: value %q is not a declared value of enum '%s'; valid values: %s", entryIdx, sv, field.TargetType,

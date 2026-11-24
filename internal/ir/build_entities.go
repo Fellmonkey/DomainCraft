@@ -114,7 +114,7 @@ func Build(schema *parser.ParsedSchema) (*IRProject, error) {
 				continue
 			}
 
-			databaseType, err := resolveDatabaseType(field, schema)
+			databaseType, err := resolveDatabaseType(field, schema, make(map[string]bool))
 			if err != nil {
 				return nil, fmt.Errorf("field '%s.%s': %w", sourceEntity.Name, field.Name, err)
 			}
@@ -197,12 +197,22 @@ func convertPermissions(source *parser.ParsedPermissions) *IRPermissions {
 	}
 }
 
-func resolveDatabaseType(field *parser.ParsedField, schema *parser.ParsedSchema) (string, error) {
+// resolveDatabaseType resolves a field's database type. Relation fields inherit
+// the type of the target entity's primary key, which is itself a relation in a
+// malformed model; visiting guards that chain against infinite recursion.
+func resolveDatabaseType(field *parser.ParsedField, schema *parser.ParsedSchema, visiting map[string]bool) (string, error) {
 	if field == nil || field.FieldDefinition == nil {
 		return "", fmt.Errorf("field definition is missing")
 	}
 
 	if field.IsRelation() {
+		key := field.TargetEntity + "." + field.Name
+		if visiting[key] {
+			return "", fmt.Errorf("cyclic relation primary key at '%s'", key)
+		}
+		visiting[key] = true
+		defer delete(visiting, key)
+
 		target, ok := schema.Entities[field.TargetEntity]
 		if !ok {
 			return "", fmt.Errorf("relation target '%s' does not exist", field.TargetEntity)
@@ -210,7 +220,7 @@ func resolveDatabaseType(field *parser.ParsedField, schema *parser.ParsedSchema)
 		for _, targetFieldName := range target.FieldOrder {
 			targetField := target.Fields[targetFieldName]
 			if targetField != nil && targetField.IsPrimary {
-				return resolveDatabaseType(targetField, schema)
+				return resolveDatabaseType(targetField, schema, visiting)
 			}
 		}
 		return "", fmt.Errorf("relation target '%s' has no primary key", field.TargetEntity)

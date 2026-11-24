@@ -48,15 +48,7 @@ func (e IREndpoint) AuthPolicy() string {
 
 // HasStatus reports whether status is among the endpoint's possible statuses.
 func (e IREndpoint) HasStatus(status int) bool {
-	if e.SuccessStatus == status {
-		return true
-	}
-	for _, s := range e.ErrorStatuses {
-		if s == status {
-			return true
-		}
-	}
-	return false
+	return e.SuccessStatus == status || slices.Contains(e.ErrorStatuses, status)
 }
 
 // Endpoints returns the standard REST endpoint contract for the entity, in a

@@ -142,7 +142,7 @@ func valueFor(field ir.IRField, project *ir.IRProject, generated map[string][]an
 	}
 
 	if field.IsRelation {
-		return relationValue(field, generated)
+		return relationValue(field, generated, record)
 	}
 
 	return scalarValue(field, project, counter, record)
@@ -150,9 +150,11 @@ func valueFor(field ir.IRField, project *ir.IRProject, generated map[string][]an
 
 // relationValue returns a reference to an existing parent row. For a [many]
 // collection the value is nil (the child side owns the FK); for a single FK it
-// returns the parent's primary-key value. When no parent was generated yet
-// (self-reference or a dependency cycle) it falls back to nil.
-func relationValue(field ir.IRField, generated map[string][]any) any {
+// cycles through the parent's primary keys by record index, so a [unique] FK
+// can back a one-to-one relation without colliding with a sibling row. When no
+// parent was generated yet (self-reference or a dependency cycle) it falls
+// back to nil.
+func relationValue(field ir.IRField, generated map[string][]any, record int) any {
 	if field.IsMany {
 		return nil
 	}
@@ -160,7 +162,10 @@ func relationValue(field ir.IRField, generated map[string][]any) any {
 	if !ok || len(pks) == 0 {
 		return nil
 	}
-	return pks[0]
+	if record < 0 {
+		record = 0
+	}
+	return pks[record%len(pks)]
 }
 
 // scalarValue produces a scalar value from the field's type and constraints.
@@ -240,11 +245,19 @@ func stringValue(field ir.IRField, record int) string {
 		v = fmt.Sprintf("mock_%s_%d", strings.ToLower(field.Name), record+1)
 	}
 
-	if n, err := strconv.Atoi(minLen); err == nil && len(v) < n {
+	if n, err := strconv.Atoi(minLen); err == nil && n > 0 && len(v) < n {
 		v += strings.Repeat("x", n-len(v))
 	}
-	if n, err := strconv.Atoi(maxLen); err == nil && len(v) > n {
-		v = v[:n]
+	// Clamp defensively: a hand-built IR may bypass the validator, so a
+	// negative max must never reach a slice index and an oversized max must
+	// never exceed the string length.
+	if n, err := strconv.Atoi(maxLen); err == nil {
+		if n < 0 {
+			n = 0
+		}
+		if n < len(v) {
+			v = v[:n]
+		}
 	}
 	return v
 }

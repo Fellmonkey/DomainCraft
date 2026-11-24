@@ -7,12 +7,12 @@ func TestIRFieldTypePredicates(t *testing.T) {
 	cases := []struct {
 		name                           string
 		dbType                         string
-		isUuid, isText, isInt, isFloat bool
-		isBool, isDate, isDt, isJson   bool
+		isUUID, isText, isInt, isFloat bool
+		isBool, isDate, isDt, isJSON   bool
 		isNumeric, isEnum              bool
 		enumName                       string
 	}{
-		{name: "uuid", dbType: "uuid", isUuid: true, enumName: "uuid"},
+		{name: "uuid", dbType: "uuid", isUUID: true, enumName: "uuid"},
 		{name: "string", dbType: "string", isText: true, enumName: "string"},
 		{name: "text", dbType: "text", isText: true, enumName: "text"},
 		{name: "int", dbType: "int", isInt: true, isNumeric: true, enumName: "int"},
@@ -22,8 +22,8 @@ func TestIRFieldTypePredicates(t *testing.T) {
 		{name: "boolean", dbType: "boolean", isBool: true, enumName: "boolean"},
 		{name: "date", dbType: "date", isDate: true, enumName: "date"},
 		{name: "datetime", dbType: "datetime", isDt: true, enumName: "datetime"},
-		{name: "json", dbType: "json", isJson: true, enumName: "json"},
-		{name: "jsonb", dbType: "jsonb", isJson: true, enumName: "jsonb"},
+		{name: "json", dbType: "json", isJSON: true, enumName: "json"},
+		{name: "jsonb", dbType: "jsonb", isJSON: true, enumName: "jsonb"},
 		{name: "enum_status", dbType: "Status", isEnum: true, enumName: "Status"},
 		{name: "array_int", dbType: "array(int)", enumName: "int"},
 		{name: "array_enum_status", dbType: "array(Status)", isEnum: true, enumName: "Status"},
@@ -32,8 +32,8 @@ func TestIRFieldTypePredicates(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			f := IRField{DatabaseType: c.dbType}
-			if got := f.IsUuid(); got != c.isUuid {
-				t.Errorf("%q IsUuid() = %v, want %v", c.dbType, got, c.isUuid)
+			if got := f.IsUuid(); got != c.isUUID {
+				t.Errorf("%q IsUuid() = %v, want %v", c.dbType, got, c.isUUID)
 			}
 			if got := f.IsText(); got != c.isText {
 				t.Errorf("%q IsText() = %v, want %v", c.dbType, got, c.isText)
@@ -56,8 +56,8 @@ func TestIRFieldTypePredicates(t *testing.T) {
 			if got := f.IsDateTime(); got != c.isDt {
 				t.Errorf("%q IsDateTime() = %v, want %v", c.dbType, got, c.isDt)
 			}
-			if got := f.IsJson(); got != c.isJson {
-				t.Errorf("%q IsJson() = %v, want %v", c.dbType, got, c.isJson)
+			if got := f.IsJson(); got != c.isJSON {
+				t.Errorf("%q IsJson() = %v, want %v", c.dbType, got, c.isJSON)
 			}
 			if got := f.IsEnum(); got != c.isEnum {
 				t.Errorf("%q IsEnum() = %v, want %v", c.dbType, got, c.isEnum)
@@ -75,7 +75,7 @@ func TestIRFieldSpecificTypePredicates(t *testing.T) {
 		name                          string
 		dbType                        string
 		isString, isBigInt, isDecimal bool
-		isJsonB                       bool
+		isJSONB                       bool
 	}{
 		{name: "string", dbType: "string", isString: true},
 		{name: "text", dbType: "text", isString: false},
@@ -84,7 +84,7 @@ func TestIRFieldSpecificTypePredicates(t *testing.T) {
 		{name: "float", dbType: "float"},
 		{name: "decimal", dbType: "decimal", isDecimal: true},
 		{name: "json", dbType: "json"},
-		{name: "jsonb", dbType: "jsonb", isJsonB: true},
+		{name: "jsonb", dbType: "jsonb", isJSONB: true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -99,8 +99,8 @@ func TestIRFieldSpecificTypePredicates(t *testing.T) {
 			if got := f.IsDecimal(); got != c.isDecimal {
 				t.Errorf("%q IsDecimal() = %v, want %v", c.dbType, got, c.isDecimal)
 			}
-			if got := f.IsJsonB(); got != c.isJsonB {
-				t.Errorf("%q IsJsonB() = %v, want %v", c.dbType, got, c.isJsonB)
+			if got := f.IsJsonB(); got != c.isJSONB {
+				t.Errorf("%q IsJsonB() = %v, want %v", c.dbType, got, c.isJSONB)
 			}
 		})
 	}

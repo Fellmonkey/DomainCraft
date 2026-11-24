@@ -1,6 +1,10 @@
 package ir
 
-import "github.com/DomainCraft/DomainCraft/internal/specmeta"
+import (
+	"slices"
+
+	"github.com/DomainCraft/DomainCraft/internal/specmeta"
+)
 
 // IRPermissionPlan is the core-computed authorization plan for one operation
 // (read/create/update/delete). The bridge no longer parses `*` wildcards or
@@ -28,10 +32,8 @@ func (p *IRPermissions) HasOwnerToken() bool {
 		return false
 	}
 	for _, roles := range [][]string{p.Read, p.Create, p.Update, p.Delete} {
-		for _, r := range roles {
-			if specmeta.IsOwnershipToken(r) {
-				return true
-			}
+		if slices.ContainsFunc(roles, specmeta.IsOwnershipToken) {
+			return true
 		}
 	}
 	return false

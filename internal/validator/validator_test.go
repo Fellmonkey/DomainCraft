@@ -2315,3 +2315,226 @@ func TestValidateColumnSelfCollisionGuard(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateRejectsRelationPrimaryKey(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		pkDef   string
+		wantErr bool
+	}{
+		{name: "relation primary key", pkDef: "relation(Parent) [primary]", wantErr: true},
+		{name: "scalar primary key", pkDef: "uuid [primary]"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := &parser.ParsedSchema{
+				Project:     parser.ProjectConfig{Name: "Test"},
+				EntityOrder: []string{"Child", "Parent"},
+				Entities: map[string]*parser.ParsedEntity{
+					"Child": {
+						Name:       "Child",
+						FieldOrder: []string{"id"},
+						Fields: map[string]*parser.ParsedField{
+							"id": mustParsedField(t, "id", tt.pkDef),
+						},
+					},
+					"Parent": {
+						Name:       "Parent",
+						FieldOrder: []string{"id"},
+						Fields: map[string]*parser.ParsedField{
+							"id": mustParsedField(t, "id", "uuid [primary]"),
+						},
+					},
+				},
+			}
+
+			errs := nonWarnings(New(schema).Validate())
+			found := false
+			for _, e := range errs {
+				if strings.Contains(e.Message, "primary key cannot be a relation field") {
+					found = true
+				}
+			}
+			if found != tt.wantErr {
+				t.Fatalf("relation primary key error = %v, want %v; errors: %v", found, tt.wantErr, errs)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsNonPositiveStringBounds(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		def     string
+		wantErr bool
+	}{
+		{name: "zero max", def: "string [max:0]", wantErr: true},
+		{name: "negative max", def: "string [max:-1]", wantErr: true},
+		{name: "zero min", def: "string [min:0]", wantErr: true},
+		{name: "negative min", def: "string [min:-5]", wantErr: true},
+		{name: "valid bounds", def: "string [min:3, max:255]"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := &parser.ParsedSchema{
+				Project:     parser.ProjectConfig{Name: "Test"},
+				EntityOrder: []string{"Doc"},
+				Entities: map[string]*parser.ParsedEntity{
+					"Doc": {
+						Name:       "Doc",
+						FieldOrder: []string{"id", "name"},
+						Fields: map[string]*parser.ParsedField{
+							"id":   mustParsedField(t, "id", "uuid [primary]"),
+							"name": mustParsedField(t, "name", tt.def),
+						},
+					},
+				},
+			}
+
+			errs := nonWarnings(New(schema).Validate())
+			found := false
+			for _, e := range errs {
+				if strings.Contains(e.Message, "must be positive for string length") {
+					found = true
+				}
+			}
+			if found != tt.wantErr {
+				t.Fatalf("positive bound error = %v, want %v; errors: %v", found, tt.wantErr, errs)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsEnumWireValueCollision(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		values []string
+	}{
+		{name: "case-only collision", values: []string{"DRAFT", "draft"}},
+		{name: "camel case collision", values: []string{"InProgress", "in_progress"}},
+		{name: "acronym collision", values: []string{"HTTPPort", "http_port"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := &parser.ParsedSchema{
+				Project:     parser.ProjectConfig{Name: "Test"},
+				EntityOrder: []string{"Doc"},
+				Enums:       map[string][]string{"Status": tt.values},
+				Entities: map[string]*parser.ParsedEntity{
+					"Doc": {
+						Name:       "Doc",
+						FieldOrder: []string{"id", "status"},
+						Fields: map[string]*parser.ParsedField{
+							"id":     mustParsedField(t, "id", "uuid [primary]"),
+							"status": mustParsedField(t, "status", "enum(Status)"),
+						},
+					},
+				},
+			}
+
+			errs := nonWarnings(New(schema).Validate())
+			found := false
+			for _, e := range errs {
+				if strings.Contains(e.Message, "map to the same wire value") {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("expected a hard error for wire-value collision, got %v", errs)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsUnparseableNumericSeed(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		field   string
+		value   any
+		wantErr bool
+	}{
+		{name: "int string", field: "count", value: "7"},
+		{name: "int unparseable string", field: "count", value: "abc", wantErr: true},
+		{name: "bigint unparseable string", field: "big", value: "12x", wantErr: true},
+		{name: "decimal string", field: "price", value: "2.5"},
+		{name: "decimal unparseable string", field: "price", value: "nope", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema := &parser.ParsedSchema{
+				Project:     parser.ProjectConfig{Name: "Test"},
+				EntityOrder: []string{"Doc"},
+				Entities: map[string]*parser.ParsedEntity{
+					"Doc": {
+						Name:       "Doc",
+						FieldOrder: []string{"id", "count", "big", "price"},
+						Fields: map[string]*parser.ParsedField{
+							"id":    mustParsedField(t, "id", "uuid [primary]"),
+							"count": mustParsedField(t, "count", "int"),
+							"big":   mustParsedField(t, "big", "bigint"),
+							"price": mustParsedField(t, "price", "decimal"),
+						},
+						Seed: []map[string]any{{"id": "550e8400-e29b-41d4-a716-446655440000", tt.field: tt.value}},
+					},
+				},
+			}
+
+			errs := nonWarnings(New(schema).Validate())
+			found := false
+			for _, e := range errs {
+				if e.Field == tt.field && strings.Contains(e.Message, "seed entry 0") {
+					found = true
+				}
+			}
+			if found != tt.wantErr {
+				t.Fatalf("seed parse error = %v, want %v; errors: %v", found, tt.wantErr, errs)
+			}
+		})
+	}
+}
+
+func TestValidateSortsErrorsByMessageTiebreaker(t *testing.T) {
+	t.Parallel()
+	schema := &parser.ParsedSchema{
+		Project:     parser.ProjectConfig{Name: "Test"},
+		EntityOrder: []string{"Doc"},
+		Enums:       map[string][]string{"Status": {"A", "a", ""}},
+		Entities: map[string]*parser.ParsedEntity{
+			"Doc": {
+				Name:       "Doc",
+				FieldOrder: []string{"id", "status"},
+				Fields: map[string]*parser.ParsedField{
+					"id":     mustParsedField(t, "id", "uuid [primary]"),
+					"status": mustParsedField(t, "status", "enum(Status)"),
+				},
+			},
+		},
+	}
+
+	errs := nonWarnings(New(schema).Validate())
+	if len(errs) < 2 {
+		t.Fatalf("got %d errors, want at least 2: %v", len(errs), errs)
+	}
+	for i := 1; i < len(errs); i++ {
+		if errs[i-1].Entity != "<enum>" || errs[i].Entity != "<enum>" {
+			continue
+		}
+		if errs[i-1].Field != "Status" || errs[i].Field != "Status" {
+			continue
+		}
+		if errs[i-1].Message > errs[i].Message {
+			t.Fatalf("enum errors are not sorted by message: %q before %q", errs[i-1].Message, errs[i].Message)
+		}
+	}
+	if !strings.Contains(errs[0].Message, "enum value must not be empty") {
+		t.Fatalf("first error = %q, want the empty-value error", errs[0].Message)
+	}
+}

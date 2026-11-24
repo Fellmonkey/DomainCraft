@@ -28,6 +28,7 @@ func (f IRField) IsUUID() bool { return f.DatabaseType == "uuid" }
 // IsUuid reports whether the field holds a UUID.
 //
 // Deprecated: use IsUUID. Kept as an alias for bridges using the old casing.
+//nolint:revive // deprecated bridge alias; renaming breaks existing bridge templates
 func (f IRField) IsUuid() bool { return f.IsUUID() }
 
 // IsText reports whether the field holds a string/text value.
@@ -65,6 +66,7 @@ func (f IRField) IsJSON() bool {
 // IsJson reports whether the field holds a JSON document.
 //
 // Deprecated: use IsJSON.
+//nolint:revive // deprecated bridge alias; renaming breaks existing bridge templates
 func (f IRField) IsJson() bool { return f.IsJSON() }
 
 // IsJSONB reports whether the field holds a jsonb document specifically
@@ -75,6 +77,7 @@ func (f IRField) IsJSONB() bool { return f.DatabaseType == "jsonb" }
 // IsJsonB reports whether the field holds a jsonb document.
 //
 // Deprecated: use IsJSONB.
+//nolint:revive // deprecated bridge alias; renaming breaks existing bridge templates
 func (f IRField) IsJsonB() bool { return f.IsJSONB() }
 
 // IsString reports whether the field holds a bounded string column

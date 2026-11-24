@@ -16,6 +16,7 @@ import (
 // the core so every bridge serializes the same vocabulary.
 type FilterOp string
 
+// Filter operators in canonical grammar order.
 const (
 	OpEq         FilterOp = "eq"
 	OpNe         FilterOp = "ne"

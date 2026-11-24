@@ -345,6 +345,103 @@ func TestNormalizeCoerceEdgeCases(t *testing.T) {
 	}
 }
 
+func TestGenerateClampsNonPositiveMaxLength(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		max  string
+		want string
+	}{
+		{name: "zero", max: "0", want: ""},
+		{name: "negative", max: "-1", want: ""},
+		{name: "oversized", max: "1000", want: "mock_name_1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			project := &ir.IRProject{
+				Entities: []ir.IREntity{
+					{
+						Name: "Item",
+						Fields: []ir.IRField{
+							{Name: "id", DatabaseType: "uuid", IsPrimary: true},
+							{Name: "name", DatabaseType: "string", Validations: []ir.IRValidation{{Name: "max", Value: tt.max}}},
+						},
+					},
+				},
+			}
+
+			ds := Generate(project, Options{CountPerEntity: 1})
+			got := ds.Entities[0].Records[0].Fields[1].Value
+			if got != tt.want {
+				t.Errorf("name = %v, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGenerateRotatesRelationPKs(t *testing.T) {
+	t.Parallel()
+	project := &ir.IRProject{
+		Entities: []ir.IREntity{
+			{
+				Name:   "Category",
+				Fields: []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
+			},
+			{
+				Name: "Product",
+				Fields: []ir.IRField{
+					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
+					{Name: "categoryId", DatabaseType: "uuid", IsRelation: true, IsUnique: true, RelationTarget: "Category"},
+				},
+			},
+		},
+	}
+
+	ds := Generate(project, Options{CountPerEntity: 3})
+	parentPKs := make([]any, 0, 3)
+	for _, rec := range ds.Entities[0].Records {
+		parentPKs = append(parentPKs, rec.Fields[0].Value)
+	}
+	for i, rec := range ds.Entities[1].Records {
+		got := rec.Fields[1].Value
+		want := parentPKs[i%len(parentPKs)]
+		if got != want {
+			t.Errorf("record %d FK = %v, want %v", i, got, want)
+		}
+	}
+	if ds.Entities[1].Records[0].Fields[1].Value == ds.Entities[1].Records[1].Fields[1].Value {
+		t.Fatal("two children point at the same parent PK; unique FK rotation failed")
+	}
+}
+
+func TestRelationValueRotatesParentPKs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		field  ir.IRField
+		pks    []any
+		record int
+		want   any
+	}{
+		{name: "first parent", field: ir.IRField{RelationTarget: "Category"}, pks: []any{"a", "b", "c"}, record: 0, want: "a"},
+		{name: "second parent", field: ir.IRField{RelationTarget: "Category"}, pks: []any{"a", "b", "c"}, record: 1, want: "b"},
+		{name: "wraps around", field: ir.IRField{RelationTarget: "Category"}, pks: []any{"a", "b", "c"}, record: 3, want: "a"},
+		{name: "single parent", field: ir.IRField{RelationTarget: "Category"}, pks: []any{"a"}, record: 5, want: "a"},
+		{name: "no parents", field: ir.IRField{RelationTarget: "Category"}, pks: nil, record: 2},
+		{name: "many relation", field: ir.IRField{RelationTarget: "Category", IsMany: true}, pks: []any{"a", "b"}, record: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := relationValue(tt.field, map[string][]any{"Category": tt.pks}, tt.record)
+			if got != tt.want {
+				t.Errorf("relationValue() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGenerateUsesDeclaredDefaultOverMock(t *testing.T) {
 	t.Parallel()
 	project := &ir.IRProject{

@@ -1,6 +1,7 @@
 package ir
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/DomainCraft/DomainCraft/internal/lexer"
@@ -169,6 +170,120 @@ func TestBuildResolvesPrimitiveTypes(t *testing.T) {
 
 func mustParsedField(t *testing.T, name, input string) *parser.ParsedField {
 	return testutil.MustParsedField(t, name, input)
+}
+
+//relationPKCycleSchema builds a model where each entity's primary key is a
+// relation to the other entity. Before the cycle guard this made Build recurse
+// through resolveDatabaseType until the process died with a stack overflow.
+func relationPKCycleSchema(t *testing.T) *parser.ParsedSchema {
+	t.Helper()
+	return &parser.ParsedSchema{
+		Project:     parser.ProjectConfig{Name: "Test"},
+		Database:    "postgresql",
+		EntityOrder: []string{"Alpha", "Beta"},
+		Entities: map[string]*parser.ParsedEntity{
+			"Alpha": {
+				Name:       "Alpha",
+				NamePlural: "Alphas",
+				FieldOrder: []string{"id"},
+				Fields: map[string]*parser.ParsedField{
+					"id": mustParsedField(t, "id", "relation(Beta) [primary]"),
+				},
+			},
+			"Beta": {
+				Name:       "Beta",
+				NamePlural: "Betas",
+				FieldOrder: []string{"id"},
+				Fields: map[string]*parser.ParsedField{
+					"id": mustParsedField(t, "id", "relation(Alpha) [primary]"),
+				},
+			},
+		},
+	}
+}
+
+func TestBuildDetectsRelationPrimaryKeyCycle(t *testing.T) {
+	t.Parallel()
+
+	project, err := Build(relationPKCycleSchema(t))
+	if err == nil {
+		t.Fatalf("Build() = %+v, want a cycle error", project)
+	}
+	if !strings.Contains(err.Error(), "cyclic relation primary key") {
+		t.Fatalf("Build() error = %q, want a cycle error", err)
+	}
+}
+
+func TestResolveDatabaseTypeDetectsCycles(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		schema  *parser.ParsedSchema
+		field   func(*testing.T, *parser.ParsedSchema) *parser.ParsedField
+		wantErr string
+		want    string
+	}{
+		{
+			name:   "self relation primary key",
+			schema: relationPKCycleSchema(t),
+			field: func(_ *testing.T, s *parser.ParsedSchema) *parser.ParsedField {
+				f := mustParsedField(t, "id", "relation(Alpha) [primary]")
+				s.Entities["Alpha"].Fields["id"] = f
+				return f
+			},
+			wantErr: "cyclic relation primary key",
+		},
+		{
+			name:   "two entity relation primary key cycle",
+			schema: relationPKCycleSchema(t),
+			field: func(_ *testing.T, s *parser.ParsedSchema) *parser.ParsedField {
+				return s.Entities["Alpha"].Fields["id"]
+			},
+			wantErr: "cyclic relation primary key",
+		},
+		{
+			name: "relation chain ending in a scalar primary key",
+			schema: &parser.ParsedSchema{
+				Entities: map[string]*parser.ParsedEntity{
+					"Order": {
+						FieldOrder: []string{"userId"},
+						Fields: map[string]*parser.ParsedField{
+							"userId": mustParsedField(t, "userId", "relation(User)"),
+						},
+					},
+					"User": {
+						FieldOrder: []string{"id"},
+						Fields: map[string]*parser.ParsedField{
+							"id": mustParsedField(t, "id", "uuid [primary]"),
+						},
+					},
+				},
+			},
+			field: func(_ *testing.T, s *parser.ParsedSchema) *parser.ParsedField {
+				return s.Entities["Order"].Fields["userId"]
+			},
+			want: "uuid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveDatabaseType(tt.field(t, tt.schema), tt.schema, make(map[string]bool))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("resolveDatabaseType() error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveDatabaseType() error = %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("resolveDatabaseType() = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestNavigationNameStripsIdSuffix(t *testing.T) {

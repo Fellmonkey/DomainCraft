@@ -114,13 +114,13 @@ type IRDeployConfig struct {
 	Port   int    // exposed port (default: 8080)
 }
 
-// Versioning enables/disables API versioning and the default version string.
+// IRVersioningConfig controls API versioning and the default version string.
 type IRVersioningConfig struct {
 	Enabled        bool
 	DefaultVersion string
 }
 
-// RateLimitConfig represents the HTTP request rate limiting policy in IR.
+// IRRateLimitConfig represents the HTTP request rate limiting policy in IR.
 type IRRateLimitConfig struct {
 	Enabled       bool
 	Policy        string // fixed | sliding
