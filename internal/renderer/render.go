@@ -59,6 +59,24 @@ func safeOutputPath(outputDir, renderedTarget string) (string, error) {
 	return absTarget, nil
 }
 
+// safeOutputPathCached mirrors safeOutputPath but reuses directory components
+// verified by earlier containment checks in the same Render. The final target
+// component is always re-inspected. A nil cache gives a fully fresh walk.
+func safeOutputPathCached(outputDir, renderedTarget string, verified map[string]bool) (string, error) {
+	absTarget, _, err := fsutil.LocalPathWithin(outputDir, renderedTarget)
+	if err != nil {
+		return "", fmt.Errorf("template target path %s: %w", renderedTarget, err)
+	}
+	absOutput, err := filepath.Abs(outputDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve output directory: %w", err)
+	}
+	if err := fsutil.RefuseSymlinksCached(absOutput, absTarget, verified); err != nil {
+		return "", fmt.Errorf("template target path %s: %w", renderedTarget, err)
+	}
+	return absTarget, nil
+}
+
 // beforeCommitHook is a test seam called once between staging and commit. It is
 // nil in production; tests set it to mutate the filesystem at that exact point.
 // Tests using it must not run in parallel.
@@ -174,6 +192,11 @@ func (r *Renderer) Render(project *ir.Project, outputDir string) ([]string, []Re
 		}
 	}
 
+	// verified holds directories checked by the pre-MkdirAll containment pass
+	// in Phase 1. It is local to this Render and never reused across passes:
+	// the post-MkdirAll pass below stays fully fresh, because MkdirAll itself
+	// can create components and an attacker can plant a link between calls.
+	verified := make(map[string]bool)
 	staged := make([]stagedWrite, 0)
 	// committed is empty during staging; phase 2 appends to it as files land.
 	committed := make([]stagedWrite, 0)
@@ -240,7 +263,7 @@ func (r *Renderer) Render(project *ir.Project, outputDir string) ([]string, []Re
 						return fail(fmt.Errorf("render target path: %w", err))
 					}
 
-					absTarget, err := safeOutputPath(outputDir, renderedTarget)
+					absTarget, err := safeOutputPathCached(outputDir, renderedTarget, verified)
 					if err != nil {
 						return fail(err)
 					}
@@ -267,7 +290,8 @@ func (r *Renderer) Render(project *ir.Project, outputDir string) ([]string, []Re
 						return fail(fmt.Errorf("create output dir: %w", err))
 					}
 					// MkdirAll may have created the missing components above; re-check
-					// so a symlink planted in the meantime is still rejected.
+					// with a fully fresh walk (no cached directories) so a symlink
+					// planted in the meantime is still rejected.
 					if _, err := safeOutputPath(outputDir, renderedTarget); err != nil {
 						return fail(err)
 					}

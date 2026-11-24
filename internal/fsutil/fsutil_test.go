@@ -3,6 +3,7 @@ package fsutil
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -135,5 +136,128 @@ func TestReadJSONCorruptFileErrors(t *testing.T) {
 	var syn *json.SyntaxError
 	if err := ReadJSON(path, &v); !errors.As(err, &syn) {
 		t.Errorf("err = %v, want a JSON syntax error", err)
+	}
+}
+
+// A verified parent must not make the file leaf trustworthy: the leaf is
+// re-inspected on every call, including when it was never in the cache.
+func TestRefuseSymlinksCachedRejectsSymlinkAtFinalComponent(t *testing.T) {
+	base := t.TempDir()
+	sub := filepath.Join(base, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatalf("mkdir sub: %v", err)
+	}
+	outside := filepath.Join(base, "outside.txt")
+	if err := os.WriteFile(outside, []byte("keep"), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+
+	verified := make(map[string]bool)
+	cleanTarget := filepath.Join(sub, "clean.txt")
+	if err := RefuseSymlinksCached(base, cleanTarget, verified); err != nil {
+		t.Fatalf("warm cache: %v", err)
+	}
+	if !verified[filepath.Clean(base)] || !verified[filepath.Clean(sub)] {
+		t.Fatalf("base and sub should be cached as verified directories, got %v", verified)
+	}
+	if verified[filepath.Clean(cleanTarget)] {
+		t.Fatal("final target component must never be cached")
+	}
+
+	link := filepath.Join(sub, "link.txt")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable on this host: %v", err)
+	}
+	want := fmt.Sprintf("refuse to write through symlink %q", link)
+	if got := RefuseSymlinksCached(base, link, verified); got == nil || got.Error() != want {
+		t.Errorf("cached check = %v, want %q", got, want)
+	}
+	if got := RefuseSymlinks(base, link); got == nil || got.Error() != want {
+		t.Errorf("fresh check = %v, want %q", got, want)
+	}
+	if verified[filepath.Clean(link)] {
+		t.Error("symlinked leaf was cached")
+	}
+}
+
+// Cached and uncached checks must be indistinguishable for clean trees and
+// for a symlink at an intermediate component.
+func TestRefuseSymlinksCachedMatchesRefuseSymlinks(t *testing.T) {
+	tests := []struct {
+		name   string
+		target func(t *testing.T, base string) string
+	}{
+		{
+			name: "clean tree",
+			target: func(t *testing.T, base string) string {
+				t.Helper()
+				dir := filepath.Join(base, "src")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatalf("mkdir src: %v", err)
+				}
+				leaf := filepath.Join(dir, "file.txt")
+				if err := os.WriteFile(leaf, []byte("x"), 0o644); err != nil {
+					t.Fatalf("write leaf: %v", err)
+				}
+				return leaf
+			},
+		},
+		{
+			name: "symlinked intermediate component",
+			target: func(t *testing.T, base string) string {
+				t.Helper()
+				realDir := filepath.Join(base, "real")
+				if err := os.MkdirAll(realDir, 0o755); err != nil {
+					t.Fatalf("mkdir real: %v", err)
+				}
+				link := filepath.Join(base, "linked")
+				if err := os.Symlink(realDir, link); err != nil {
+					t.Skipf("symlinks unavailable on this host: %v", err)
+				}
+				return filepath.Join(link, "file.txt")
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := t.TempDir()
+			target := tt.target(t, base)
+			fresh := fmt.Sprintf("%v", RefuseSymlinks(base, target))
+
+			verified := make(map[string]bool)
+			for range 2 { // the second call must use the cache
+				got := fmt.Sprintf("%v", RefuseSymlinksCached(base, target, verified))
+				if got != fresh {
+					t.Errorf("cached check = %q, fresh check = %q", got, fresh)
+				}
+			}
+		})
+	}
+}
+
+// A component that was missing on the first call is never cached: when it
+// later appears as a symlink, the next call must still reject it.
+func TestRefuseSymlinksCachedRechecksNewlyCreatedComponent(t *testing.T) {
+	base := t.TempDir()
+	outside := filepath.Join(base, "outside.txt")
+	if err := os.WriteFile(outside, []byte("keep"), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+	missing := filepath.Join(base, "later")
+	target := filepath.Join(missing, "file.txt")
+
+	verified := make(map[string]bool)
+	if err := RefuseSymlinksCached(base, target, verified); err != nil {
+		t.Fatalf("check with missing component: %v", err)
+	}
+	if verified[filepath.Clean(missing)] {
+		t.Fatal("missing component must not be cached")
+	}
+	if err := os.Symlink(outside, missing); err != nil {
+		t.Skipf("symlinks unavailable on this host: %v", err)
+	}
+	want := fmt.Sprintf("refuse to write through symlink %q", missing)
+	if got := RefuseSymlinksCached(base, target, verified); got == nil || got.Error() != want {
+		t.Errorf("cached check = %v, want %q", got, want)
 	}
 }

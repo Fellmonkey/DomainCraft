@@ -40,6 +40,16 @@ func LocalPathWithin(base, rel string) (string, string, error) {
 // below it. Missing components are ignored; the caller creates them later and
 // must re-check before committing a file.
 func RefuseSymlinks(base, target string) error {
+	return RefuseSymlinksCached(base, target, nil)
+}
+
+// RefuseSymlinksCached is RefuseSymlinks with an optional cache of directories
+// already verified non-symlink. A cached directory skips only its Lstat; the
+// final target component is always inspected, and so is every missing
+// component (it may have appeared since the previous call). Callers must only
+// share a cache between checks whose gap they re-check separately — passing
+// nil gives the fully fresh walk used by RefuseSymlinks.
+func RefuseSymlinksCached(base, target string, verified map[string]bool) error {
 	rel, err := filepath.Rel(base, target)
 	if err != nil {
 		return fmt.Errorf("resolve path %q: %w", target, err)
@@ -53,7 +63,14 @@ func RefuseSymlinks(base, target string) error {
 		cur = filepath.Join(cur, comp)
 		paths = append(paths, cur)
 	}
-	for _, path := range paths {
+	cached := verified != nil
+	for i, path := range paths {
+		// The leaf is the file about to be written (or, when target == base,
+		// the base itself): a link planted there must never be cached away.
+		isLeaf := cached && i == len(paths)-1
+		if cached && !isLeaf && verified[filepath.Clean(path)] {
+			continue
+		}
 		info, err := os.Lstat(path)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -63,6 +80,11 @@ func RefuseSymlinks(base, target string) error {
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("refuse to write through symlink %q", path)
+		}
+		// Only existing, non-symlink directories enter the cache; missing
+		// components stay unchecked until they appear on a later call.
+		if cached && !isLeaf && info.IsDir() {
+			verified[filepath.Clean(path)] = true
 		}
 	}
 	return nil

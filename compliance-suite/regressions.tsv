@@ -101,3 +101,5 @@ internal/renderer/hardening_test.go::TestRenderRejectsSymlinkWithRelativeBridgeD
 internal/renderer/hardening_test.go::TestRenderRollbackRemovesTargetDeletedBeforeCommit	#5	rollback wrote empty bytes when a target disappeared between staging and commit
 internal/ir/build_relations_bench_test.go::TestBuildHubRelationsPreservesFirstMatch	#5	relation indexing changed first-match semantics on hub entities
 internal/renderer/load_test.go::TestLoadSourceFailsClosedOnMissingBridgeYaml	#5	renderer guessed a config path for a directory without bridge.yaml
+internal/fsutil/fsutil_test.go::TestRefuseSymlinksCachedRejectsSymlinkAtFinalComponent	#5	cached containment check skipped the final symlink component
+internal/fsutil/fsutil_test.go::TestRefuseSymlinksCachedRechecksNewlyCreatedComponent	#5	newly created directory was served from the containment cache
