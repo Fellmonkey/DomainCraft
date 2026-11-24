@@ -79,6 +79,12 @@ templates:
 func TestRenderRejectsSymlinkWithRelativeBridgeDir(t *testing.T) {
 	t.Run("symlinked template source", func(t *testing.T) {
 		base := t.TempDir()
+		// CI on Windows puts the checkout (D:) and the system temp dir (C:) on
+		// different volumes; filepath.Rel cannot express a cross-volume path.
+		// Chdir into base so the bridge and cwd share a volume. This test does
+		// not call t.Parallel, and the testing package keeps parallel tests
+		// paused until sequential tests finish.
+		t.Chdir(base)
 		outside := filepath.Join(base, "outside.tmpl")
 		if err := os.WriteFile(outside, []byte("leaked"), 0o644); err != nil {
 			t.Fatalf("write outside template: %v", err)
