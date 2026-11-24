@@ -35,6 +35,17 @@ func ResolveExtendsRef(ref, fromDir string, resolver *Resolver) (string, error) 
 			}
 		}
 	}
+	// A relative path-like `extends` belongs to the adapter that declared it,
+	// not to the CLI's current working directory. The generic resolver treats
+	// such refs as CWD-relative (and rejects a missing one as a hard error), so
+	// join it with the adapter directory before handing it over.
+	if strings.HasPrefix(ref, ".") && looksLikePath(ref) && fromDir != "" {
+		local := ref
+		if !filepath.IsAbs(local) {
+			local = filepath.Join(fromDir, filepath.FromSlash(local))
+		}
+		return resolver.Resolve(local)
+	}
 	return resolver.Resolve(ref)
 }
 

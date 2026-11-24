@@ -135,17 +135,18 @@ func loadSource(bridgePath string) (sourceConfig, error) {
 	if config.OutputDir == "" {
 		config.OutputDir = "generated"
 	}
-	// Contract version: absent (0) means the core's contract version, with a
-	// deprecation notice (emitted by the caller); a newer contract is an error.
-	contractDeclared := config.ContractVersion != 0
-	if config.ContractVersion == 0 {
-		config.ContractVersion = ContractVersion
+	// Contract version: use the same parser/gate as the bridge update path so
+	// a manifest cannot be accepted on one side and rejected on the other.
+	// An absent declaration defaults to the core's version (with a deprecation
+	// notice from the caller); a negative or newer declaration is a hard error.
+	contractVersion, contractDeclared, err := bridge.ParseContractVersion(data)
+	if err != nil {
+		return sourceConfig{}, err
 	}
-	if config.ContractVersion > ContractVersion {
-		return sourceConfig{}, fmt.Errorf(
-			"bridge %q requires contract v%d, but this DomainCraft core implements contract v%d",
-			config.Name, config.ContractVersion, ContractVersion)
+	if err := bridge.CheckContractVersion(contractVersion); err != nil {
+		return sourceConfig{}, fmt.Errorf("bridge %q: %w", config.Name, err)
 	}
+	config.ContractVersion = contractVersion
 	return sourceConfig{dir: bridgeDir, config: config, contractDeclared: contractDeclared}, nil
 }
 

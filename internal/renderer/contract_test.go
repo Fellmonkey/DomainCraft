@@ -46,6 +46,21 @@ func TestLoadSourceDefaultsAbsentContractTo1(t *testing.T) {
 	}
 }
 
+// A negative declaration used to pass the loader (it only rejected values
+// above the core's version) while the update gate rejected it. Both sides now
+// share one parser, so the loader must fail closed too.
+func TestLoadSourceRejectsNegativeContractVersion(t *testing.T) {
+	t.Parallel()
+	dir := writeBridgeConfig(t, "name: b\ncontract_version: -1\n")
+	_, err := loadSource(dir)
+	if err == nil {
+		t.Fatal("expected an error for a bridge declaring a negative contract")
+	}
+	if !strings.Contains(err.Error(), "contract") {
+		t.Errorf("error = %q, want it to name the bad contract version", err)
+	}
+}
+
 func TestLoadSourceAcceptsMatchingContract(t *testing.T) {
 	t.Parallel()
 	dir := writeBridgeConfig(t, "name: b\ncontract_version: 1\n")

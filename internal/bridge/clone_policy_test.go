@@ -154,6 +154,87 @@ func TestMaybeUpdatePolicies(t *testing.T) {
 	}
 }
 
+// TestCacheIsolationBetweenOwners covers the cache key collision: two GitHub
+// repos with the same name but different owners must never share a checkout.
+// A cache entry carrying another owner's metadata is replaced, not reused.
+func TestCacheIsolationBetweenOwners(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	root := t.TempDir()
+	appdir.SetBaseForTesting(root)
+	t.Cleanup(func() { appdir.SetBaseForTesting("") })
+
+	alice := RegistryEntry{ID: cacheIDForGitHub("alice/utils"), GitHub: "alice/utils"}
+	bob := RegistryEntry{ID: cacheIDForGitHub("bob/utils"), GitHub: "bob/utils"}
+	if CachePath(alice) == CachePath(bob) {
+		t.Fatalf("both owners resolved to the same cache dir %q", CachePath(alice))
+	}
+	for _, e := range []RegistryEntry{alice, bob} {
+		if err := validateCacheID(e.ID); err != nil {
+			t.Fatalf("derived cache ID %q is unsafe: %v", e.ID, err)
+		}
+		dir := CachePath(e)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// Simulate the old collision: both dirs hold alice's checkout.
+		writeBridgeYAML(t, dir, "alice-1.0.0")
+	}
+	if err := WriteMeta(alice, &CacheMeta{ID: alice.ID, Source: alice.GitHub, Version: "alice-1.0.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteMeta(bob, &CacheMeta{ID: bob.ID, Source: alice.GitHub, Version: "alice-1.0.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if !IsCached(bob) {
+		t.Fatal("bob's foreign checkout should look cached before the fix")
+	}
+
+	// Local bare remote stands in for github.com/bob/utils.git.
+	remote := filepath.Join(root, "remote.git")
+	testGit(t, root, "init", "--bare", "-b", "main", "remote.git")
+	testGit(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
+	src := filepath.Join(root, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	makeBridgeRepo(t, src, "main")
+	writeBridgeYAML(t, src, "bob-2.0.0")
+	testGit(t, src, "add", ".")
+	testGit(t, src, "commit", "-q", "-m", "bob version")
+	testGit(t, src, "remote", "add", "origin", remote)
+	testGit(t, src, "push", "-q", "-u", "origin", "main")
+
+	home := t.TempDir()
+	cfg := "[url \"file:///" + filepath.ToSlash(remote) + "\"]\n\tinsteadOf = https://github.com/bob/utils.git\n"
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	path, err := EnsureBridge(bob, nil)
+	if err != nil {
+		t.Fatalf("EnsureBridge(bob): %v", err)
+	}
+	if path != CachePath(bob) {
+		t.Fatalf("EnsureBridge(bob) = %q, want %q", path, CachePath(bob))
+	}
+	data, err := os.ReadFile(filepath.Join(path, "bridge.yaml"))
+	if err != nil || !strings.Contains(string(data), "bob-2.0.0") {
+		t.Fatalf("bob served a foreign checkout: %q, %v", data, err)
+	}
+	meta, err := ReadMeta(bob)
+	if err != nil || meta == nil || meta.Source != bob.GitHub {
+		t.Fatalf("bob metadata = %+v, %v; want source %q", meta, err, bob.GitHub)
+	}
+	data, err = os.ReadFile(filepath.Join(CachePath(alice), "bridge.yaml"))
+	if err != nil || !strings.Contains(string(data), "alice-1.0.0") {
+		t.Fatalf("alice's cache was modified: %q, %v", data, err)
+	}
+}
+
 // TestApplyUpdateRejectsUnsupportedContract checks the hard invariant at the
 // apply site, not only the isolated shouldApplyContract predicate: a bridge
 // declaring a newer contract must never be fetched into the cache.
@@ -216,5 +297,62 @@ func TestApplyUpdateRejectsUnsupportedContract(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(cacheDir, "bridge.yaml"))
 	if err != nil || !strings.Contains(string(data), `version: "1.0.0"`) {
 		t.Fatalf("cached bridge.yaml changed: %q, %v", data, err)
+	}
+}
+
+// TestApplyUpdateFallbackRejectsUnsupportedContract pins the gate on the clean
+// re-clone path. A failed in-place fetch used to bypass the contract check
+// entirely, so a bridge with a newer contract landed in the cache.
+func TestApplyUpdateFallbackRejectsUnsupportedContract(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	root := t.TempDir()
+	appdir.SetBaseForTesting(root)
+	defer appdir.SetBaseForTesting("")
+
+	remote := filepath.Join(root, "remote.git")
+	testGit(t, root, "init", "--bare", "-b", "main", "remote.git")
+	testGit(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
+
+	src := filepath.Join(root, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	makeBridgeRepo(t, src, "main")
+	testGit(t, src, "remote", "add", "origin", remote)
+	testGit(t, src, "push", "-q", "-u", "origin", "main")
+
+	entry := cacheEntry("fallback-contract", "owner/fallback-contract")
+	cacheDir := CachePath(entry)
+	testGit(t, root, "clone", "-q", remote, cacheDir)
+	if err := WriteMeta(entry, newMetaFromCache(entry)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Publish a contract this core cannot support on the default branch.
+	if err := os.WriteFile(filepath.Join(src, "bridge.yaml"), []byte("name: test\nversion: \"2.0.0\"\ncontract_version: 99\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testGit(t, src, "add", ".")
+	testGit(t, src, "commit", "-q", "-m", "bump contract")
+	testGit(t, src, "push", "-q", "origin", "main")
+
+	// Rewrite the clone URL to the local remote so the fallback clone is offline.
+	home := t.TempDir()
+	cfg := "[url \"file:///" + filepath.ToSlash(remote) + "\"]\n\tinsteadOf = https://github.com/owner/fallback-contract.git\n"
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	// A syntactically valid but nonexistent branch forces the fallback path.
+	u := &Update{Entry: entry, RemoteBranch: "missing-branch"}
+	if _, err := ApplyUpdate(entry, u); err == nil || !strings.Contains(err.Error(), "contract") {
+		t.Fatalf("ApplyUpdate fallback error = %v, want a contract rejection", err)
+	}
+	if _, err := os.Stat(filepath.Join(cacheDir, "bridge.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unsupported fallback clone was left in the cache: %v", err)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/DomainCraft/DomainCraft/internal/appdir"
@@ -290,6 +291,37 @@ func TestHTTPProbeLimitsAndRedaction(t *testing.T) {
 				t.Errorf("error = %q, leaked userinfo", err)
 			}
 		})
+	}
+}
+
+// F35: a redirect must be rejected before the follow-up request reaches the
+// new host. Checking resp.Request.URL after client.Do is too late — the target
+// has already been fetched.
+func TestHTTPProbeRejectsRedirectBeforeFetch(t *testing.T) {
+	var targetHits atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		targetHits.Add(1)
+		_, _ = w.Write([]byte("secret-body"))
+	}))
+	defer target.Close()
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/payload?token=super-secret", http.StatusFound)
+	}))
+	defer origin.Close()
+
+	_, err := httpGetBody(origin.URL + "/start")
+	if err == nil {
+		t.Fatal("httpGetBody followed a redirect to a forbidden host")
+	}
+	if !strings.Contains(err.Error(), "redirect") {
+		t.Errorf("error = %q, want a redirect rejection", err)
+	}
+	if strings.Contains(err.Error(), "super-secret") {
+		t.Errorf("error = %q, leaked the redirect target's query", err)
+	}
+	if n := targetHits.Load(); n != 0 {
+		t.Errorf("redirect target received %d requests, want none", n)
 	}
 }
 

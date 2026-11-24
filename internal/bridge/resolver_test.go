@@ -95,6 +95,47 @@ func TestLooksLikePath(t *testing.T) {
 	}
 }
 
+// TestResolveExtendsRelativeToAdapterDir pins the base of a relative
+// `extends`: it belongs to the declaring adapter, not to the CLI's current
+// working directory.
+func TestResolveExtendsRelativeToAdapterDir(t *testing.T) {
+	root := t.TempDir()
+	adapter := filepath.Join(root, "adapter")
+	base := filepath.Join(adapter, "base")
+	sibling := filepath.Join(root, "shared")
+	for _, spec := range []struct{ dir, name string }{
+		{adapter, "adapter"}, {base, "base"}, {sibling, "shared"},
+	} {
+		if err := os.MkdirAll(spec.dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(spec.dir, "bridge.yaml"), []byte("name: "+spec.name+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	r := NewResolver(&Registry{})
+	for _, ref := range []string{"./base", "../shared"} {
+		want := base
+		if ref == "../shared" {
+			want = sibling
+		}
+		got, err := ResolveExtendsRef(ref, adapter, r)
+		if err != nil {
+			t.Fatalf("ResolveExtendsRef(%q, %q): %v", ref, adapter, err)
+		}
+		if got != want {
+			t.Errorf("ResolveExtendsRef(%q, %q) = %q, want %q", ref, adapter, got, want)
+		}
+	}
+
+	// A missing relative ref stays a hard local-path error, never a clone.
+	if _, err := ResolveExtendsRef("./missing", adapter, r); err == nil ||
+		!strings.Contains(err.Error(), "no such local path") {
+		t.Errorf("missing relative extends: err = %v, want a local-path error", err)
+	}
+}
+
 // F27: FindMonorepoBridge walks up to the filesystem root and takes the first
 // (nearest) match — the shared walk must preserve that order.
 func TestFindMonorepoBridgeWalksUp(t *testing.T) {

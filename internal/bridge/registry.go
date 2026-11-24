@@ -148,22 +148,3 @@ func (r *Registry) ByID(id string) *RegistryEntry {
 	}
 	return nil
 }
-
-// OfficialPath returns the monorepo-relative location (`bridges/<Path>`) of an
-// official bridge, or "" when the ID is unknown or has no fixed position.
-// This is the single source of truth for the ID→path mapping — callers must
-// never derive it from directory names.
-func (r *Registry) OfficialPath(id string) string {
-	if e := r.ByID(id); e != nil {
-		return e.Path
-	}
-	return ""
-}
-
-// ByIDDeprecated reports whether the named bridge is deprecated.
-func (r *Registry) ByIDDeprecated(id string) bool {
-	if e := r.ByID(id); e != nil {
-		return e.Deprecated
-	}
-	return false
-}

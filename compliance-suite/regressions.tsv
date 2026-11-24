@@ -121,3 +121,14 @@ internal/seed/seed_test.go::TestGenerateRespectsExclusiveBounds	#5	int and float
 internal/seed/seed_test.go::TestStringValueMaxLengthClamp	#5	oversized max_length clamp was hand-rolled with no direct coverage at zero or above length
 internal/snapshot/snapshot_test.go::TestLoadRejectsIncompatibleFormatVersion	#5	Load accepted snapshots with any format_version, so stale snapshots could trigger destructive prune
 internal/parser/parser_test.go::TestNavigationNameStripsIdAndIDSuffixOnly	#5	HasIDSuffix treated lowercase id as an FK suffix and renamed fluid to Flu, squid to Squ and avoid to Avo
+internal/bridge/clone_policy_test.go::TestCacheIsolationBetweenOwners	#5	alice/utils and bob/utils shared one cache checkout including its migration commands
+internal/bridge/clone_policy_test.go::TestApplyUpdateFallbackRejectsUnsupportedContract	#5	re-clone fallback skipped the contract gate and cached an unsupported bridge
+internal/renderer/contract_test.go::TestLoadSourceRejectsNegativeContractVersion	#5	negative contract_version was accepted by the loader but rejected by the update gate
+internal/bridge/resolver_test.go::TestResolveExtendsRelativeToAdapterDir	#5	relative extends resolved against CWD instead of the adapter directory
+internal/bridge/hardening_test.go::TestHTTPProbeRejectsRedirectBeforeFetch	#5	update probe fetched a redirected host before checking the target
+internal/renderer/bridgefuncs_test.go::TestBuildBridgeFuncsRequiresLiteralSpecs	#5	core substituted C# and UI syntax when a bridge omitted literal specs
+internal/renderer/render_test.go::TestResolvePackagesHasNoLanguageSpecificFrameworkDefault	#5	core hardcoded net10.0 as the package-resolution framework default
+cmd/domaincraft/commands_hardening_test.go::TestPruneRejectsScaffoldReplaceEscape	#5	scaffold replacement under --prune deleted a file outside outputDir via a symlink
+cmd/domaincraft/commands_update_security_test.go::TestReplaceExecutableUsesSameVolumeTemp	#5	update binary was downloaded to the OS temp dir so rename into the executable directory failed with EXDEV
+cmd/domaincraft/commands_hardening_test.go::TestPruneCleanupErrorPrintedOnce	#5	failed namespace rewrite under --prune was warned about and then printed again as Error
+cmd/domaincraft/commands_hardening_test.go::TestUsageErrorsExitTwo	#5	bad flags, bad arguments and missing --bridge exited with code 1 instead of 2

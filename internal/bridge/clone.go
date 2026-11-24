@@ -27,6 +27,42 @@ func CachePath(entry RegistryEntry) string {
 	return filepath.Join(CacheDir(), entry.ID)
 }
 
+// cacheIDForGitHub derives a cache-safe ID for a GitHub shorthand. Using the
+// bare repository name would make alice/utils and bob/utils share one cache
+// directory (and one checkout, including its migrations:). The owner is part
+// of the key, with "__" as an unambiguous separator that keeps validateCacheID
+// happy: no separators, no dot segments, a single local path component.
+func cacheIDForGitHub(repo string) string {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok || owner == "" || name == "" {
+		return repo
+	}
+	return owner + "__" + name
+}
+
+// cacheSourceMatches reports whether an existing checkout belongs to the
+// expected GitHub repository. A foreign cache is replaced, never reused: it
+// can carry another owner's templates, migrations and metadata.
+func cacheSourceMatches(entry RegistryEntry) bool {
+	meta, err := ReadMeta(entry)
+	if err != nil {
+		return false // unreadable metadata is not proof of ownership
+	}
+	if meta == nil {
+		// Legacy cache without metadata: fall back to git's origin. A plain
+		// embedded materialization has no remote, so it stays usable.
+		out, gitErr := runGit(CachePath(entry), "remote", "get-url", "origin")
+		if gitErr != nil {
+			return true
+		}
+		return strings.Contains(out, entry.GitHub)
+	}
+	if meta.Source == "" {
+		return true // old metadata without a source cannot disprove ownership
+	}
+	return meta.Source == entry.GitHub
+}
+
 // validateCacheID rejects bridge IDs that could resolve outside the cache
 // directory. IDs come from registry entries and from `owner/repo` refs, so a
 // separator or a dot segment would otherwise let CloneBridge and ApplyUpdate
@@ -83,6 +119,13 @@ func EnsureBridge(entry RegistryEntry, opts *EnsureOptions) (string, error) {
 	}
 
 	cacheDir := CachePath(entry)
+	if IsCached(entry) && !cacheSourceMatches(entry) {
+		// A cache entry from a different repository must not be served as this
+		// bridge: another owner's code and migration commands would be used.
+		if err := os.RemoveAll(cacheDir); err != nil {
+			return "", fmt.Errorf("remove foreign bridge cache %q: %w", cacheDir, err)
+		}
+	}
 	if !IsCached(entry) {
 		// Offline fallback: materialize the embedded copy before cloning.
 		ok, err := TryMaterializeEmbedded(entry, opts)

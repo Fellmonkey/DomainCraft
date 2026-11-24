@@ -79,7 +79,9 @@ func (r *Resolver) Resolve(input string) (string, error) {
 			}
 		}
 		entry := RegistryEntry{
-			ID:     parts[1],
+			// Owner-scoped: the bare repository name would collide in the
+			// cache with another owner's repo of the same name.
+			ID:     cacheIDForGitHub(repo),
 			GitHub: repo,
 		}
 		path, err := EnsureBridge(entry, r.ensure)

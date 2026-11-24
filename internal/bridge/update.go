@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -34,39 +36,63 @@ const DefaultUpdateInterval = 24 * time.Hour
 // be applied.
 const CoreContractVersion = specmeta.ContractVersion
 
-// parseBridgeContractVersion reads `contract_version` from bridge.yaml bytes.
-// An absent field means contract v1. Any other unreadable value is an error:
+// ParseContractVersion reads `contract_version` from bridge.yaml bytes. It is
+// the single parser used by both the update gate and the renderer loader, so
+// a manifest can never be accepted on one side and rejected on the other.
+// Returns the effective version, whether the field was explicitly declared,
+// and an error. An absent (or zero) field means the core's contract version;
+// every other unreadable value — including a negative one — is a hard error:
 // a malformed manifest must never be silently downgraded to "supported".
-func parseBridgeContractVersion(data []byte) (int, error) {
+func ParseContractVersion(data []byte) (int, bool, error) {
 	// A truncated body may still be valid YAML (e.g. a scalar or a list), so
 	// require the document to be a mapping before reading the version.
 	var probe any
 	if err := yaml.Unmarshal(data, &probe); err != nil {
-		return 0, fmt.Errorf("parse bridge contract version: %w", err)
+		return 0, false, fmt.Errorf("parse bridge contract version: %w", err)
 	}
 	if _, ok := probe.(map[string]any); !ok {
-		return 0, fmt.Errorf("parse bridge contract version: manifest must be a YAML mapping")
+		return 0, false, fmt.Errorf("parse bridge contract version: manifest must be a YAML mapping")
 	}
+	// A pointer distinguishes an absent field from an explicit 0, while the
+	// declared flag follows the legacy "0 means absent" behaviour.
 	var cfg struct {
-		ContractVersion int `yaml:"contract_version"`
+		ContractVersion *int `yaml:"contract_version"`
 	}
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return 0, fmt.Errorf("parse bridge contract version: %w", err)
+		return 0, false, fmt.Errorf("parse bridge contract version: %w", err)
 	}
-	if cfg.ContractVersion < 0 {
-		return 0, fmt.Errorf("invalid contract_version %d", cfg.ContractVersion)
+	if cfg.ContractVersion == nil {
+		return CoreContractVersion, false, nil
 	}
-	return specmeta.EffectiveContractVersion(cfg.ContractVersion), nil
+	if *cfg.ContractVersion < 0 {
+		return 0, true, fmt.Errorf("invalid contract_version %d", *cfg.ContractVersion)
+	}
+	if *cfg.ContractVersion == 0 {
+		return CoreContractVersion, false, nil
+	}
+	return *cfg.ContractVersion, true, nil
 }
 
-// shouldApplyContract verifies that a bridge declaring contractVersion is
+// parseBridgeContractVersion keeps the update-side seam used by probes and
+// tests; the parsing itself lives in ParseContractVersion.
+func parseBridgeContractVersion(data []byte) (int, error) {
+	version, _, err := ParseContractVersion(data)
+	return version, err
+}
+
+// CheckContractVersion verifies that a bridge declaring contractVersion is
 // supported by the current core. A newer contract is a hard error — an
-// unsupported bridge must never be downloaded/applied.
-func shouldApplyContract(contractVersion int) error {
+// unsupported bridge must never be downloaded/applied. Shared with the
+// renderer so both gates move together on a contract bump.
+func CheckContractVersion(contractVersion int) error {
 	if contractVersion > CoreContractVersion {
 		return fmt.Errorf("bridge requires contract v%d, but this core implements contract v%d", contractVersion, CoreContractVersion)
 	}
 	return nil
+}
+
+func shouldApplyContract(contractVersion int) error {
+	return CheckContractVersion(contractVersion)
 }
 
 // remoteContractVersion fetches a bridge's declared contract version at a ref
@@ -220,7 +246,33 @@ func ApplyUpdate(entry RegistryEntry, u *Update) (string, error) {
 		return "", errors.Join(append(fastPathErrs,
 			fmt.Errorf("re-clone bridge %q into %q: %w", entry.ID, cacheDir, err))...)
 	}
+	// The fallback clone is a fresh checkout of the default branch, so it must
+	// pass the same contract gate as the fast path. Fail closed: an unsupported
+	// bridge is never recorded as the new cache, and the in-place failure stays
+	// as the primary cause alongside the contract and cleanup errors.
+	if cerr := checkCachedContract(entry); cerr != nil {
+		errs := append(append([]error{}, fastPathErrs...), cerr)
+		if rerr := os.RemoveAll(cacheDir); rerr != nil {
+			errs = append(errs, fmt.Errorf("remove unsupported bridge cache %q: %w", cacheDir, rerr))
+		}
+		return "", errors.Join(errs...)
+	}
 	return finishUpdate(entry, branch, pin)
+}
+
+// checkCachedContract reads the freshly cloned bridge.yaml and rejects a
+// contract this core cannot support. An unreadable manifest is an error, never
+// a pass — the same rule the fast path applies to FETCH_HEAD.
+func checkCachedContract(entry RegistryEntry) error {
+	data, err := os.ReadFile(filepath.Join(CachePath(entry), "bridge.yaml")) //nolint:gosec // path built from a validated cache ID
+	if err != nil {
+		return fmt.Errorf("read re-cloned bridge manifest: %w", err)
+	}
+	version, _, err := ParseContractVersion(data)
+	if err != nil {
+		return err
+	}
+	return CheckContractVersion(version)
 }
 
 // finishUpdate re-applies a pin (if any) before recording metadata, so an
@@ -300,11 +352,33 @@ func githubAPIHead(entry RegistryEntry) (branch, commit string, err error) {
 // maxProbeBodyBytes caps remote probe responses (bridge.yaml, GitHub JSON).
 const maxProbeBodyBytes = 1 << 20
 
+// validateProbeRedirect is the redirect rule for bridge/update HTTP probes.
+// netutil installs it as CheckRedirect, so it runs before each follow-up
+// request is sent — checking resp.Request.URL after client.Do is too late.
+// Only the HTTPS hosts GitHub uses for these probes are allowed.
+func validateProbeRedirect(u *url.URL) error {
+	if u == nil {
+		return fmt.Errorf("redirect without a target URL")
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("redirect scheme %q is not allowed", u.Scheme)
+	}
+	host := strings.ToLower(u.Hostname())
+	switch host {
+	case "github.com", "api.github.com", "raw.githubusercontent.com":
+		return nil
+	default:
+		return fmt.Errorf("host %q is not allowed", host)
+	}
+}
+
 // httpGetBody performs a GET bound to the CLI's command context and returns the
 // response body. The bounded GET, status check and redaction live in netutil;
-// this wrapper keeps the package's test seam and the 10s probe client.
+// this wrapper keeps the package's test seam and the 10s probe client, and
+// passes a redirect rule so every hop is validated before the request to the
+// new host is made.
 func httpGetBody(rawURL string) ([]byte, error) {
-	return netutil.BoundedGet(CommandContext(), httpClient, rawURL, int64(maxProbeBodyBytes), nil)
+	return netutil.BoundedGet(CommandContext(), httpClient, rawURL, int64(maxProbeBodyBytes), validateProbeRedirect)
 }
 
 // runGit runs a git command in dir and returns its trimmed stdout.
