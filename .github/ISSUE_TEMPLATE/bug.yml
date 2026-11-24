@@ -1,0 +1,42 @@
+name: Bug report
+description: Something in DomainCraft doesn't work as it should.
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: DomainCraft version and system
+      description: From `domaincraft --version`, and which OS.
+      placeholder: "dev / v0.9.0 on Windows 11"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What you did
+      description: The exact commands you ran and a minimal `domain.yaml`, so we can do the same.
+      placeholder: |
+        domaincraft generate --domain domain.yaml --bridge csharp-rest --output out
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: What happened
+      description: The full output or error, pasted as text. For a problem in the Studio, add a screenshot.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+      description: For example, which files should have been generated.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: How often it happens, a workaround you found.
