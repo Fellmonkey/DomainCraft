@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -394,6 +397,162 @@ func TestRunDatabaseMigrationsSanitizesDisplayedCommand(t *testing.T) {
 		if strings.Contains(stderr.String(), injected) {
 			t.Errorf("raw escape byte %q reached stderr: %q", injected, stderr.String())
 		}
+	}
+}
+
+// stubMigrationExec swaps the child-process constructor for one test. Tests in
+// this package are not parallel, so swapping the seam is race-free.
+func stubMigrationExec(t *testing.T, fn func(context.Context, string, ...string) *exec.Cmd) {
+	t.Helper()
+	old := execCommandFn
+	execCommandFn = fn
+	t.Cleanup(func() { execCommandFn = old })
+}
+
+// migrationTestCmd builds a shell command for a stub. It mirrors the shell
+// selection in runDatabaseMigrations so a stub can choose its own command line
+// while still receiving the context from production.
+func migrationTestCmd(ctx context.Context, line string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		return exec.CommandContext(ctx, "cmd", "/C", line)
+	}
+	return exec.CommandContext(ctx, "sh", "-c", line)
+}
+
+// TestRunDatabaseMigrationsPropagatesFailure covers the execution branch: a
+// non-zero exit code aborts the run and names the failing command.
+func TestRunDatabaseMigrationsPropagatesFailure(t *testing.T) {
+	stubMigrationExec(t, func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return migrationTestCmd(ctx, "exit 7")
+	})
+	cfg := &renderer.MigrationConfig{Enabled: true, Commands: []string{"echo harmless"}}
+	cmd := &cobra.Command{}
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	log := logger.New()
+	log.SetWriter(&stderr)
+
+	err := runDatabaseMigrations(cfg, t.TempDir(), cmd, log)
+	if err == nil {
+		t.Fatal("runDatabaseMigrations succeeded with a failing command")
+	}
+	if !strings.Contains(err.Error(), "database migration 1 failed") {
+		t.Errorf("err = %q, want it to name migration 1", err)
+	}
+	if !strings.Contains(err.Error(), "exit status 7") {
+		t.Errorf("err = %q, want the child's exit status", err)
+	}
+	if strings.Contains(stderr.String(), "Database migrations applied") {
+		t.Errorf("success reported after a failed command: %q", stderr.String())
+	}
+}
+
+// TestRunDatabaseMigrationsUsesOutputDir checks that child processes inherit
+// the generated output directory as their working directory.
+func TestRunDatabaseMigrationsUsesOutputDir(t *testing.T) {
+	outDir := filepath.Join(t.TempDir(), "generated")
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var captured *exec.Cmd
+	stubMigrationExec(t, func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		captured = migrationTestCmd(ctx, "exit 0")
+		return captured
+	})
+	cfg := &renderer.MigrationConfig{Enabled: true, Commands: []string{"echo harmless"}}
+	cmd := &cobra.Command{}
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	log := logger.New()
+	log.SetWriter(&stderr)
+
+	if err := runDatabaseMigrations(cfg, outDir, cmd, log); err != nil {
+		t.Fatalf("runDatabaseMigrations: %v", err)
+	}
+	if captured == nil {
+		t.Fatal("no migration command was started")
+	}
+	if captured.Dir != outDir {
+		t.Errorf("command Dir = %q, want %q", captured.Dir, outDir)
+	}
+}
+
+// TestRunDatabaseMigrationsRespectsCommandContext checks that the global
+// commandCtx is handed to the child and that a canceled context prevents the
+// process from starting at all.
+func TestRunDatabaseMigrationsRespectsCommandContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	oldCtx := commandCtx
+	commandCtx = ctx
+	t.Cleanup(func() { commandCtx = oldCtx })
+
+	var seenCtx context.Context
+	var captured *exec.Cmd
+	stubMigrationExec(t, func(c context.Context, _ string, _ ...string) *exec.Cmd {
+		seenCtx = c
+		captured = migrationTestCmd(c, "echo SHOULD_NOT_RUN")
+		return captured
+	})
+	cfg := &renderer.MigrationConfig{Enabled: true, Commands: []string{"echo harmless"}}
+	cmd := &cobra.Command{}
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	log := logger.New()
+	log.SetWriter(&stderr)
+
+	err := runDatabaseMigrations(cfg, t.TempDir(), cmd, log)
+	if err == nil {
+		t.Fatal("runDatabaseMigrations succeeded with a canceled context")
+	}
+	if seenCtx != ctx {
+		t.Errorf("command received context %v, want the canceled commandCtx", seenCtx)
+	}
+	if captured == nil || captured.Process != nil {
+		t.Fatalf("child process was started with a canceled context: %+v", captured)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want it to wrap context.Canceled", err)
+	}
+	if !strings.Contains(err.Error(), "database migration 1 failed") {
+		t.Errorf("err = %q, want it to name migration 1", err)
+	}
+}
+
+// TestRunDatabaseMigrationsRunsCommandsInOrder appends from two real shell
+// commands into one file, so the file records execution order rather than the
+// order in which commands were merely displayed.
+func TestRunDatabaseMigrationsRunsCommandsInOrder(t *testing.T) {
+	outDir := t.TempDir()
+	cfg := &renderer.MigrationConfig{
+		Enabled:  true,
+		Commands: []string{"echo FIRST >> order.txt", "echo SECOND >> order.txt"},
+	}
+	cmd := &cobra.Command{}
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	log := logger.New()
+	log.SetWriter(&stderr)
+
+	if err := runDatabaseMigrations(cfg, outDir, cmd, log); err != nil {
+		t.Fatalf("runDatabaseMigrations: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(outDir, "order.txt"))
+	if err != nil {
+		t.Fatalf("read migration output: %v", err)
+	}
+	got := strings.Fields(string(data))
+	if len(got) != 2 || got[0] != "FIRST" || got[1] != "SECOND" {
+		t.Errorf("execution order = %q, want [FIRST SECOND]", got)
+	}
+	lines := stderr.String()
+	first, second := strings.Index(lines, "Migration 1/2"), strings.Index(lines, "Migration 2/2")
+	if first < 0 || second < 0 || first > second {
+		t.Errorf("progress log order = %q, want 1/2 before 2/2", lines)
 	}
 }
 

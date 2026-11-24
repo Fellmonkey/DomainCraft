@@ -79,6 +79,11 @@ var (
 	// isTerminal is a seam for testing prompt gating without a real TTY.
 	isTerminal = interactive.IsTerminal
 
+	// execCommandFn constructs child processes for bridge-declared database
+	// migrations. It is a seam so tests can inspect the working directory and
+	// context passed to a command without changing production behavior.
+	execCommandFn = exec.CommandContext
+
 	// version is stamped at build time via -ldflags "-X main.version=vX.Y.Z" and,
 	// when it isn't, backed by the module version in build info (see init).
 	version = "dev"
@@ -267,30 +272,47 @@ func newGenerateCmd(opts *cliOptions) *cobra.Command {
 	return cmd
 }
 
+// loadAndValidateDomain parses and validates domain.yaml, then builds the IR
+// and applies addons. resolveBridge is called between validation and IR
+// building so prompts, log lines and errors keep their original order.
+func loadAndValidateDomain(opts *cliOptions, cmd *cobra.Command, log *logger.Logger, resolveBridge func() (string, error)) (*ir.Project, string, error) {
+	log.Info("Parsing %s", opts.domainFile)
+	schema, err := loadAndValidate(opts, cmd)
+	if err != nil {
+		return nil, "", err
+	}
+	log.Success("Schema valid (%d entities)", len(schema.Entities))
+
+	bridgeName, err := resolveBridge()
+	if err != nil {
+		return nil, "", err
+	}
+
+	log.Info("Building IR")
+	irProject, err := ir.Build(schema)
+	if err != nil {
+		return nil, "", err
+	}
+	applyAddons(opts, irProject)
+	return irProject, bridgeName, nil
+}
+
 // runGenerate is shared by `generate` and `init --bridge` so both paths go
 // through the same validation, rendering and migration pipeline.
 func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
 	log := commandLogger(cmd)
 
-	log.Info("Parsing %s", opts.domainFile)
-	schema, err := loadAndValidate(opts, cmd)
+	irProject, bridgeName, err := loadAndValidateDomain(opts, cmd, log, func() (string, error) {
+		resolvedPath, name, err := resolveBridgeInteractive(opts, log)
+		if err != nil {
+			return "", err
+		}
+		opts.bridgePath = resolvedPath
+		return name, nil
+	})
 	if err != nil {
 		return err
 	}
-	log.Success("Schema valid (%d entities)", len(schema.Entities))
-
-	resolvedPath, bridgeName, err := resolveBridgeInteractive(opts, log)
-	if err != nil {
-		return err
-	}
-	opts.bridgePath = resolvedPath
-
-	log.Info("Building IR")
-	irProject, err := ir.Build(schema)
-	if err != nil {
-		return err
-	}
-	applyAddons(opts, irProject)
 
 	// --- Schema snapshot / migration diff ---
 	snapPath := snapshot.Path(opts.outputDir)
@@ -353,75 +375,21 @@ func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
 	log.Success("Generated %d file(s) into %s", len(writtenFiles), opts.outputDir)
 
 	// --- Admin panel generation ---
-	// pflag's NoOptDefVal makes `--admin <id>` stop consuming the next
-	// argument (it lands in args), so reclaim it here. This keeps both
-	// `--admin <path>` and `--admin=<path>` working while `--admin` alone
-	// still means the default admin-alpine bridge. Any other positional
-	// argument is rejected by cobra.MaximumNArgs(1) / the check below.
-	if len(args) > 0 {
-		if !cmd.Flags().Changed("admin") || opts.adminBridge != "admin-alpine" {
-			return asUsageError(fmt.Errorf("unexpected positional argument %q: use --admin <bridge-id>", args[0]))
-		}
-		opts.adminBridge = args[0]
+	adminManifest, err := generateAdminPanel(opts, cmd, args, irProject, seedData, mockDataset, log)
+	if err != nil {
+		return err
 	}
-	if opts.adminBridge == "" && !cmd.Flags().Changed("admin") && !opts.nonInteractive && isTerminal() {
-		generate, err := interactive.PromptGenerateAdmin()
-		if err != nil {
-			return fmt.Errorf("prompt for admin panel: %w", err)
-		}
-		if generate {
-			opts.adminBridge = "admin-alpine"
-		}
-	}
-	if opts.adminBridge != "" {
-		adminManifest, err := generateAdminPanel(opts, irProject, seedData, mockDataset, log)
-		if err != nil {
-			return err
-		}
-		manifest = append(manifest, adminManifest...)
-	}
+	manifest = append(manifest, adminManifest...)
 
 	// --- Migration actions: clean up orphaned / renamed files ---
-	// Files written from this run must never be touched by cleanup.
-	fresh := make(map[string]bool)
-	for _, f := range manifest {
-		if f.Written {
-			fresh[f.Path] = true
-		}
-	}
-	applied, err := applyMigrationActions(opts, migrationDiff, fresh, log, cmd)
+	applied, err := applySchemaMigrations(opts, migrationDiff, manifest, log, cmd)
 	if err != nil {
 		return err
 	}
 
 	// --- Database migrations ---
-	// Run the bridge's declared migration commands so the developer never
-	// has to think about SQL schemas. Triggered explicitly via --migrate, or
-	// automatically in --prune mode when the diff detected renames/deletions
-	// that must reach the database (skipped when cleanup was deferred).
-	autoMigrate := opts.prune && migrationDiff.HasSchemaChanges()
-	if autoMigrate && chainHasCommunity {
-		log.Warn("community bridge(s) in the resolved chain — not auto-running database migrations; use --migrate explicitly")
-		autoMigrate = false
-	}
-	shouldMigrate := opts.migrate || autoMigrate
-	cfg := rendererInstance.MigrationConfig()
-	if applied && shouldMigrate && cfg != nil && cfg.Enabled {
-		if !bridgeCommandsAllowed(chainHasCommunity, opts.allowBridgeCommands) {
-			return fmt.Errorf("community bridge(s) declared database migrations; re-run with --allow-bridge-commands to execute them")
-		}
-		if err := runDatabaseMigrations(rendererInstance.MigrationConfig(), opts.outputDir, cmd, log); err != nil {
-			if opts.migrate {
-				// Explicit --migrate: a failed migration is a hard error.
-				return err
-			}
-			// Auto-migration under --prune is best-effort. In a docker/CI
-			// workflow the API container applies pending migrations at startup
-			// (Database:SchemaMode=migrate → MigrateAsync), so a host without
-			// the dotnet SDK or an unreachable database must not abort generation.
-			log.Warn("Database migration was not applied by --prune: %v", err)
-			log.Warn("In docker, set Database:SchemaMode=migrate — the container applies pending migrations on startup.")
-		}
+	if err := runBridgeDatabaseMigrations(opts, cmd, log, migrationDiff, chainHasCommunity, applied, rendererInstance.MigrationConfig()); err != nil {
+		return err
 	}
 
 	// --- Smart refactoring reports ---
@@ -855,9 +823,82 @@ func bridgeUpdateNotice(entryID string, _ *bridge.Update) string {
 	return fmt.Sprintf("Updating bridge %s (cached copy is outdated)", entryID)
 }
 
-// generateAdminPanel renders the optional admin panel bridge into the output
-// directory and returns the extra file manifest entries.
-func generateAdminPanel(opts *cliOptions, irProject *ir.Project, seedData, mockDataset *ir.SeedDataset, log *logger.Logger) ([]renderer.RenderedFile, error) {
+// runBridgeDatabaseMigrations applies the bridge's declared schema commands.
+// They run with --migrate, or automatically under --prune when the diff has
+// changes that must reach the database. Community bridges never auto-run them;
+// explicit --migrate still needs --allow-bridge-commands consent. A failure is
+// hard with --migrate and best-effort under --prune (the container can apply
+// pending migrations at startup).
+func runBridgeDatabaseMigrations(opts *cliOptions, cmd *cobra.Command, log *logger.Logger, diff *snapshot.Diff, chainHasCommunity, applied bool, cfg *renderer.MigrationConfig) error {
+	autoMigrate := opts.prune && diff.HasSchemaChanges()
+	if autoMigrate && chainHasCommunity {
+		log.Warn("community bridge(s) in the resolved chain — not auto-running database migrations; use --migrate explicitly")
+		autoMigrate = false
+	}
+	shouldMigrate := opts.migrate || autoMigrate
+	if !applied || !shouldMigrate || cfg == nil || !cfg.Enabled {
+		return nil
+	}
+	if !bridgeCommandsAllowed(chainHasCommunity, opts.allowBridgeCommands) {
+		return fmt.Errorf("community bridge(s) declared database migrations; re-run with --allow-bridge-commands to execute them")
+	}
+	if err := runDatabaseMigrations(cfg, opts.outputDir, cmd, log); err != nil {
+		if opts.migrate {
+			// Explicit --migrate: a failed migration is a hard error.
+			return err
+		}
+		// Auto-migration under --prune is best-effort. In a docker/CI
+		// workflow the API container applies pending migrations at startup
+		// (Database:SchemaMode=migrate → MigrateAsync), so a host without
+		// the dotnet SDK or an unreachable database must not abort generation.
+		log.Warn("Database migration was not applied by --prune: %v", err)
+		log.Warn("In docker, set Database:SchemaMode=migrate — the container applies pending migrations on startup.")
+	}
+	return nil
+}
+
+// applySchemaMigrations cleans up files orphaned by removed or renamed
+// entities. Files written by this run are never touched. It reports whether
+// all actions were applied: deferred cleanup keeps the previous snapshot.
+func applySchemaMigrations(opts *cliOptions, diff *snapshot.Diff, manifest []renderer.RenderedFile, log *logger.Logger, cmd *cobra.Command) (bool, error) {
+	// Files written from this run must never be touched by cleanup.
+	fresh := make(map[string]bool)
+	for _, f := range manifest {
+		if f.Written {
+			fresh[f.Path] = true
+		}
+	}
+	return applyMigrationActions(opts, diff, fresh, log, cmd)
+}
+
+// generateAdminPanel handles the optional --admin flag and renders the panel
+// into the output directory. It returns the extra file manifest entries; an
+// empty manifest means no panel was requested.
+func generateAdminPanel(opts *cliOptions, cmd *cobra.Command, args []string, irProject *ir.Project, seedData, mockDataset *ir.SeedDataset, log *logger.Logger) ([]renderer.RenderedFile, error) {
+	// pflag's NoOptDefVal makes `--admin <id>` stop consuming the next
+	// argument (it lands in args), so reclaim it here. This keeps both
+	// `--admin <path>` and `--admin=<path>` working while `--admin` alone
+	// still means the default admin-alpine bridge. Any other positional
+	// argument is rejected by cobra.MaximumNArgs(1) / the check below.
+	if len(args) > 0 {
+		if !cmd.Flags().Changed("admin") || opts.adminBridge != "admin-alpine" {
+			return nil, asUsageError(fmt.Errorf("unexpected positional argument %q: use --admin <bridge-id>", args[0]))
+		}
+		opts.adminBridge = args[0]
+	}
+	if opts.adminBridge == "" && !cmd.Flags().Changed("admin") && !opts.nonInteractive && isTerminal() {
+		generate, err := interactive.PromptGenerateAdmin()
+		if err != nil {
+			return nil, fmt.Errorf("prompt for admin panel: %w", err)
+		}
+		if generate {
+			opts.adminBridge = "admin-alpine"
+		}
+	}
+	if opts.adminBridge == "" {
+		return nil, nil
+	}
+
 	resolver := bridge.NewResolver(bridge.Default()).WithEnsureOptions(bridgeEnsureOptions(opts, log))
 
 	adminID := opts.adminBridge
@@ -922,7 +963,7 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 			shell = "sh"
 			argv = []string{"-c", command}
 		}
-		c := exec.CommandContext(commandCtx, shell, argv...) //nolint:gosec // shell line is gated by explicit bridge-command consent
+		c := execCommandFn(commandCtx, shell, argv...) //nolint:gosec // shell line is gated by explicit bridge-command consent
 		c.Dir = outDir
 		c.Stdout = out
 		c.Stderr = out
