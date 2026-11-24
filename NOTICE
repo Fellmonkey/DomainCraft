@@ -1,0 +1,45 @@
+NOTICE
+======
+
+DomainCraft is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This file lists the third-party components the DomainCraft repository builds on
+and their licences. The canonical, up-to-date dependency lists live in
+`go.sum` and `domaincraft-studio/package-lock.json`; this file records the
+components whose terms matter for redistribution.
+
+## Go core (DomainCraft/DomainCraft)
+
+| Component | Licence |
+|-----------|---------|
+| `github.com/spf13/cobra` (CLI framework) | Apache-2.0 |
+| `gopkg.in/yaml.v3` (YAML parsing) | MIT & Apache-2.0 |
+| `golang.org/x/term` (terminal detection) | BSD-3-Clause |
+| SnakeCase/KebabCase word-splitting algorithm derived from `github.com/huandu/xstrings` (in `pkg/textutil`) | MIT |
+
+## Studio (domaincraft-studio) and site (domaincraft-site)
+
+| Component | Licence |
+|-----------|---------|
+| `@xyflow/react` (React Flow canvas) | MIT |
+| `@monaco-editor/react` / `monaco-editor` | MIT |
+| `zustand` (state management) | MIT |
+| `dagre` (graph layout) | MIT |
+| `lucide-react` (icons) | ISC |
+| `tailwindcss` | MIT |
+| `json-schema-to-typescript` | MIT |
+| `yaml` (JS) | ISC |
+
+## Generated code
+
+The generated C# APIs reference standard packages resolved at generation time
+through the bridge's registry (EF Core, Npgsql, JWT, Swashbuckle, and others).
+These are pulled by the generated project itself and are subject to their own
+licences; the bridge declares the resolved versions in
+`registry_packages`.
+
+## Tooling
+
+The compliance suite (`compliance-suite/suite.js`) runs under the k6 load
+testing tool, licensed under AGPL-3.0. k6 is a developer tool and is not
+distributed with DomainCraft.
