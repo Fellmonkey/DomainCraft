@@ -1240,7 +1240,7 @@ func TestValidateSeedValueTypeMismatch(t *testing.T) {
 					"id":  mustParsedField(t, "id", "uuid [primary]"),
 					"age": mustParsedField(t, "age", "int"),
 				},
-				Seed: []map[string]interface{}{
+				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "age": true},
 				},
 			},
@@ -1273,7 +1273,7 @@ func TestValidateSeedBooleanTypeMismatch(t *testing.T) {
 					"id":      mustParsedField(t, "id", "uuid [primary]"),
 					"enabled": mustParsedField(t, "enabled", "boolean"),
 				},
-				Seed: []map[string]interface{}{
+				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "enabled": "notabool"},
 				},
 			},
@@ -1510,7 +1510,7 @@ func TestValidateSeedUniqueConstraintViolation(t *testing.T) {
 					"id":    mustParsedField(t, "id", "uuid [primary]"),
 					"email": mustParsedField(t, "email", "string [unique]"),
 				},
-				Seed: []map[string]interface{}{
+				Seed: []map[string]any{
 					{"id": "11111111-1111-1111-1111-111111111111", "email": "a@test.com"},
 					{"id": "22222222-2222-2222-2222-222222222222", "email": "a@test.com"},
 				},
@@ -1544,7 +1544,7 @@ func TestValidateSeedUniqueConstraintPass(t *testing.T) {
 					"id":    mustParsedField(t, "id", "uuid [primary]"),
 					"email": mustParsedField(t, "email", "string [unique]"),
 				},
-				Seed: []map[string]interface{}{
+				Seed: []map[string]any{
 					{"id": "11111111-1111-1111-1111-111111111111", "email": "a@test.com"},
 					{"id": "22222222-2222-2222-2222-222222222222", "email": "b@test.com"},
 				},
@@ -1573,7 +1573,7 @@ func TestValidateSeedInvalidUUID(t *testing.T) {
 				Fields: map[string]*parser.ParsedField{
 					"id": mustParsedField(t, "id", "uuid [primary]"),
 				},
-				Seed: []map[string]interface{}{
+				Seed: []map[string]any{
 					{"id": "not-a-uuid"},
 				},
 			},
@@ -1605,7 +1605,7 @@ func TestValidateSeedValidUUID(t *testing.T) {
 				Fields: map[string]*parser.ParsedField{
 					"id": mustParsedField(t, "id", "uuid [primary]"),
 				},
-				Seed: []map[string]interface{}{
+				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000"},
 				},
 			},
@@ -1634,7 +1634,7 @@ func TestValidateSeedInvalidDatetime(t *testing.T) {
 					"id":        mustParsedField(t, "id", "uuid [primary]"),
 					"createdAt": mustParsedField(t, "createdAt", "datetime"),
 				},
-				Seed: []map[string]interface{}{
+				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "createdAt": "not-a-date"},
 				},
 			},
@@ -1667,7 +1667,7 @@ func TestValidateSeedValidDatetime(t *testing.T) {
 					"id":        mustParsedField(t, "id", "uuid [primary]"),
 					"createdAt": mustParsedField(t, "createdAt", "datetime"),
 				},
-				Seed: []map[string]interface{}{
+				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "createdAt": "2024-01-15T10:30:00Z"},
 				},
 			},
@@ -1696,7 +1696,7 @@ func TestValidateSeedInvalidJSON(t *testing.T) {
 					"id":       mustParsedField(t, "id", "uuid [primary]"),
 					"metadata": mustParsedField(t, "metadata", "json"),
 				},
-				Seed: []map[string]interface{}{
+				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "metadata": "{invalid json}"},
 				},
 			},
@@ -1729,7 +1729,7 @@ func TestValidateSeedValidJSON(t *testing.T) {
 					"id":       mustParsedField(t, "id", "uuid [primary]"),
 					"metadata": mustParsedField(t, "metadata", "json"),
 				},
-				Seed: []map[string]interface{}{
+				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "metadata": `{"key":"value"}`},
 				},
 			},
@@ -1817,7 +1817,7 @@ func TestValidateSeedDateTypeMismatch(t *testing.T) {
 					"id":         mustParsedField(t, "id", "uuid [primary]"),
 					"started_on": mustParsedField(t, "started_on", "date"),
 				},
-				Seed: []map[string]interface{}{
+				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "started_on": "not-a-date"},
 				},
 			},
@@ -1850,7 +1850,7 @@ func TestValidateSeedDateValid(t *testing.T) {
 					"id":         mustParsedField(t, "id", "uuid [primary]"),
 					"started_on": mustParsedField(t, "started_on", "date"),
 				},
-				Seed: []map[string]interface{}{
+				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "started_on": "2024-05-01"},
 				},
 			},
@@ -1882,7 +1882,7 @@ func TestValidateSeedEnumInvalidValue(t *testing.T) {
 					"id":     mustParsedField(t, "id", "uuid [primary]"),
 					"status": mustParsedField(t, "status", "enum(Status)"),
 				},
-				Seed: []map[string]interface{}{
+				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "status": "BOGUS"},
 				},
 			},
@@ -1918,7 +1918,7 @@ func TestValidateSeedEnumValidValue(t *testing.T) {
 					"id":     mustParsedField(t, "id", "uuid [primary]"),
 					"status": mustParsedField(t, "status", "enum(Status)"),
 				},
-				Seed: []map[string]interface{}{
+				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "status": "ACTIVE"},
 				},
 			},
@@ -1947,7 +1947,7 @@ func TestValidateSeedArrayInvalidValue(t *testing.T) {
 					"id":   mustParsedField(t, "id", "uuid [primary]"),
 					"tags": mustParsedField(t, "tags", "array(string)"),
 				},
-				Seed: []map[string]interface{}{
+				Seed: []map[string]any{
 					{"id": "550e8400-e29b-41d4-a716-446655440000", "tags": "not-json"},
 				},
 			},
@@ -1980,8 +1980,8 @@ func TestValidateSeedArrayValidValue(t *testing.T) {
 					"id":   mustParsedField(t, "id", "uuid [primary]"),
 					"tags": mustParsedField(t, "tags", "array(string)"),
 				},
-				Seed: []map[string]interface{}{
-					{"id": "550e8400-e29b-41d4-a716-446655440000", "tags": []interface{}{"a", "b"}},
+				Seed: []map[string]any{
+					{"id": "550e8400-e29b-41d4-a716-446655440000", "tags": []any{"a", "b"}},
 				},
 			},
 		},

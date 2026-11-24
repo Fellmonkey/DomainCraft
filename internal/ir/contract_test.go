@@ -65,19 +65,21 @@ func TestValidationRulesCodesAndMessages(t *testing.T) {
 		{"exclusive max_value", IRField{Name: "rating", DatabaseType: "int", Validations: []IRValidation{{Name: "lt", Value: "6"}}}, "MAX_VALUE", "must be less than 6"},
 	}
 	for _, c := range cases {
-		rules := c.field.ValidationRules()
-		found := false
-		for _, r := range rules {
-			if r.Code == c.wantCode {
-				found = true
-				if r.Message != c.wantMsg {
-					t.Errorf("%s: message = %q, want %q", c.name, r.Message, c.wantMsg)
+		t.Run(c.name, func(t *testing.T) {
+			rules := c.field.ValidationRules()
+			found := false
+			for _, r := range rules {
+				if r.Code == c.wantCode {
+					found = true
+					if r.Message != c.wantMsg {
+						t.Errorf("%s: message = %q, want %q", c.name, r.Message, c.wantMsg)
+					}
 				}
 			}
-		}
-		if !found {
-			t.Errorf("%s: rule with code %q not found in %+v", c.name, c.wantCode, rules)
-		}
+			if !found {
+				t.Errorf("%s: rule with code %q not found in %+v", c.name, c.wantCode, rules)
+			}
+		})
 	}
 }
 

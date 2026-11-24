@@ -31,6 +31,26 @@ func (e ValidationError) Error() string {
 	return fmt.Sprintf("entity %q: %s", e.Entity, e.Message)
 }
 
+// invalid builds a non-warning validation error for an entity and field.
+func invalid(entity, field, message string) ValidationError {
+	return ValidationError{Entity: entity, Field: field, Message: message}
+}
+
+// warn builds a warning validation error for an entity and field.
+func warn(entity, field, message string) ValidationError {
+	return ValidationError{Entity: entity, Field: field, Message: message, Warning: true}
+}
+
+// invalidf builds a non-warning validation error with a formatted message.
+func invalidf(entity, field, format string, args ...any) ValidationError {
+	return invalid(entity, field, fmt.Sprintf(format, args...))
+}
+
+// warnf builds a warning validation error with a formatted message.
+func warnf(entity, field, format string, args ...any) ValidationError {
+	return warn(entity, field, fmt.Sprintf(format, args...))
+}
+
 // Validator checks ParsedSchema for logical consistency.
 type Validator struct {
 	schema *parser.ParsedSchema
@@ -59,7 +79,8 @@ func (v *Validator) Validate() []ValidationError {
 	if v.schema.Enums != nil {
 		for _, entityName := range v.schema.EntityOrder {
 			if _, isEnum := v.schema.Enums[entityName]; isEnum {
-				errs = append(errs, ValidationError{Entity: entityName, Message: fmt.Sprintf("entity name %q collides with an enum of the same name; templates may produce ambiguous output", entityName), Warning: true})
+				errs = append(errs, warnf(entityName, "",
+					"entity name %q collides with an enum of the same name; templates may produce ambiguous output", entityName))
 			}
 		}
 	}
@@ -97,103 +118,129 @@ func (v *Validator) validateProject() []ValidationError {
 	p := v.schema.Project
 
 	if strings.TrimSpace(p.Name) == "" {
-		errs = append(errs, ValidationError{Entity: "<schema>", Message: "project name must not be empty"})
+		errs = append(errs, invalid("<schema>", "",
+			"project name must not be empty"))
 	}
 
 	if len(v.schema.Entities) == 0 {
-		errs = append(errs, ValidationError{Entity: "<schema>", Message: "no entities defined", Warning: true})
+		errs = append(errs, warn("<schema>", "",
+			"no entities defined"))
 	}
 
 	if v.schema.Database != "" && !specmeta.IsDatabase(v.schema.Database) {
-		errs = append(errs, ValidationError{Entity: "<schema>", Message: fmt.Sprintf("unknown database %q; allowed: %s", v.schema.Database, strings.Join(specmeta.Databases, ", "))})
+		errs = append(errs, invalidf("<schema>", "",
+			"unknown database %q; allowed: %s", v.schema.Database, strings.Join(specmeta.Databases, ", ")))
 	}
 	// Auth validation
 	if v.schema.Auth != nil {
 		errs = append(errs, v.validateAuth()...)
 	}
 	if v.schema.APIStyle != "" && !specmeta.IsAPIStyle(v.schema.APIStyle) {
-		errs = append(errs, ValidationError{Entity: "<schema>", Message: fmt.Sprintf("unknown api_style %q; allowed: %s", v.schema.APIStyle, strings.Join(specmeta.APIStyles, ", "))})
+		errs = append(errs, invalidf("<schema>", "",
+			"unknown api_style %q; allowed: %s", v.schema.APIStyle, strings.Join(specmeta.APIStyles, ", ")))
 	}
 
 	// Multi-tenancy
 	if p.MultiTenancy != nil && p.MultiTenancy.Enabled {
 		if p.MultiTenancy.Mode != "" && !specmeta.IsMultiTenancyMode(p.MultiTenancy.Mode) {
-			errs = append(errs, ValidationError{Entity: "<schema>", Message: fmt.Sprintf("unknown multi_tenancy.mode %q; allowed: %s", p.MultiTenancy.Mode, strings.Join(specmeta.MultiTenancyModes, ", "))})
+			errs = append(errs, invalidf("<schema>", "",
+				"unknown multi_tenancy.mode %q; allowed: %s", p.MultiTenancy.Mode, strings.Join(specmeta.MultiTenancyModes, ", ")))
 		}
 	}
 
 	// Cache
 	if p.Cache != nil && p.Cache.Enabled {
 		if p.Cache.Provider != "" && !specmeta.IsCacheProvider(p.Cache.Provider) {
-			errs = append(errs, ValidationError{Entity: "<schema>", Message: fmt.Sprintf("unknown cache.provider %q; allowed: %s", p.Cache.Provider, strings.Join(specmeta.CacheProviders, ", "))})
+			errs = append(errs, invalidf("<schema>", "",
+				"unknown cache.provider %q; allowed: %s", p.Cache.Provider, strings.Join(specmeta.CacheProviders, ", ")))
 		}
 		if p.Cache.TTLSeconds < 0 {
-			errs = append(errs, ValidationError{Entity: "<schema>", Message: "cache.ttl_seconds must be non-negative", Warning: true})
+			errs = append(errs, warn("<schema>", "",
+				"cache.ttl_seconds must be non-negative"))
 		}
 	}
 	if p.Cache != nil && !p.Cache.Enabled && (p.Cache.Provider != "" || p.Cache.ConnectionString != "") {
-		errs = append(errs, ValidationError{Entity: "<schema>", Message: "cache.provider or cache.connection_string specified but cache.enabled is false", Warning: true})
+		errs = append(errs, warn("<schema>", "",
+			"cache.provider or cache.connection_string specified but cache.enabled is false"))
 	}
 	if p.Cache != nil && p.Cache.Enabled && p.Cache.Provider != "" && p.Cache.ConnectionString == "" {
-		errs = append(errs, ValidationError{Entity: "<schema>", Message: fmt.Sprintf("cache.provider %q specified but cache.connection_string is empty", p.Cache.Provider), Warning: true})
+		errs = append(errs, warnf("<schema>", "",
+			"cache.provider %q specified but cache.connection_string is empty", p.Cache.Provider))
 	}
 
 	// CORS
 	if p.CORS != nil && p.CORS.Enabled && len(p.CORS.Origins) == 0 {
-		errs = append(errs, ValidationError{Entity: "<schema>", Message: "cors.enabled is true but no origins specified", Warning: true})
+		errs = append(errs, warn("<schema>", "",
+			"cors.enabled is true but no origins specified"))
 	}
 
 	// Deploy
 	if p.Deploy != nil {
 		if p.Deploy.Port != 0 && (p.Deploy.Port < 1 || p.Deploy.Port > 65535) {
-			errs = append(errs, ValidationError{Entity: "<schema>", Message: fmt.Sprintf("deploy.port must be between 1 and 65535, got %d", p.Deploy.Port)})
+			errs = append(errs, invalidf("<schema>", "",
+				"deploy.port must be between 1 and 65535, got %d", p.Deploy.Port))
 		}
 	}
 
 	// Versioning
 	if p.Versioning != nil && p.Versioning.Enabled && p.Versioning.DefaultVersion == "" {
-		errs = append(errs, ValidationError{Entity: "<schema>", Message: "versioning.enabled is true but default_version is empty", Warning: true})
+		errs = append(errs, warn("<schema>", "",
+			"versioning.enabled is true but default_version is empty"))
 	}
 
 	// Rate limiting
 	if p.RateLimit != nil {
 		if p.RateLimit.Policy != "" && !specmeta.IsRateLimitPolicy(p.RateLimit.Policy) {
-			errs = append(errs, ValidationError{Entity: "<schema>", Message: fmt.Sprintf("unknown rate_limit.policy %q; allowed: %s", p.RateLimit.Policy, strings.Join(specmeta.RateLimitPolicies, ", "))})
+			errs = append(errs, invalidf("<schema>", "",
+				"unknown rate_limit.policy %q; allowed: %s", p.RateLimit.Policy, strings.Join(specmeta.RateLimitPolicies, ", ")))
 		}
 		if p.RateLimit.PermitLimit < 0 {
-			errs = append(errs, ValidationError{Entity: "<schema>", Message: "rate_limit.permit_limit must be non-negative", Warning: true})
+			errs = append(errs, warn("<schema>", "",
+				"rate_limit.permit_limit must be non-negative"))
 		}
 		if p.RateLimit.WindowSeconds < 1 {
-			errs = append(errs, ValidationError{Entity: "<schema>", Message: "rate_limit.window_seconds must be at least 1", Warning: true})
+			errs = append(errs, warn("<schema>", "",
+				"rate_limit.window_seconds must be at least 1"))
 		}
 	}
 
 	// Pagination
 	if p.Pagination != nil {
 		if p.Pagination.DefaultPageSize < 1 {
-			errs = append(errs, ValidationError{Entity: "<schema>", Message: "pagination.default_page_size must be at least 1", Warning: true})
+			errs = append(errs, warn("<schema>", "",
+				"pagination.default_page_size must be at least 1"))
 		}
 		if p.Pagination.MaxPageSize < 1 {
-			errs = append(errs, ValidationError{Entity: "<schema>", Message: "pagination.max_page_size must be at least 1", Warning: true})
+			errs = append(errs, warn("<schema>", "",
+				"pagination.max_page_size must be at least 1"))
 		}
 		if p.Pagination.DefaultPageSize > p.Pagination.MaxPageSize {
-			errs = append(errs, ValidationError{Entity: "<schema>", Message: fmt.Sprintf("pagination.default_page_size (%d) must not exceed max_page_size (%d)", p.Pagination.DefaultPageSize, p.Pagination.MaxPageSize), Warning: true})
+			errs = append(errs, warnf("<schema>", "",
+				"pagination.default_page_size (%d) must not exceed max_page_size (%d)", p.Pagination.DefaultPageSize,
+				p.Pagination.MaxPageSize))
 		}
 	}
 
 	// Infrastructure (provider-agnostic backing services used by addons such as Dapr)
 	if p.Infrastructure != nil {
 		if p.Infrastructure.Queue != "" && !specmeta.IsInfraQueue(p.Infrastructure.Queue) {
-			errs = append(errs, ValidationError{Entity: "<schema>", Message: fmt.Sprintf("unknown infrastructure.queue %q; allowed: %s", p.Infrastructure.Queue, strings.Join(specmeta.InfraQueues, ", "))})
+			errs = append(errs, invalidf("<schema>", "",
+				"unknown infrastructure.queue %q; allowed: %s", p.Infrastructure.Queue, strings.Join(specmeta.InfraQueues, ", ")))
 		}
 		if p.Infrastructure.Cache != "" && !specmeta.IsInfraCacheStore(p.Infrastructure.Cache) {
-			errs = append(errs, ValidationError{Entity: "<schema>", Message: fmt.Sprintf("unknown infrastructure.cache %q; allowed: %s", p.Infrastructure.Cache, strings.Join(specmeta.InfraCacheStores, ", "))})
+			errs = append(errs, invalidf("<schema>", "",
+				"unknown infrastructure.cache %q; allowed: %s", p.Infrastructure.Cache,
+				strings.Join(specmeta.InfraCacheStores, ", ")))
 		}
 		if p.Infrastructure.Secrets != "" && !specmeta.IsInfraSecretStore(p.Infrastructure.Secrets) {
-			errs = append(errs, ValidationError{Entity: "<schema>", Message: fmt.Sprintf("unknown infrastructure.secrets %q; allowed: %s", p.Infrastructure.Secrets, strings.Join(specmeta.InfraSecretStores, ", "))})
+			errs = append(errs, invalidf("<schema>", "",
+				"unknown infrastructure.secrets %q; allowed: %s", p.Infrastructure.Secrets,
+				strings.Join(specmeta.InfraSecretStores, ", ")))
 		}
 		if p.Infrastructure.Storage != "" && !specmeta.IsInfraStore(p.Infrastructure.Storage) {
-			errs = append(errs, ValidationError{Entity: "<schema>", Message: fmt.Sprintf("unknown infrastructure.storage %q; allowed: %s", p.Infrastructure.Storage, strings.Join(specmeta.InfraStores, ", "))})
+			errs = append(errs, invalidf("<schema>", "",
+				"unknown infrastructure.storage %q; allowed: %s", p.Infrastructure.Storage,
+				strings.Join(specmeta.InfraStores, ", ")))
 		}
 	}
 
@@ -276,11 +323,8 @@ func (v *Validator) validateCircularRelations() []ValidationError {
 	}
 
 	for _, entityName := range slices.Sorted(maps.Keys(inCycle)) {
-		errs = append(errs, ValidationError{
-			Entity:  entityName,
-			Message: "entity is part of a circular relation chain (A → B → … → A); generated delete/seed ordering may be ambiguous",
-			Warning: true,
-		})
+		errs = append(errs, warn(entityName, "",
+			"entity is part of a circular relation chain (A → B → … → A); generated delete/seed ordering may be ambiguous"))
 	}
 
 	return errs
@@ -291,7 +335,8 @@ func (v *Validator) validateAuth() []ValidationError {
 	auth := v.schema.Auth
 
 	if auth.Type != "" && !specmeta.IsAuthType(auth.Type) {
-		errs = append(errs, ValidationError{Entity: "<schema>", Message: fmt.Sprintf("unknown auth.type %q; allowed: %s", auth.Type, strings.Join(specmeta.AuthTypes, ", "))})
+		errs = append(errs, invalidf("<schema>", "",
+			"unknown auth.type %q; allowed: %s", auth.Type, strings.Join(specmeta.AuthTypes, ", ")))
 	}
 
 	if auth.Type == "none" {
@@ -302,23 +347,28 @@ func (v *Validator) validateAuth() []ValidationError {
 	if auth.Entity != "" {
 		entity, ok := v.schema.Entities[auth.Entity]
 		if !ok {
-			errs = append(errs, ValidationError{Entity: "<schema>", Message: fmt.Sprintf("auth.entity %q does not exist", auth.Entity)})
+			errs = append(errs, invalidf("<schema>", "",
+				"auth.entity %q does not exist", auth.Entity))
 		} else if !specmeta.HasEmailAndPassword(entity.FieldOrder) {
 			hasEmail, hasPassword := specmeta.AuthFieldState(entity.FieldOrder)
-			errs = append(errs, ValidationError{Entity: "<schema>", Message: fmt.Sprintf("auth.entity %q must have both 'email' and 'password' fields (missing: %s)", auth.Entity, missingFields(!hasEmail, !hasPassword))})
+			errs = append(errs, invalidf("<schema>", "",
+				"auth.entity %q must have both 'email' and 'password' fields (missing: %s)", auth.Entity,
+				missingFields(!hasEmail, !hasPassword)))
 		}
 	} else {
 		// Auto-detect: find entity with email + password using specmeta helper.
 		entityFields := v.buildEntityFields()
 		if specmeta.FindAuthEntity(v.schema.EntityOrder, entityFields) == "" {
-			errs = append(errs, ValidationError{Entity: "<schema>", Message: fmt.Sprintf("auth.type is %q but no entity has both 'email' and 'password' fields; specify auth.entity explicitly", auth.Type), Warning: true})
+			errs = append(errs, warnf("<schema>", "",
+				"auth.type is %q but no entity has both 'email' and 'password' fields; specify auth.entity explicitly", auth.Type))
 		}
 	}
 
 	// Roles must be valid identifiers
 	for _, role := range auth.Roles {
 		if !validIdentifier.MatchString(role) {
-			errs = append(errs, ValidationError{Entity: "<schema>", Message: fmt.Sprintf("auth.roles: %q is not a valid identifier", role)})
+			errs = append(errs, invalidf("<schema>", "",
+				"auth.roles: %q is not a valid identifier", role))
 		}
 	}
 
@@ -345,17 +395,11 @@ func (v *Validator) validateAuth() []ValidationError {
 					continue
 				}
 				if len(auth.Roles) > 0 && !roleSet[r] {
-					errs = append(errs, ValidationError{
-						Entity:  entityName,
-						Message: fmt.Sprintf("permission role %q is not defined in auth.roles; add it to auth.roles or remove from permissions", r),
-						Warning: true,
-					})
+					errs = append(errs, warnf(entityName, "",
+						"permission role %q is not defined in auth.roles; add it to auth.roles or remove from permissions", r))
 				} else if len(auth.Roles) == 0 {
-					errs = append(errs, ValidationError{
-						Entity:  entityName,
-						Message: fmt.Sprintf("permission role %q is used but auth.roles is empty; define auth.roles to declare valid roles", r),
-						Warning: true,
-					})
+					errs = append(errs, warnf(entityName, "",
+						"permission role %q is used but auth.roles is empty; define auth.roles to declare valid roles", r))
 				}
 			}
 		}
@@ -397,20 +441,24 @@ func (v *Validator) validateEnums() []ValidationError {
 	var errs []ValidationError
 	for name, values := range v.schema.Enums {
 		if !validIdentifier.MatchString(name) {
-			errs = append(errs, ValidationError{Entity: "<enum>", Field: name, Message: "enum name is not a valid identifier"})
+			errs = append(errs, invalid("<enum>", name,
+				"enum name is not a valid identifier"))
 		}
 		if len(values) == 0 {
-			errs = append(errs, ValidationError{Entity: "<enum>", Field: name, Message: "enum must have at least one value"})
+			errs = append(errs, invalid("<enum>", name,
+				"enum must have at least one value"))
 			continue
 		}
 		seen := make(map[string]bool, len(values))
 		for _, val := range values {
 			if val == "" {
-				errs = append(errs, ValidationError{Entity: "<enum>", Field: name, Message: "enum value must not be empty"})
+				errs = append(errs, invalid("<enum>", name,
+					"enum value must not be empty"))
 			}
 			lower := strings.ToLower(val)
 			if seen[lower] {
-				errs = append(errs, ValidationError{Entity: "<enum>", Field: name, Message: fmt.Sprintf("duplicate enum value %q (case-insensitive collision)", val), Warning: true})
+				errs = append(errs, warnf("<enum>", name,
+					"duplicate enum value %q (case-insensitive collision)", val))
 			}
 			seen[lower] = true
 		}
@@ -437,7 +485,8 @@ func (v *Validator) validateEnums() []ValidationError {
 		}
 		for _, enumName := range slices.Sorted(maps.Keys(v.schema.Enums)) {
 			if !usedEnums[enumName] {
-				errs = append(errs, ValidationError{Entity: "<enum>", Field: enumName, Message: "enum is declared but never used by any entity field", Warning: true})
+				errs = append(errs, warn("<enum>", enumName,
+					"enum is declared but never used by any entity field"))
 			}
 		}
 	}
@@ -452,28 +501,33 @@ func (v *Validator) validateEntity(entityName string, entity *parser.ParsedEntit
 
 	// Entity name must be a valid identifier.
 	if !validIdentifier.MatchString(entityName) {
-		errs = append(errs, ValidationError{Entity: entityName, Message: "entity name is not a valid identifier"})
+		errs = append(errs, invalid(entityName, "",
+			"entity name is not a valid identifier"))
 	}
 
 	// Must have at least one field.
 	if len(entity.Fields) == 0 {
-		errs = append(errs, ValidationError{Entity: entityName, Message: "entity has no fields"})
+		errs = append(errs, invalid(entityName, "",
+			"entity has no fields"))
 	}
 
 	// Must have a primary key.
 	pkCount := countPrimaryKeys(entity)
 	if pkCount == 0 {
-		errs = append(errs, ValidationError{Entity: entityName, Message: "entity must have at least one primary key"})
+		errs = append(errs, invalid(entityName, "",
+			"entity must have at least one primary key"))
 	} else if pkCount > 1 {
 		// Must not have duplicate primary keys.
-		errs = append(errs, ValidationError{Entity: entityName, Message: fmt.Sprintf("entity has %d primary keys; expected exactly one", pkCount)})
+		errs = append(errs, invalidf(entityName, "",
+			"entity has %d primary keys; expected exactly one", pkCount))
 	}
 
 	// Duplicate feature names.
 	featureSeen := make(map[string]bool)
 	for f := range entity.Features {
 		if featureSeen[f] {
-			errs = append(errs, ValidationError{Entity: entityName, Message: fmt.Sprintf("duplicate feature %q", f), Warning: true})
+			errs = append(errs, warnf(entityName, "",
+				"duplicate feature %q", f))
 		}
 		featureSeen[f] = true
 	}
@@ -497,21 +551,20 @@ func (v *Validator) validateEntity(entityName string, entity *parser.ParsedEntit
 		// field currently on the entity.
 		if field.OldName != "" {
 			if field.OldName == fieldName {
-				errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: "old_name cannot equal the field name (it is the field's previous name)"})
+				errs = append(errs, invalid(entityName, fieldName,
+					"old_name cannot equal the field name (it is the field's previous name)"))
 			}
 			if prev, exists := entity.Fields[field.OldName]; exists && prev != field {
-				errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: fmt.Sprintf("old_name '%s' collides with an existing field '%s' on the same entity", field.OldName, prev.Name)})
+				errs = append(errs, invalidf(entityName, fieldName,
+					"old_name '%s' collides with an existing field '%s' on the same entity", field.OldName, prev.Name))
 			}
 		}
 
 		// DB column collision.
 		col := field.DatabaseColumnName
 		if prev, exists := columnNames[col]; exists && prev != fieldName {
-			errs = append(errs, ValidationError{
-				Entity:  entityName,
-				Field:   fieldName,
-				Message: fmt.Sprintf("database column '%s' collides with field '%s'", col, prev),
-			})
+			errs = append(errs, invalidf(entityName, fieldName,
+				"database column '%s' collides with field '%s'", col, prev))
 		}
 		columnNames[col] = fieldName
 
@@ -520,11 +573,8 @@ func (v *Validator) validateEntity(entityName string, entity *parser.ParsedEntit
 		if field.IsRelation() {
 			nav := field.NavigationName()
 			if prev, exists := navigationNames[nav]; exists && prev != fieldName {
-				errs = append(errs, ValidationError{
-					Entity:  entityName,
-					Field:   fieldName,
-					Message: fmt.Sprintf("navigation name '%s' collides with field '%s'", nav, prev),
-				})
+				errs = append(errs, invalidf(entityName, fieldName,
+					"navigation name '%s' collides with field '%s'", nav, prev))
 			}
 			navigationNames[nav] = fieldName
 		}
@@ -562,11 +612,8 @@ func (v *Validator) validateEntity(entityName string, entity *parser.ParsedEntit
 					}
 					valStr := fmt.Sprintf("%v", seedVal)
 					if values[valStr] {
-						errs = append(errs, ValidationError{
-							Entity:  entityName,
-							Field:   fieldName,
-							Message: fmt.Sprintf("seed entry %d: value %q for unique field '%s' is duplicated in seed data", i, valStr, fieldName),
-						})
+						errs = append(errs, invalidf(entityName, fieldName,
+							"seed entry %d: value %q for unique field '%s' is duplicated in seed data", i, valStr, fieldName))
 					}
 					values[valStr] = true
 				}
@@ -584,19 +631,17 @@ func (v *Validator) validateField(entityName string, fieldName string, field *pa
 
 	// Field name must be a valid identifier.
 	if !validIdentifier.MatchString(fieldName) {
-		errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: "field name is not a valid identifier"})
+		errs = append(errs, invalid(entityName, fieldName,
+			"field name is not a valid identifier"))
 	}
 
 	// Feature field collision — warn only if user-defined type differs from auto-generated type.
 	if fdef, isFeatureField := specmeta.FeatureFieldDefs[fieldName]; isFeatureField {
 		userType := strings.ToLower(field.Type)
 		if userType != "" && userType != fdef.Type {
-			errs = append(errs, ValidationError{
-				Entity:  entityName,
-				Field:   fieldName,
-				Message: fmt.Sprintf("user-defined type '%s' overrides feature field '%s' (auto-generated type: '%s')", field.Type, fieldName, fdef.Type),
-				Warning: true,
-			})
+			errs = append(errs, warnf(entityName, fieldName,
+				"user-defined type '%s' overrides feature field '%s' (auto-generated type: '%s')", field.Type, fieldName,
+				fdef.Type))
 		}
 	}
 
@@ -606,17 +651,21 @@ func (v *Validator) validateField(entityName string, fieldName string, field *pa
 	// checks that the lexer cannot perform belong here.
 	if field.IsRelation() {
 		if field.TargetEntity == "" {
-			errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: "relation field must specify a target entity"})
+			errs = append(errs, invalid(entityName, fieldName,
+				"relation field must specify a target entity"))
 		}
 		if _, ok := v.schema.Entities[field.TargetEntity]; !ok && field.TargetEntity != "" {
-			errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: fmt.Sprintf("relation target '%s' does not exist", field.TargetEntity)})
+			errs = append(errs, invalidf(entityName, fieldName,
+				"relation target '%s' does not exist", field.TargetEntity))
 		}
 		if field.IsMany && field.IsUnique {
-			errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: "unique is contradictory on a many-to-many relation"})
+			errs = append(errs, invalid(entityName, fieldName,
+				"unique is contradictory on a many-to-many relation"))
 		}
 		// on_delete is meaningless on many-to-many relations (join table has no FK to delete).
 		if field.IsMany && field.OnDelete != "" {
-			errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: "on_delete is meaningless on a many-to-many relation; remove it or use a many-to-one relation instead", Warning: true})
+			errs = append(errs, warn(entityName, fieldName,
+				"on_delete is meaningless on a many-to-many relation; remove it or use a many-to-one relation instead"))
 		}
 		// A [many] relation whose target also declares a single FK back to this
 		// entity is reconciled into ONE one-to-many (the FK lives on the target,
@@ -624,36 +673,37 @@ func (v *Validator) validateField(entityName string, fieldName string, field *pa
 		if field.IsMany {
 			if target, ok := v.schema.Entities[field.TargetEntity]; ok {
 				if back := v.singleFKBack(target, entityName); back != nil {
-					errs = append(errs, ValidationError{
-						Entity:  entityName,
-						Field:   fieldName,
-						Message: fmt.Sprintf("[many] relation is reconciled with FK '%s' on %s into a one-to-many relationship (collection on %s); remove one side if you meant a many-to-many join", back.Name, field.TargetEntity, entityName),
-						Warning: true,
-					})
+					errs = append(errs, warnf(entityName, fieldName,
+						"[many] relation is reconciled with FK '%s' on %s into a one-to-many relationship (collection on %s); remove "+
+							"one side if you meant a many-to-many join", back.Name, field.TargetEntity, entityName))
 				}
 			}
 		}
 		// Self-referential required cascade is dangerous.
 		if field.TargetEntity == entityName && !field.IsOptional && field.OnDelete == "cascade" {
-			errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: "self-referential required cascade delete may cause recursive deletion", Warning: true})
+			errs = append(errs, warn(entityName, fieldName,
+				"self-referential required cascade delete may cause recursive deletion"))
 		}
 		// Required relation without on_delete — warn.
 		if !field.IsOptional && !field.IsMany && field.OnDelete == "" {
-			errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: "required relation has no on_delete specified; default behavior may not match expectations", Warning: true})
+			errs = append(errs, warn(entityName, fieldName,
+				"required relation has no on_delete specified; default behavior may not match expectations"))
 		}
 	}
 
 	// Primary key constraints.
 	if field.IsPrimary {
 		if field.Type == "array" {
-			errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: "primary key cannot be an array type"})
+			errs = append(errs, invalid(entityName, fieldName,
+				"primary key cannot be an array type"))
 		}
 	}
 
 	// Enum reference.
 	if field.Type == "enum" && field.TargetType != "" {
 		if _, ok := v.schema.Enums[field.TargetType]; !ok {
-			errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: fmt.Sprintf("enum '%s' is not defined in enums section", field.TargetType)})
+			errs = append(errs, invalidf(entityName, fieldName,
+				"enum '%s' is not defined in enums section", field.TargetType))
 		}
 	}
 
@@ -662,7 +712,8 @@ func (v *Validator) validateField(entityName string, fieldName string, field *pa
 		inner := strings.ToLower(field.TargetType)
 		if !specmeta.IsPrimitive(inner) {
 			if _, ok := v.schema.Enums[field.TargetType]; !ok {
-				errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: fmt.Sprintf("array element type '%s' is not a primitive or defined enum", field.TargetType)})
+				errs = append(errs, invalidf(entityName, fieldName,
+					"array element type '%s' is not a primitive or defined enum", field.TargetType))
 			}
 		}
 	}
@@ -674,16 +725,19 @@ func (v *Validator) validateField(entityName string, fieldName string, field *pa
 
 	for mod, val := range field.Validations {
 		if specmeta.IsStringValidationModifier(mod) && !isString {
-			errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: fmt.Sprintf("validation '%s' is only applicable to string/text fields, not %s", mod, ftype), Warning: true})
+			errs = append(errs, warnf(entityName, fieldName,
+				"validation '%s' is only applicable to string/text fields, not %s", mod, ftype))
 		}
 		if specmeta.IsNumericValidationModifier(mod) && !isNumeric {
-			errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: fmt.Sprintf("validation '%s' is only applicable to numeric fields, not %s", mod, ftype), Warning: true})
+			errs = append(errs, warnf(entityName, fieldName,
+				"validation '%s' is only applicable to numeric fields, not %s", mod, ftype))
 		}
 		// Validate that numeric validation values are actually numeric
 		// (numeric modifiers AND string min/max, which are also numeric).
 		if (specmeta.IsNumericValidationModifier(mod) || mod == "min" || mod == "max") && val != "" {
 			if _, err := strconv.ParseFloat(val, 64); err != nil {
-				errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: fmt.Sprintf("validation '%s' value %q is not a valid number", mod, val)})
+				errs = append(errs, invalidf(entityName, fieldName,
+					"validation '%s' value %q is not a valid number", mod, val))
 			}
 		}
 	}
@@ -709,7 +763,9 @@ func (v *Validator) validateField(entityName string, fieldName string, field *pa
 				}
 			}
 			if !found {
-				errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: fmt.Sprintf("default value '%s' is not a declared value of enum '%s'; valid values: %s", field.DefaultValue, field.TargetType, strings.Join(enumValues, ", "))})
+				errs = append(errs, invalidf(entityName, fieldName,
+					"default value '%s' is not a declared value of enum '%s'; valid values: %s", field.DefaultValue, field.TargetType,
+					strings.Join(enumValues, ", ")))
 			}
 		}
 	}
@@ -722,23 +778,28 @@ func validateDefaultValue(entityName, fieldName, ftype, defaultVal string) []Val
 	switch {
 	case specmeta.IsNumeric(ftype):
 		if boolValues[defaultVal] {
-			errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: fmt.Sprintf("default value '%s' is not valid for numeric type %s", defaultVal, ftype), Warning: true})
+			errs = append(errs, warnf(entityName, fieldName,
+				"default value '%s' is not valid for numeric type %s", defaultVal, ftype))
 		}
 	case ftype == "boolean":
 		if !boolValues[defaultVal] {
-			errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: fmt.Sprintf("default value '%s' is not valid for boolean (expected true/false)", defaultVal), Warning: true})
+			errs = append(errs, warnf(entityName, fieldName,
+				"default value '%s' is not valid for boolean (expected true/false)", defaultVal))
 		}
 	case ftype == "date":
 		if !isValidDate(defaultVal) {
-			errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: fmt.Sprintf("default value '%s' is not a valid date (expected YYYY-MM-DD)", defaultVal), Warning: true})
+			errs = append(errs, warnf(entityName, fieldName,
+				"default value '%s' is not a valid date (expected YYYY-MM-DD)", defaultVal))
 		}
 	case ftype == "datetime":
 		if !isValidDatetime(defaultVal) {
-			errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: fmt.Sprintf("default value '%s' is not a valid datetime (expected ISO 8601 format, e.g. 2024-01-15T10:30:00Z)", defaultVal), Warning: true})
+			errs = append(errs, warnf(entityName, fieldName,
+				"default value '%s' is not a valid datetime (expected ISO 8601 format, e.g. 2024-01-15T10:30:00Z)", defaultVal))
 		}
 	case ftype == "uuid":
 		if !isValidUUID(defaultVal) {
-			errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: fmt.Sprintf("default value '%s' is not a valid UUID", defaultVal), Warning: true})
+			errs = append(errs, warnf(entityName, fieldName,
+				"default value '%s' is not a valid UUID", defaultVal))
 		}
 	}
 	return errs
@@ -749,7 +810,8 @@ func validateFuncDefault(entityName, fieldName, ftype, funcName string) []Valida
 	var errs []ValidationError
 	allowedTypes, ok := specmeta.FuncDefaults[funcName]
 	if !ok {
-		errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: fmt.Sprintf("unknown default function '%s()'", funcName)})
+		errs = append(errs, invalidf(entityName, fieldName,
+			"unknown default function '%s()'", funcName))
 		return errs
 	}
 	allowed := false
@@ -760,13 +822,15 @@ func validateFuncDefault(entityName, fieldName, ftype, funcName string) []Valida
 		}
 	}
 	if !allowed {
-		errs = append(errs, ValidationError{Entity: entityName, Field: fieldName, Message: fmt.Sprintf("default '%s()' is not valid for type %s; allowed types: %s", funcName, ftype, strings.Join(allowedTypes, ", "))})
+		errs = append(errs, invalidf(entityName, fieldName,
+			"default '%s()' is not valid for type %s; allowed types: %s", funcName, ftype, strings.Join(allowedTypes, ", ")))
 	}
 	return errs
 }
 
 // validateContradictoryRanges checks for impossible validation ranges (e.g. min > max, gte > lt).
-func validateContradictoryRanges(entityName, fieldName string, field *parser.ParsedField, isNumeric, isString bool) []ValidationError {
+func validateContradictoryRanges(entityName, fieldName string, field *parser.ParsedField,
+	isNumeric, isString bool) []ValidationError {
 	var errs []ValidationError
 
 	getFloat := func(key string) (float64, bool) {
@@ -785,11 +849,8 @@ func validateContradictoryRanges(entityName, fieldName string, field *parser.Par
 		minVal, hasMin := getFloat("min")
 		maxVal, hasMax := getFloat("max")
 		if hasMin && hasMax && minVal > maxVal {
-			errs = append(errs, ValidationError{
-				Entity:  entityName,
-				Field:   fieldName,
-				Message: fmt.Sprintf("validation min (%.0f) is greater than max (%.0f)", minVal, maxVal),
-			})
+			errs = append(errs, invalidf(entityName, fieldName,
+				"validation min (%.0f) is greater than max (%.0f)", minVal, maxVal))
 		}
 	}
 
@@ -798,21 +859,15 @@ func validateContradictoryRanges(entityName, fieldName string, field *parser.Par
 		gteVal, hasGte := getFloat("gte")
 		ltVal, hasLt := getFloat("lt")
 		if hasGte && hasLt && gteVal >= ltVal {
-			errs = append(errs, ValidationError{
-				Entity:  entityName,
-				Field:   fieldName,
-				Message: fmt.Sprintf("validation gte (%.0f) must be less than lt (%.0f)", gteVal, ltVal),
-			})
+			errs = append(errs, invalidf(entityName, fieldName,
+				"validation gte (%.0f) must be less than lt (%.0f)", gteVal, ltVal))
 		}
 		// Check gt vs lte (non-strict bounds)
 		gtVal, hasGt := getFloat("gt")
 		lteVal, hasLte := getFloat("lte")
 		if hasGt && hasLte && gtVal >= lteVal {
-			errs = append(errs, ValidationError{
-				Entity:  entityName,
-				Field:   fieldName,
-				Message: fmt.Sprintf("validation gt (%.0f) must be less than lte (%.0f)", gtVal, lteVal),
-			})
+			errs = append(errs, invalidf(entityName, fieldName,
+				"validation gt (%.0f) must be less than lte (%.0f)", gtVal, lteVal))
 		}
 	}
 
@@ -833,42 +888,50 @@ func missingFields(missingEmail, missingPassword bool) string {
 
 // --- index-level ---
 
-func (v *Validator) validateIndex(entityName string, idxNum int, idx *parser.ParsedIndex, entity *parser.ParsedEntity) []ValidationError {
+func (v *Validator) validateIndex(entityName string, idxNum int, idx *parser.ParsedIndex,
+	entity *parser.ParsedEntity) []ValidationError {
 	var errs []ValidationError
 
 	if len(idx.Fields) == 0 {
-		errs = append(errs, ValidationError{Entity: entityName, Message: fmt.Sprintf("index %d has no fields", idxNum)})
+		errs = append(errs, invalidf(entityName, "",
+			"index %d has no fields", idxNum))
 	}
 
 	// Duplicate fields in index.
 	fieldSeen := make(map[string]bool)
 	for _, f := range idx.Fields {
 		if fieldSeen[f] {
-			errs = append(errs, ValidationError{Entity: entityName, Message: fmt.Sprintf("index %d has duplicate field '%s'", idxNum, f), Warning: true})
+			errs = append(errs, warnf(entityName, "",
+				"index %d has duplicate field '%s'", idxNum, f))
 		}
 		fieldSeen[f] = true
 
 		if _, ok := entity.Fields[f]; !ok {
-			errs = append(errs, ValidationError{Entity: entityName, Field: f, Message: fmt.Sprintf("index %d references unknown field '%s'", idxNum, f)})
+			errs = append(errs, invalidf(entityName, f,
+				"index %d references unknown field '%s'", idxNum, f))
 		} else if entity.Fields[f].IsRelation() && !isFKFieldName(f) {
-			errs = append(errs, ValidationError{Entity: entityName, Field: f, Message: fmt.Sprintf("index %d references relation field '%s'; index the FK field instead (e.g. '%sId')", idxNum, f, f), Warning: true})
+			errs = append(errs, warnf(entityName, f,
+				"index %d references relation field '%s'; index the FK field instead (e.g. '%sId')", idxNum, f, f))
 		}
 	}
 
 	// Index type.
 	if idx.Type != "" && !specmeta.IsIndexType(idx.Type) {
-		errs = append(errs, ValidationError{Entity: entityName, Message: fmt.Sprintf("index %d has unknown type %q; allowed: %s", idxNum, idx.Type, strings.Join(specmeta.IndexTypes, ", "))})
+		errs = append(errs, invalidf(entityName, "",
+			"index %d has unknown type %q; allowed: %s", idxNum, idx.Type, strings.Join(specmeta.IndexTypes, ", ")))
 	}
 
 	// Sort array length must match fields length.
 	if len(idx.Sort) > 0 && len(idx.Sort) != len(idx.Fields) {
-		errs = append(errs, ValidationError{Entity: entityName, Message: fmt.Sprintf("index %d: sort array length (%d) does not match fields length (%d)", idxNum, len(idx.Sort), len(idx.Fields))})
+		errs = append(errs, invalidf(entityName, "",
+			"index %d: sort array length (%d) does not match fields length (%d)", idxNum, len(idx.Sort), len(idx.Fields)))
 	}
 
 	// Sort values must be asc or desc.
 	for _, s := range idx.Sort {
 		if !specmeta.IsSortDirection(s) {
-			errs = append(errs, ValidationError{Entity: entityName, Message: fmt.Sprintf("index %d: invalid sort value %q; allowed: %s", idxNum, s, strings.Join(specmeta.SortDirections, ", "))})
+			errs = append(errs, invalidf(entityName, "",
+				"index %d: invalid sort value %q; allowed: %s", idxNum, s, strings.Join(specmeta.SortDirections, ", ")))
 		}
 	}
 
@@ -883,7 +946,8 @@ func (v *Validator) validatePermissions(entityName string, perms *parser.ParsedP
 	validateRoles := func(operation string, roles []string) {
 		for _, role := range roles {
 			if role == "" {
-				errs = append(errs, ValidationError{Entity: entityName, Message: fmt.Sprintf("permission '%s' has an empty role", operation)})
+				errs = append(errs, invalidf(entityName, "",
+					"permission '%s' has an empty role", operation))
 				continue
 			}
 			// Skip special tokens: * (public) and @... (ownership tokens)
@@ -891,7 +955,8 @@ func (v *Validator) validatePermissions(entityName string, perms *parser.ParsedP
 				continue
 			}
 			if !validIdentifier.MatchString(role) {
-				errs = append(errs, ValidationError{Entity: entityName, Message: fmt.Sprintf("permission '%s' role %q is not a valid identifier", operation, role), Warning: true})
+				errs = append(errs, warnf(entityName, "",
+					"permission '%s' role %q is not a valid identifier", operation, role))
 			}
 		}
 	}
@@ -906,17 +971,15 @@ func (v *Validator) validatePermissions(entityName string, perms *parser.ParsedP
 
 // --- seed-level ---
 
-func (v *Validator) validateSeedEntry(entityName string, entity *parser.ParsedEntity, entryIdx int, entry map[string]interface{}) []ValidationError {
+func (v *Validator) validateSeedEntry(entityName string, entity *parser.ParsedEntity,
+	entryIdx int, entry map[string]any) []ValidationError {
 	var errs []ValidationError
 
 	// Check that seed fields exist.
 	for seedField := range entry {
 		if _, ok := entity.Fields[seedField]; !ok {
-			errs = append(errs, ValidationError{
-				Entity:  entityName,
-				Field:   seedField,
-				Message: fmt.Sprintf("seed entry %d references unknown field '%s'", entryIdx, seedField),
-			})
+			errs = append(errs, invalidf(entityName, seedField,
+				"seed entry %d references unknown field '%s'", entryIdx, seedField))
 		}
 	}
 
@@ -943,11 +1006,9 @@ func (v *Validator) validateSeedEntry(entityName string, entity *parser.ParsedEn
 		}
 		target := v.schema.Entities[field.TargetEntity]
 		if target == nil || len(target.Seed) == 0 {
-			errs = append(errs, ValidationError{
-				Entity:  entityName,
-				Field:   fieldName,
-				Message: fmt.Sprintf("seed entry %d: required relation '%s' -> '%s' is not seeded (add FK value to seed or add seed data to %s)", entryIdx, fieldName, field.TargetEntity, field.TargetEntity),
-			})
+			errs = append(errs, invalidf(entityName, fieldName,
+				"seed entry %d: required relation '%s' -> '%s' is not seeded (add FK value to seed or add seed data to %s)",
+				entryIdx, fieldName, field.TargetEntity, field.TargetEntity))
 		}
 	}
 
@@ -955,7 +1016,8 @@ func (v *Validator) validateSeedEntry(entityName string, entity *parser.ParsedEn
 }
 
 // validateSeedValueType checks that a seed value is type-compatible with its field.
-func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx int, field *parser.ParsedField, seedValue interface{}) []ValidationError {
+func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx int,
+	field *parser.ParsedField, seedValue any) []ValidationError {
 	var errs []ValidationError
 	ftype := strings.ToLower(field.Type)
 
@@ -963,16 +1025,12 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 	case "string", "text":
 		// String-like fields accept strings or JSON string values; numbers/bools are
 		// accepted too (YAML coercion) but must not be a map/slice.
-		if _, isMap := seedValue.(map[string]interface{}); isMap {
-			errs = append(errs, ValidationError{
-				Entity: entityName, Field: fieldName,
-				Message: fmt.Sprintf("seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype),
-			})
-		} else if _, isSlice := seedValue.([]interface{}); isSlice {
-			errs = append(errs, ValidationError{
-				Entity: entityName, Field: fieldName,
-				Message: fmt.Sprintf("seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype),
-			})
+		if _, isMap := seedValue.(map[string]any); isMap {
+			errs = append(errs, invalidf(entityName, fieldName,
+				"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
+		} else if _, isSlice := seedValue.([]any); isSlice {
+			errs = append(errs, invalidf(entityName, fieldName,
+				"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
 		}
 	case "int", "bigint":
 		switch seedValue.(type) {
@@ -981,10 +1039,8 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 		case string:
 			// string representation — OK if it parses
 		default:
-			errs = append(errs, ValidationError{
-				Entity: entityName, Field: fieldName,
-				Message: fmt.Sprintf("seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype),
-			})
+			errs = append(errs, invalidf(entityName, fieldName,
+				"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
 		}
 	case "float", "decimal":
 		switch seedValue.(type) {
@@ -993,10 +1049,8 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 		case string:
 			// string representation — OK
 		default:
-			errs = append(errs, ValidationError{
-				Entity: entityName, Field: fieldName,
-				Message: fmt.Sprintf("seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype),
-			})
+			errs = append(errs, invalidf(entityName, fieldName,
+				"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
 		}
 	case "boolean":
 		switch v := seedValue.(type) {
@@ -1005,75 +1059,56 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 		case string:
 			s := strings.ToLower(v)
 			if s != "true" && s != "false" {
-				errs = append(errs, ValidationError{
-					Entity: entityName, Field: fieldName,
-					Message: fmt.Sprintf("seed entry %d: value %q is not valid for boolean type", entryIdx, seedValue),
-				})
+				errs = append(errs, invalidf(entityName, fieldName,
+					"seed entry %d: value %q is not valid for boolean type", entryIdx, seedValue))
 			}
 		default:
-			errs = append(errs, ValidationError{
-				Entity: entityName, Field: fieldName,
-				Message: fmt.Sprintf("seed entry %d: value %v is not compatible with boolean type", entryIdx, seedValue),
-			})
+			errs = append(errs, invalidf(entityName, fieldName,
+				"seed entry %d: value %v is not compatible with boolean type", entryIdx, seedValue))
 		}
 	case "date":
 		s, ok := seedValue.(string)
 		if !ok {
-			errs = append(errs, ValidationError{
-				Entity: entityName, Field: fieldName,
-				Message: fmt.Sprintf("seed entry %d: value %v is not compatible with date type (expected string YYYY-MM-DD)", entryIdx, seedValue),
-			})
+			errs = append(errs, invalidf(entityName, fieldName,
+				"seed entry %d: value %v is not compatible with date type (expected string YYYY-MM-DD)", entryIdx, seedValue))
 		} else if !isValidDate(s) {
-			errs = append(errs, ValidationError{
-				Entity: entityName, Field: fieldName,
-				Message: fmt.Sprintf("seed entry %d: value %q is not a valid date (expected YYYY-MM-DD)", entryIdx, s),
-			})
+			errs = append(errs, invalidf(entityName, fieldName,
+				"seed entry %d: value %q is not a valid date (expected YYYY-MM-DD)", entryIdx, s))
 		}
 	case "uuid":
 		s, ok := seedValue.(string)
 		if !ok {
-			errs = append(errs, ValidationError{
-				Entity: entityName, Field: fieldName,
-				Message: fmt.Sprintf("seed entry %d: value %v is not compatible with uuid type (expected string)", entryIdx, seedValue),
-			})
+			errs = append(errs, invalidf(entityName, fieldName,
+				"seed entry %d: value %v is not compatible with uuid type (expected string)", entryIdx, seedValue))
 		} else if !isValidUUID(s) {
-			errs = append(errs, ValidationError{
-				Entity: entityName, Field: fieldName,
-				Message: fmt.Sprintf("seed entry %d: value %q is not a valid UUID (expected xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)", entryIdx, s),
-			})
+			errs = append(errs, invalidf(entityName, fieldName,
+				"seed entry %d: value %q is not a valid UUID (expected xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)", entryIdx, s))
 		}
 	case "datetime":
 		s, ok := seedValue.(string)
 		if !ok {
-			errs = append(errs, ValidationError{
-				Entity: entityName, Field: fieldName,
-				Message: fmt.Sprintf("seed entry %d: value %v is not compatible with datetime type (expected string)", entryIdx, seedValue),
-			})
+			errs = append(errs, invalidf(entityName, fieldName,
+				"seed entry %d: value %v is not compatible with datetime type (expected string)", entryIdx, seedValue))
 		} else if !isValidDatetime(s) {
-			errs = append(errs, ValidationError{
-				Entity: entityName, Field: fieldName,
-				Message: fmt.Sprintf("seed entry %d: value %q is not a valid datetime (expected ISO 8601 format, e.g. 2024-01-15T10:30:00Z)", entryIdx, s),
-			})
+			errs = append(errs, invalidf(entityName, fieldName,
+				"seed entry %d: value %q is not a valid datetime (expected ISO 8601 format, e.g. 2024-01-15T10:30:00Z)", entryIdx,
+				s))
 		}
 	case "json", "jsonb":
 		// JSON values can be any valid JSON — accept any type.
 		// String values are validated as parseable JSON.
 		if s, ok := seedValue.(string); ok {
 			if !isValidJSON(s) {
-				errs = append(errs, ValidationError{
-					Entity: entityName, Field: fieldName,
-					Message: fmt.Sprintf("seed entry %d: value %q is not valid JSON", entryIdx, s),
-				})
+				errs = append(errs, invalidf(entityName, fieldName,
+					"seed entry %d: value %q is not valid JSON", entryIdx, s))
 			}
 		}
 	case "enum":
 		// The value must be one of the declared enum values.
 		sv, ok := seedValue.(string)
 		if !ok {
-			errs = append(errs, ValidationError{
-				Entity: entityName, Field: fieldName,
-				Message: fmt.Sprintf("seed entry %d: value %v is not compatible with enum type (expected string)", entryIdx, seedValue),
-			})
+			errs = append(errs, invalidf(entityName, fieldName,
+				"seed entry %d: value %v is not compatible with enum type (expected string)", entryIdx, seedValue))
 			break
 		}
 		if values, defined := v.schema.Enums[field.TargetType]; defined {
@@ -1085,31 +1120,26 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 				}
 			}
 			if !found {
-				errs = append(errs, ValidationError{
-					Entity: entityName, Field: fieldName,
-					Message: fmt.Sprintf("seed entry %d: value %q is not a declared value of enum '%s'; valid values: %s", entryIdx, sv, field.TargetType, strings.Join(values, ", ")),
-				})
+				errs = append(errs, invalidf(entityName, fieldName,
+					"seed entry %d: value %q is not a declared value of enum '%s'; valid values: %s", entryIdx, sv, field.TargetType,
+					strings.Join(values, ", ")))
 			}
 		}
 	case "array":
 		// Accept a YAML list. String values are accepted as JSON arrays.
 		switch v := seedValue.(type) {
-		case []interface{}:
+		case []any:
 			// OK — list of elements
 		case []string:
 			// OK
 		case string:
 			if !isValidJSONArray(v) {
-				errs = append(errs, ValidationError{
-					Entity: entityName, Field: fieldName,
-					Message: fmt.Sprintf("seed entry %d: value %q is not a valid JSON array for array type", entryIdx, v),
-				})
+				errs = append(errs, invalidf(entityName, fieldName,
+					"seed entry %d: value %q is not a valid JSON array for array type", entryIdx, v))
 			}
 		default:
-			errs = append(errs, ValidationError{
-				Entity: entityName, Field: fieldName,
-				Message: fmt.Sprintf("seed entry %d: value %v is not compatible with array type (expected a list)", entryIdx, seedValue),
-			})
+			errs = append(errs, invalidf(entityName, fieldName,
+				"seed entry %d: value %v is not compatible with array type (expected a list)", entryIdx, seedValue))
 		}
 	case "relation":
 		// FK values reference the target entity's PK. Accept scalar values
@@ -1119,10 +1149,8 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 		case string, int, int32, int64, float32, float64, bool:
 			// OK
 		default:
-			errs = append(errs, ValidationError{
-				Entity: entityName, Field: fieldName,
-				Message: fmt.Sprintf("seed entry %d: value %v is not compatible with relation FK type", entryIdx, seedValue),
-			})
+			errs = append(errs, invalidf(entityName, fieldName,
+				"seed entry %d: value %v is not compatible with relation FK type", entryIdx, seedValue))
 		}
 	}
 
@@ -1135,7 +1163,7 @@ func isValidDate(s string) bool {
 }
 
 func isValidJSONArray(s string) bool {
-	var arr []interface{}
+	var arr []any
 	return json.Unmarshal([]byte(s), &arr) == nil
 }
 
@@ -1170,7 +1198,7 @@ func isValidDatetime(s string) bool {
 }
 
 func isValidJSON(s string) bool {
-	var v interface{}
+	var v any
 	return json.Unmarshal([]byte(s), &v) == nil
 }
 

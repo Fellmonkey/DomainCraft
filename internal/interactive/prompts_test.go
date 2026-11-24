@@ -19,28 +19,31 @@ func setInput(s string) {
 
 func TestConfirm(t *testing.T) {
 	cases := []struct {
+		name  string
 		input string
 		want  bool
 		err   error
 	}{
-		{"\n", false, nil},             // Enter on default (No)
-		{"\x1b[D\n", true, nil},        // ← moves to Yes
-		{"\x1b[C\n", false, nil},       // → stays on No
-		{"\x1b[D\x1b[C\n", false, nil}, // Yes then back to No
-		{"\x1b", false, errAborted},    // Esc cancels
+		{"default_no", "\n", false, nil},             // Enter on default (No)
+		{"left_to_yes", "\x1b[D\n", true, nil},       // ← moves to Yes
+		{"right_stays_no", "\x1b[C\n", false, nil},   // → stays on No
+		{"yes_then_no", "\x1b[D\x1b[C\n", false, nil}, // Yes then back to No
+		{"esc_aborts", "\x1b", false, errAborted},    // Esc cancels
 	}
 	for _, c := range cases {
-		setInput(c.input)
-		got, err := confirm("?", "")
-		if !errors.Is(err, c.err) {
-			t.Fatalf("confirm(%q) error = %v, want %v", c.input, err, c.err)
-		}
-		if err != nil {
-			continue
-		}
-		if got != c.want {
-			t.Errorf("confirm(%q) = %v, want %v", c.input, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			setInput(c.input)
+			got, err := confirm("?", "")
+			if !errors.Is(err, c.err) {
+				t.Fatalf("confirm(%q) error = %v, want %v", c.input, err, c.err)
+			}
+			if err != nil {
+				return
+			}
+			if got != c.want {
+				t.Errorf("confirm(%q) = %v, want %v", c.input, got, c.want)
+			}
+		})
 	}
 }
 

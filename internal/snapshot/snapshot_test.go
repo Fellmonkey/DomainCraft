@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -152,9 +153,11 @@ func TestRenameRelPath(t *testing.T) {
 		{"src/Shared/Constants.cs", "Product", "Item", "src/Shared/Constants.cs"},
 	}
 	for _, tt := range tests {
-		if got := RenameRelPath(tt.rel, tt.old, tt.new); got != tt.want {
-			t.Errorf("RenameRelPath(%q, %q, %q) = %q, want %q", tt.rel, tt.old, tt.new, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			if got := RenameRelPath(tt.rel, tt.old, tt.new); got != tt.want {
+				t.Errorf("RenameRelPath(%q, %q, %q) = %q, want %q", tt.rel, tt.old, tt.new, got, tt.want)
+			}
+		})
 	}
 }
 

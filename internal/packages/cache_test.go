@@ -150,6 +150,89 @@ func TestResolveVersionCachedStaleRefreshes(t *testing.T) {
 	}
 }
 
+// TestResolveVersionCachedTTLBoundary pins the 24h cutoff: just inside the TTL
+// is a hit, just outside is a miss.
+func TestResolveVersionCachedTTLBoundary(t *testing.T) {
+	key := cacheKey("https://reg.example/{id}", "demo.pkg")
+
+	tests := []struct {
+		name     string
+		storedAt time.Time
+		wantHit  bool
+	}{
+		{name: "just inside TTL", storedAt: time.Now().Add(-DefaultCacheTTL + time.Second), wantHit: true},
+		{name: "just outside TTL", storedAt: time.Now().Add(-DefaultCacheTTL - time.Second)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetCacheRoot(t)
+			seedVersion(t, "demo", key, "1.0.0", tt.storedAt)
+
+			called := false
+			old := resolveVersionFn
+			resolveVersionFn = func(_, _ string) (string, error) {
+				called = true
+				return "2.0.0", nil
+			}
+			defer func() { resolveVersionFn = old }()
+
+			got, err := ResolveVersionCached("demo", "https://reg.example/{id}", "demo.pkg")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if called == tt.wantHit {
+				t.Fatalf("registry called = %v, wantHit %v", called, tt.wantHit)
+			}
+			want := "2.0.0"
+			if tt.wantHit {
+				want = "1.0.0"
+			}
+			if got != want {
+				t.Fatalf("version = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestResolveVersionCachedRegistryFailures covers the two paths where no
+// version may be cached: a registry error and an empty result.
+func TestResolveVersionCachedRegistryFailures(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+		err     error
+	}{
+		{name: "registry error", err: os.ErrNotExist},
+		{name: "empty version", version: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetCacheRoot(t)
+			old := resolveVersionFn
+			resolveVersionFn = func(_, _ string) (string, error) { return tt.version, tt.err }
+			defer func() { resolveVersionFn = old }()
+
+			got, err := ResolveVersionCached("demo", "https://reg.example/{id}", "demo.pkg")
+			if (err != nil) != (tt.err != nil) || got != tt.version {
+				t.Fatalf("got %q, %v; want %q, %v", got, err, tt.version, tt.err)
+			}
+
+			// No entry may be cached from a failed or empty resolution.
+			called := false
+			resolveVersionFn = func(_, _ string) (string, error) {
+				called = true
+				return "3.0.0", nil
+			}
+			got, err = ResolveVersionCached("demo", "https://reg.example/{id}", "demo.pkg")
+			if err != nil || !called || got != "3.0.0" {
+				t.Fatalf("second call = %q, %v, called=%v; want 3.0.0 without error", got, err, called)
+			}
+		})
+	}
+}
+
 // TestResolveVersionCachedIsolation verifies caches are per bridge: a version
 // cached for one bridge is not served to another.
 func TestResolveVersionCachedIsolation(t *testing.T) {

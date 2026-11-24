@@ -45,21 +45,24 @@ func TestIsOfficialBundled(t *testing.T) {
 // TestSplitPinRef covers the community-bridge pin syntax `owner/repo@ref`.
 func TestSplitPinRef(t *testing.T) {
 	cases := []struct {
+		name string
 		in   string
 		repo string
 		ref  string
 	}{
-		{"owner/repo", "owner/repo", ""},
-		{"owner/repo@v1.2.3", "owner/repo", "v1.2.3"},
-		{"owner/repo@9f8e7d6c5b4a3210", "owner/repo", "9f8e7d6c5b4a3210"},
-		{"owner/repo@feature/branch", "owner/repo", "feature/branch"},
-		{"owner/repo@tag@x", "owner/repo@tag", "x"}, // last @ wins
+		{"plain", "owner/repo", "owner/repo", ""},
+		{"version_pin", "owner/repo@v1.2.3", "owner/repo", "v1.2.3"},
+		{"commit_pin", "owner/repo@9f8e7d6c5b4a3210", "owner/repo", "9f8e7d6c5b4a3210"},
+		{"branch_pin", "owner/repo@feature/branch", "owner/repo", "feature/branch"},
+		{"last_at_wins", "owner/repo@tag@x", "owner/repo@tag", "x"}, // last @ wins
 	}
 	for _, c := range cases {
-		repo, ref := splitPinRef(c.in)
-		if repo != c.repo || ref != c.ref {
-			t.Errorf("splitPinRef(%q) = (%q, %q), want (%q, %q)", c.in, repo, ref, c.repo, c.ref)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			repo, ref := splitPinRef(c.in)
+			if repo != c.repo || ref != c.ref {
+				t.Errorf("splitPinRef(%q) = (%q, %q), want (%q, %q)", c.in, repo, ref, c.repo, c.ref)
+			}
+		})
 	}
 }
 

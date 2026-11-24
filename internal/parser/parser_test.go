@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -318,13 +319,15 @@ func TestPluralizeNames(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		// Test via ParseYAML since pluralize is an internal function
-		yamlData := []byte("project:\n  name: Test\nentities:\n  " + tt.singular + ":\n    fields:\n      id: uuid [primary]")
-		parsed, _ := ParseYAML(yamlData)
-		entity := parsed.Entities[tt.singular]
-		if entity.NamePlural != tt.plural {
-			t.Errorf("pluralize(%s) = %s, want %s", tt.singular, entity.NamePlural, tt.plural)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			// Test via ParseYAML since pluralize is an internal function
+			yamlData := []byte("project:\n  name: Test\nentities:\n  " + tt.singular + ":\n    fields:\n      id: uuid [primary]")
+			parsed, _ := ParseYAML(yamlData)
+			entity := parsed.Entities[tt.singular]
+			if entity.NamePlural != tt.plural {
+				t.Errorf("pluralize(%s) = %s, want %s", tt.singular, entity.NamePlural, tt.plural)
+			}
+		})
 	}
 }
 
@@ -359,11 +362,13 @@ entities:
 	}
 
 	for _, tt := range tests {
-		if field, ok := user.Fields[tt.fieldName]; ok {
-			if field.DatabaseColumnName != tt.wantDbName {
-				t.Errorf("field %s: got db name %v, want %v", tt.fieldName, field.DatabaseColumnName, tt.wantDbName)
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			if field, ok := user.Fields[tt.fieldName]; ok {
+				if field.DatabaseColumnName != tt.wantDbName {
+					t.Errorf("field %s: got db name %v, want %v", tt.fieldName, field.DatabaseColumnName, tt.wantDbName)
+				}
 			}
-		}
+		})
 	}
 }
 
@@ -481,10 +486,12 @@ entities:
 		{"categoryIds", "many-to-many"},
 	}
 	for _, tt := range tests {
-		f := order.Fields[tt.field]
-		if f.RelationType != tt.wantType {
-			t.Errorf("field %s: RelationType = %q, want %q", tt.field, f.RelationType, tt.wantType)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			f := order.Fields[tt.field]
+			if f.RelationType != tt.wantType {
+				t.Errorf("field %s: RelationType = %q, want %q", tt.field, f.RelationType, tt.wantType)
+			}
+		})
 	}
 }
 

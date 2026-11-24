@@ -47,19 +47,19 @@ func TestDefault(t *testing.T) {
 
 func TestDict(t *testing.T) {
 	got := Dict("a", 1, "b", "two")
-	want := map[string]interface{}{"a": 1, "b": "two"}
+	want := map[string]any{"a": 1, "b": "two"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Dict = %v, want %v", got, want)
 	}
 	// Odd trailing key gets empty string.
 	got = Dict("k")
-	if !reflect.DeepEqual(got, map[string]interface{}{"k": ""}) {
+	if !reflect.DeepEqual(got, map[string]any{"k": ""}) {
 		t.Errorf("Dict(k) = %v, want {k: ''}", got)
 	}
 }
 
 func TestSet(t *testing.T) {
-	d := map[string]interface{}{}
+	d := map[string]any{}
 	got := Set(d, "x", 7)
 	if got["x"] != 7 {
 		t.Errorf("Set = %v, want x=7", got)
@@ -73,11 +73,11 @@ func TestListAppend(t *testing.T) {
 	}
 	l = Append(l, "a")
 	l = Append(l, 2)
-	if !reflect.DeepEqual(l, []interface{}{"a", 2}) {
+	if !reflect.DeepEqual(l, []any{"a", 2}) {
 		t.Errorf("Append chain = %v, want [a 2]", l)
 	}
 	// Append also works on typed slices (converted via reflection).
-	if got := Append([]string{"x", "y"}, "z"); !reflect.DeepEqual(got, []interface{}{"x", "y", "z"}) {
+	if got := Append([]string{"x", "y"}, "z"); !reflect.DeepEqual(got, []any{"x", "y", "z"}) {
 		t.Errorf("Append([]string) = %v, want [x y z]", got)
 	}
 }
@@ -93,8 +93,8 @@ func TestJoin(t *testing.T) {
 	if got := Join(",", []string{"a", "b"}); got != "a,b" {
 		t.Errorf("Join = %q, want a,b", got)
 	}
-	if got := Join("-", []interface{}{1, 2, 3}); got != "1-2-3" {
-		t.Errorf("Join([]interface{}) = %q, want 1-2-3", got)
+	if got := Join("-", []any{1, 2, 3}); got != "1-2-3" {
+		t.Errorf("Join([]any) = %q, want 1-2-3", got)
 	}
 	if got := Join(",", nil); got != "" {
 		t.Errorf("Join(nil) = %q, want empty", got)

@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -304,12 +305,14 @@ entities:
 	}
 
 	for _, tt := range tests {
-		if field, ok := user.Fields[tt.fieldName]; ok {
-			if field.DatabaseColumnName != tt.wantDbName {
-				t.Errorf("field %s: got db name %v, want %v",
-					tt.fieldName, field.DatabaseColumnName, tt.wantDbName)
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			if field, ok := user.Fields[tt.fieldName]; ok {
+				if field.DatabaseColumnName != tt.wantDbName {
+					t.Errorf("field %s: got db name %v, want %v",
+						tt.fieldName, field.DatabaseColumnName, tt.wantDbName)
+				}
 			}
-		}
+		})
 	}
 }
 

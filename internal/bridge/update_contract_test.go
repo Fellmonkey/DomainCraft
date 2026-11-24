@@ -18,9 +18,11 @@ func TestParseBridgeContractVersion(t *testing.T) {
 		{"garbage defaults to 1", "::: not yaml", 1},
 	}
 	for _, c := range cases {
-		if got := parseBridgeContractVersion([]byte(c.in)); got != c.want {
-			t.Errorf("%s: parseBridgeContractVersion = %d, want %d", c.name, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			if got := parseBridgeContractVersion([]byte(c.in)); got != c.want {
+				t.Errorf("%s: parseBridgeContractVersion = %d, want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 

@@ -37,7 +37,7 @@ func TestGenerateBasicTypes(t *testing.T) {
 	}
 
 	first := em.Records[0].Fields
-	vals := map[string]interface{}{}
+	vals := map[string]any{}
 	for _, sv := range first {
 		vals[sv.Field] = sv.Value
 	}
@@ -56,7 +56,7 @@ func TestGenerateBasicTypes(t *testing.T) {
 	if vals["status"] != "pending" {
 		t.Errorf("status = %v, want pending (first enum value)", vals["status"])
 	}
-	if arr, ok := vals["tags"].([]interface{}); !ok || len(arr) != 1 {
+	if arr, ok := vals["tags"].([]any); !ok || len(arr) != 1 {
 		t.Errorf("tags should be a 1-element slice, got %#v", vals["tags"])
 	}
 	if _, ok := vals["payload"].(string); !ok {
@@ -85,7 +85,7 @@ func TestGenerateReferencesParentPK(t *testing.T) {
 	}
 
 	ds := Generate(project, Options{CountPerEntity: 1})
-	var categoryPK interface{}
+	var categoryPK any
 	for _, sv := range ds.Entities[0].Records[0].Fields {
 		if sv.Field == "id" {
 			categoryPK = sv.Value
@@ -118,14 +118,14 @@ func TestNormalizeCoercesTypes(t *testing.T) {
 					{Name: "enabled", DatabaseType: "boolean"},
 					{Name: "tags", DatabaseType: "array(string)"},
 				},
-				Seed: []map[string]interface{}{
+				Seed: []map[string]any{
 					{
 						"id":      "550e8400-e29b-41d4-a716-446655440000",
 						"title":   "hello",
 						"count":   7,
 						"ratio":   2.5,
 						"enabled": true,
-						"tags":    []interface{}{"a", "b"},
+						"tags":    []any{"a", "b"},
 					},
 				},
 			},
@@ -136,7 +136,7 @@ func TestNormalizeCoercesTypes(t *testing.T) {
 	if len(ds.Entities) != 1 {
 		t.Fatalf("got %d entities, want 1", len(ds.Entities))
 	}
-	vals := map[string]interface{}{}
+	vals := map[string]any{}
 	for _, sv := range ds.Entities[0].Records[0].Fields {
 		vals[sv.Field] = sv.Value
 	}
@@ -149,7 +149,7 @@ func TestNormalizeCoercesTypes(t *testing.T) {
 	if vals["enabled"] != true {
 		t.Errorf("enabled = %#v, want true", vals["enabled"])
 	}
-	if arr, ok := vals["tags"].([]interface{}); !ok || len(arr) != 2 || arr[0] != "a" {
+	if arr, ok := vals["tags"].([]any); !ok || len(arr) != 2 || arr[0] != "a" {
 		t.Errorf("tags = %#v, want [a b]", vals["tags"])
 	}
 }
@@ -158,7 +158,7 @@ func TestNormalizeSkipsEntitiesWithoutSeed(t *testing.T) {
 	project := &ir.IRProject{
 		Entities: []ir.IREntity{
 			{Name: "Empty", Fields: []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}}},
-			{Name: "Seeded", Fields: []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}}, Seed: []map[string]interface{}{{"id": "x"}}},
+			{Name: "Seeded", Fields: []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}}, Seed: []map[string]any{{"id": "x"}}},
 		},
 	}
 	ds := Normalize(project)
@@ -176,7 +176,7 @@ func TestNormalizeIncludesRelationFlags(t *testing.T) {
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{Name: "customerId", DatabaseType: "uuid", IsRelation: true, RelationTarget: "Customer"},
 				},
-				Seed: []map[string]interface{}{{"customerId": "550e8400-e29b-41d4-a716-446655440000"}},
+				Seed: []map[string]any{{"customerId": "550e8400-e29b-41d4-a716-446655440000"}},
 			},
 		},
 	}
@@ -208,8 +208,8 @@ func TestGenerateHonorsNumericBounds(t *testing.T) {
 	}
 
 	ds := Generate(project, Options{CountPerEntity: 2})
-	vals := func(record int) map[string]interface{} {
-		m := map[string]interface{}{}
+	vals := func(record int) map[string]any {
+		m := map[string]any{}
 		for _, sv := range ds.Entities[0].Records[record].Fields {
 			m[sv.Field] = sv.Value
 		}
@@ -253,7 +253,7 @@ func TestGenerateHonorsStringValidations(t *testing.T) {
 	}
 
 	ds := Generate(project, Options{CountPerEntity: 1})
-	vals := map[string]interface{}{}
+	vals := map[string]any{}
 	for _, sv := range ds.Entities[0].Records[0].Fields {
 		vals[sv.Field] = sv.Value
 	}
@@ -288,7 +288,7 @@ func TestNormalizeCoerceEdgeCases(t *testing.T) {
 					{Name: "meta", DatabaseType: "jsonb"},
 					{Name: "status", DatabaseType: "Status"},
 				},
-				Seed: []map[string]interface{}{
+				Seed: []map[string]any{
 					{
 						"id":       "550e8400-e29b-41d4-a716-446655440000",
 						"count":    "not-a-number",
@@ -296,8 +296,8 @@ func TestNormalizeCoerceEdgeCases(t *testing.T) {
 						"ratio":    "also-not-a-number",
 						"enabled":  "not-a-bool",
 						"tags":     "oops-not-a-list",
-						"statuses": []interface{}{"draft", "live"},
-						"meta":     map[string]interface{}{"k": "v"},
+						"statuses": []any{"draft", "live"},
+						"meta":     map[string]any{"k": "v"},
 						"status":   "draft",
 					},
 				},
@@ -306,7 +306,7 @@ func TestNormalizeCoerceEdgeCases(t *testing.T) {
 	}
 
 	ds := Normalize(project)
-	vals := map[string]interface{}{}
+	vals := map[string]any{}
 	for _, sv := range ds.Entities[0].Records[0].Fields {
 		vals[sv.Field] = sv.Value
 	}
@@ -322,14 +322,14 @@ func TestNormalizeCoerceEdgeCases(t *testing.T) {
 	if vals["enabled"] != false {
 		t.Errorf("unparseable bool = %#v, want false", vals["enabled"])
 	}
-	if arr, ok := vals["tags"].([]interface{}); !ok || len(arr) != 0 {
+	if arr, ok := vals["tags"].([]any); !ok || len(arr) != 0 {
 		t.Errorf("non-list for an array field = %#v, want an empty slice", vals["tags"])
 	}
-	arr, ok := vals["statuses"].([]interface{})
+	arr, ok := vals["statuses"].([]any)
 	if !ok || len(arr) != 2 || arr[0] != "draft" {
 		t.Errorf("enum array = %#v, want [draft live]", vals["statuses"])
 	}
-	if m, ok := vals["meta"].(map[string]interface{}); !ok || m["k"] != "v" {
+	if m, ok := vals["meta"].(map[string]any); !ok || m["k"] != "v" {
 		t.Errorf("jsonb should keep its native shape, got %#v", vals["meta"])
 	}
 	if vals["status"] != "draft" {
@@ -352,7 +352,7 @@ func TestGenerateUsesDeclaredDefaultOverMock(t *testing.T) {
 	}
 
 	ds := Generate(project, Options{CountPerEntity: 1})
-	vals := map[string]interface{}{}
+	vals := map[string]any{}
 	for _, sv := range ds.Entities[0].Records[0].Fields {
 		vals[sv.Field] = sv.Value
 	}

@@ -171,9 +171,11 @@ func TestCanonicalNameContract(t *testing.T) {
 		{"fallback re-derives from the name", IRField{Name: "createdAt"}, "created_at"},
 	}
 	for _, c := range cases {
-		if got := c.f.ColumnName(); got != c.want {
-			t.Errorf("%s: ColumnName() = %q, want %q", c.name, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.f.ColumnName(); got != c.want {
+				t.Errorf("%s: ColumnName() = %q, want %q", c.name, got, c.want)
+			}
+		})
 	}
 }
 

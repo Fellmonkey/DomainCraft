@@ -1,5 +1,7 @@
 package specmeta
 
+import "fmt"
+
 import "testing"
 
 func TestIsPrimitive(t *testing.T) {
@@ -19,19 +21,21 @@ func TestIsPrimitive(t *testing.T) {
 		{"uuid", true},
 		{"json", true},
 		{"jsonb", true},
-		{"STRING", false},       // case-sensitive, callers must lowercase
+		{"STRING", false},        // case-sensitive, callers must lowercase
 		{"ProductStatus", false}, // enum
-		{"enum", false},         // meta-type
-		{"array", false},        // meta-type
-		{"relation", false},     // meta-type
+		{"enum", false},          // meta-type
+		{"array", false},         // meta-type
+		{"relation", false},      // meta-type
 		{"", false},
 	}
 
 	for _, tt := range tests {
-		got := IsPrimitive(tt.input)
-		if got != tt.want {
-			t.Errorf("IsPrimitive(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			got := IsPrimitive(tt.input)
+			if got != tt.want {
+				t.Errorf("IsPrimitive(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -65,9 +69,11 @@ func TestIsNumeric(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsNumeric(tt.input); got != tt.want {
-			t.Errorf("IsNumeric(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			if got := IsNumeric(tt.input); got != tt.want {
+				t.Errorf("IsNumeric(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -83,9 +89,11 @@ func TestIsStringType(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsStringType(tt.input); got != tt.want {
-			t.Errorf("IsStringType(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			if got := IsStringType(tt.input); got != tt.want {
+				t.Errorf("IsStringType(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -101,9 +109,11 @@ func TestIsBooleanType(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsBooleanType(tt.input); got != tt.want {
-			t.Errorf("IsBooleanType(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			if got := IsBooleanType(tt.input); got != tt.want {
+				t.Errorf("IsBooleanType(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -121,9 +131,11 @@ func TestIsIndexType(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsIndexType(tt.input); got != tt.want {
-			t.Errorf("IsIndexType(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			if got := IsIndexType(tt.input); got != tt.want {
+				t.Errorf("IsIndexType(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -139,9 +151,11 @@ func TestIsCacheProvider(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsCacheProvider(tt.input); got != tt.want {
-			t.Errorf("IsCacheProvider(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			if got := IsCacheProvider(tt.input); got != tt.want {
+				t.Errorf("IsCacheProvider(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -157,9 +171,11 @@ func TestIsMultiTenancyMode(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsMultiTenancyMode(tt.input); got != tt.want {
-			t.Errorf("IsMultiTenancyMode(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			if got := IsMultiTenancyMode(tt.input); got != tt.want {
+				t.Errorf("IsMultiTenancyMode(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -176,9 +192,11 @@ func TestIsPermissionKey(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsPermissionKey(tt.input); got != tt.want {
-			t.Errorf("IsPermissionKey(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			if got := IsPermissionKey(tt.input); got != tt.want {
+				t.Errorf("IsPermissionKey(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -198,9 +216,11 @@ func TestIsStringValidationModifier(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsStringValidationModifier(tt.input); got != tt.want {
-			t.Errorf("IsStringValidationModifier(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			if got := IsStringValidationModifier(tt.input); got != tt.want {
+				t.Errorf("IsStringValidationModifier(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -218,9 +238,11 @@ func TestIsNumericValidationModifier(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsNumericValidationModifier(tt.input); got != tt.want {
-			t.Errorf("IsNumericValidationModifier(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			if got := IsNumericValidationModifier(tt.input); got != tt.want {
+				t.Errorf("IsNumericValidationModifier(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -284,9 +306,11 @@ func TestIsSortDirection(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsSortDirection(tt.input); got != tt.want {
-			t.Errorf("IsSortDirection(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			if got := IsSortDirection(tt.input); got != tt.want {
+				t.Errorf("IsSortDirection(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -343,9 +367,11 @@ func TestIsDatabase(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsDatabase(tt.input); got != tt.want {
-			t.Errorf("IsDatabase(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			if got := IsDatabase(tt.input); got != tt.want {
+				t.Errorf("IsDatabase(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -362,9 +388,11 @@ func TestIsAPIStyle(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsAPIStyle(tt.input); got != tt.want {
-			t.Errorf("IsAPIStyle(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			if got := IsAPIStyle(tt.input); got != tt.want {
+				t.Errorf("IsAPIStyle(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -375,14 +403,16 @@ func TestIsAuthType(t *testing.T) {
 	}{
 		{"jwt", true},
 		{"none", true},
-		{"JWT", false},  // case-sensitive
+		{"JWT", false}, // case-sensitive
 		{"oauth", false},
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsAuthType(tt.input); got != tt.want {
-			t.Errorf("IsAuthType(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			if got := IsAuthType(tt.input); got != tt.want {
+				t.Errorf("IsAuthType(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 

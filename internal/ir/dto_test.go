@@ -18,10 +18,12 @@ func TestIRField_IsSensitive(t *testing.T) {
 		{"email", false},
 	}
 	for _, tc := range cases {
-		f := IRField{Name: tc.name}
-		if got := f.IsSensitive(); got != tc.want {
-			t.Errorf("IsSensitive(%q) = %v, want %v", tc.name, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			f := IRField{Name: tc.name}
+			if got := f.IsSensitive(); got != tc.want {
+				t.Errorf("IsSensitive(%q) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
 	}
 }
 

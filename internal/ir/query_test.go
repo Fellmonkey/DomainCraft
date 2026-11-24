@@ -64,26 +64,29 @@ func TestSearchableSortableFilterableFields(t *testing.T) {
 
 func TestFilterOperators(t *testing.T) {
 	cases := []struct {
+		name   string
 		dbType string
 		want   []FilterOp
 	}{
-		{"string", []FilterOp{OpEq, OpNe, OpContains, OpStartsWith, OpEndsWith, OpIn}},
-		{"boolean", []FilterOp{OpEq, OpNe}},
-		{"decimal", []FilterOp{OpEq, OpNe, OpGt, OpGte, OpLt, OpLte, OpIn}},
-		{"uuid", []FilterOp{OpEq, OpNe, OpIn}},
-		{"Status", []FilterOp{OpEq, OpNe, OpIn}},
-		{"array(string)", nil},
-		{"jsonb", nil},
+		{"string", "string", []FilterOp{OpEq, OpNe, OpContains, OpStartsWith, OpEndsWith, OpIn}},
+		{"boolean", "boolean", []FilterOp{OpEq, OpNe}},
+		{"decimal", "decimal", []FilterOp{OpEq, OpNe, OpGt, OpGte, OpLt, OpLte, OpIn}},
+		{"uuid", "uuid", []FilterOp{OpEq, OpNe, OpIn}},
+		{"enum_status", "Status", []FilterOp{OpEq, OpNe, OpIn}},
+		{"array_string", "array(string)", nil},
+		{"jsonb", "jsonb", nil},
 	}
 	for _, c := range cases {
-		f := IRField{DatabaseType: c.dbType}
-		got := f.FilterOperators()
-		if len(got) == 0 && len(c.want) == 0 {
-			continue
-		}
-		if !reflect.DeepEqual(got, c.want) {
-			t.Errorf("FilterOperators(%q) = %v, want %v", c.dbType, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			f := IRField{DatabaseType: c.dbType}
+			got := f.FilterOperators()
+			if len(got) == 0 && len(c.want) == 0 {
+				return
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Errorf("FilterOperators(%q) = %v, want %v", c.dbType, got, c.want)
+			}
+		})
 	}
 }
 
@@ -147,21 +150,24 @@ func TestQuerySchema(t *testing.T) {
 
 func TestCursorField(t *testing.T) {
 	cases := []struct {
+		name   string
 		pkType string
 		want   bool
 	}{
-		{"int", true},
-		{"bigint", true},
-		{"uuid", false},
-		{"string", false},
-		{"date", false},
+		{"int", "int", true},
+		{"bigint", "bigint", true},
+		{"uuid", "uuid", false},
+		{"string", "string", false},
+		{"date", "date", false},
 	}
 	for _, c := range cases {
-		e := IREntity{Fields: []IRField{{Name: "id", DatabaseType: c.pkType, IsPrimary: true}}}
-		got := e.CursorField()
-		if (got != nil) != c.want {
-			t.Errorf("CursorField(pk=%s) = %v, want non-nil=%v", c.pkType, got != nil, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			e := IREntity{Fields: []IRField{{Name: "id", DatabaseType: c.pkType, IsPrimary: true}}}
+			got := e.CursorField()
+			if (got != nil) != c.want {
+				t.Errorf("CursorField(pk=%s) = %v, want non-nil=%v", c.pkType, got != nil, c.want)
+			}
+		})
 	}
 
 	// No PK -> nil.
