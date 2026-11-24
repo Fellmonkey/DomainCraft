@@ -3,6 +3,7 @@ package renderer
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -68,5 +69,138 @@ func TestLoadSourceFailsClosedOnMissingBridgeYaml(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := loadSource(dir); err == nil || !strings.Contains(err.Error(), "does not contain bridge.yaml") {
 		t.Fatalf("loadSource on a directory without bridge.yaml = %v, want a hard error naming bridge.yaml", err)
+	}
+}
+
+// MigrationConfig scans the composed chain from the adapter downwards and
+// returns the first *enabled* config. The adapter wins when both layers enable
+// migrations; a disabled adapter defers to an enabled persistence base.
+func TestMigrationConfigFirstEnabledWins(t *testing.T) {
+	t.Parallel()
+	baseEnabled := writeBridgeConfig(t, `name: base
+migrations:
+  enabled: true
+  commands:
+    - "base command"
+`)
+	baseDisabled := writeBridgeConfig(t, `name: base
+migrations:
+  enabled: false
+  commands:
+    - "base command"
+`)
+	adapterEnabled := writeBridgeConfig(t, `name: adapter
+migrations:
+  enabled: true
+  commands:
+    - "adapter command"
+`)
+	adapterDisabled := writeBridgeConfig(t, `name: adapter
+migrations:
+  enabled: false
+  commands:
+    - "adapter command"
+`)
+
+	cases := []struct {
+		name         string
+		base         string
+		adapter      string
+		wantSource   int // index in r.sources: 0 = base, 1 = adapter
+		wantCommands []string
+	}{
+		{name: "both enabled: adapter wins", base: baseEnabled, adapter: adapterEnabled, wantSource: 1, wantCommands: []string{"adapter command"}},
+		{name: "adapter disabled: enabled base wins", base: baseEnabled, adapter: adapterDisabled, wantSource: 0, wantCommands: []string{"base command"}},
+		{name: "base disabled: enabled adapter wins", base: baseDisabled, adapter: adapterEnabled, wantSource: 1, wantCommands: []string{"adapter command"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r, err := New(tc.adapter, nil)
+			if err != nil {
+				t.Fatalf("New(adapter): %v", err)
+			}
+			if err := r.AttachBases([]string{tc.base}); err != nil {
+				t.Fatalf("AttachBases: %v", err)
+			}
+			got := r.MigrationConfig()
+			if got == nil {
+				t.Fatal("MigrationConfig() = nil, want an enabled config")
+			}
+			if !got.Enabled {
+				t.Error("MigrationConfig() returned a disabled config")
+			}
+			if got != r.sources[tc.wantSource].config.Migrations {
+				t.Errorf("MigrationConfig() did not come from source %d", tc.wantSource)
+			}
+			if !slices.Equal(got.Commands, tc.wantCommands) {
+				t.Errorf("commands = %v, want %v", got.Commands, tc.wantCommands)
+			}
+		})
+	}
+}
+
+func TestMigrationConfigAbsentReturnsNil(t *testing.T) {
+	t.Parallel()
+	t.Run("no bridge declares migrations", func(t *testing.T) {
+		t.Parallel()
+		base := writeBridgeConfig(t, "name: base\n")
+		adapter := writeBridgeConfig(t, "name: adapter\n")
+		r, err := New(adapter, nil)
+		if err != nil {
+			t.Fatalf("New(adapter): %v", err)
+		}
+		if err := r.AttachBases([]string{base}); err != nil {
+			t.Fatalf("AttachBases: %v", err)
+		}
+		if got := r.MigrationConfig(); got != nil {
+			t.Errorf("MigrationConfig() = %+v, want nil", got)
+		}
+	})
+	t.Run("all declared configs disabled", func(t *testing.T) {
+		t.Parallel()
+		base := writeBridgeConfig(t, "name: base\nmigrations:\n  enabled: false\n  commands:\n    - \"never\"\n")
+		adapter := writeBridgeConfig(t, "name: adapter\nmigrations:\n  enabled: false\n  commands:\n    - \"never\"\n")
+		r, err := New(adapter, nil)
+		if err != nil {
+			t.Fatalf("New(adapter): %v", err)
+		}
+		if err := r.AttachBases([]string{base}); err != nil {
+			t.Fatalf("AttachBases: %v", err)
+		}
+		if got := r.MigrationConfig(); got != nil {
+			t.Errorf("MigrationConfig() = %+v, want nil when no config is enabled", got)
+		}
+	})
+}
+
+func TestMigrationConfigMergesCommandsInDeclaredOrder(t *testing.T) {
+	t.Parallel()
+	want := []string{
+		"dotnet ef migrations add Sync",
+		"dotnet ef database update",
+		"echo done",
+	}
+	dir := writeBridgeConfig(t, `name: persistence
+migrations:
+  enabled: true
+  commands:
+    - "dotnet ef migrations add Sync"
+    - "dotnet ef database update"
+    - "echo done"
+`)
+	r, err := New(dir, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	got := r.MigrationConfig()
+	if got == nil {
+		t.Fatal("MigrationConfig() = nil, want an enabled config")
+	}
+	if !got.Enabled {
+		t.Error("MigrationConfig().Enabled = false, want true")
+	}
+	if !slices.Equal(got.Commands, want) {
+		t.Errorf("commands = %v, want declared order %v", got.Commands, want)
 	}
 }

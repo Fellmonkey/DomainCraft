@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -373,4 +374,144 @@ func TestRollbackErrorKeepsOriginalPrimary(t *testing.T) {
 	if !errors.Is(rollbackError(primary, nil), primary) {
 		t.Error("no-op rollback must return the original error unchanged")
 	}
+}
+
+// TestRenderPhasesPreserveManifestAndRollback pins the contract spanning all
+// three phases: staging records manifest entries in template/context/target
+// order (including skipped scaffolds), and a failure during commit rolls back
+// partial writes while returning neither paths nor a manifest.
+func TestRenderPhasesPreserveManifestAndRollback(t *testing.T) {
+	bridge := writeHardeningBridge(t, map[string]string{
+		"bridge.yaml": `name: demo
+templates:
+  - for: entity
+    source: templates/entity.tmpl
+    target: "{{ .Entity.Name }}.txt"
+  - for: project
+    source: templates/shared.tmpl
+    target: "shared.txt"
+  - for: project
+    source: templates/custom.tmpl
+    target: "custom.txt"
+    overwrite: false
+`,
+		"templates/entity.tmpl": `entity-{{ .Entity.Name }}`,
+		"templates/shared.tmpl": `shared`,
+		"templates/custom.tmpl": `custom`,
+	})
+	r, err := New(bridge, nil)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	project := &ir.Project{Name: "P", Entities: []ir.Entity{
+		{Name: "Alpha", NamePlural: "Alphas"},
+		{Name: "Beta", NamePlural: "Betas"},
+	}}
+
+	out := filepath.Join(t.TempDir(), "out")
+	wantManifest := []RenderedFile{
+		{Path: "Alpha.txt", Entity: "Alpha", Written: true},
+		{Path: "Beta.txt", Entity: "Beta", Written: true},
+		{Path: "shared.txt", Written: true},
+		{Path: "custom.txt", Custom: true, Written: true},
+	}
+	wantWritten := []string{
+		filepath.Join(out, "Alpha.txt"),
+		filepath.Join(out, "Beta.txt"),
+		filepath.Join(out, "shared.txt"),
+		filepath.Join(out, "custom.txt"),
+	}
+
+	written, manifest, err := r.Render(project, out)
+	if err != nil {
+		t.Fatalf("Render() 1 error = %v", err)
+	}
+	if !reflect.DeepEqual(manifest, wantManifest) {
+		t.Errorf("manifest = %+v, want %+v", manifest, wantManifest)
+	}
+	if !reflect.DeepEqual(written, wantWritten) {
+		t.Errorf("written = %q, want %q", written, wantWritten)
+	}
+
+	// A skipped scaffold keeps its slot in the manifest with Written=false.
+	written, manifest, err = r.Render(project, out)
+	if err != nil {
+		t.Fatalf("Render() 2 error = %v", err)
+	}
+	wantManifest[3].Written = false
+	wantWritten = wantWritten[:3]
+	if !reflect.DeepEqual(manifest, wantManifest) {
+		t.Errorf("manifest on second run = %+v, want %+v", manifest, wantManifest)
+	}
+	if !reflect.DeepEqual(written, wantWritten) {
+		t.Errorf("written on second run = %q, want %q", written, wantWritten)
+	}
+	data, err := os.ReadFile(filepath.Join(out, "custom.txt"))
+	if err != nil || string(data) != "custom" {
+		t.Errorf("developer-owned file changed: data=%q err=%v", data, err)
+	}
+
+	// A symlink planted after staging blocks a later commit. The earlier files
+	// must be rolled back and the failure must carry no paths or manifest.
+	t.Run("commit failure rolls back partial writes", func(t *testing.T) {
+		base := t.TempDir()
+		outside := filepath.Join(base, "outside.txt")
+		if err := os.WriteFile(outside, []byte("keep"), 0o644); err != nil {
+			t.Fatalf("write outside file: %v", err)
+		}
+		probe := filepath.Join(base, "probe.link")
+		if err := os.Symlink(outside, probe); err != nil {
+			t.Skipf("symlinks unavailable on this host: %v", err)
+		}
+		_ = os.Remove(probe)
+
+		out2 := filepath.Join(base, "out")
+		if err := os.MkdirAll(out2, 0o755); err != nil {
+			t.Fatalf("mkdir output: %v", err)
+		}
+		alpha := filepath.Join(out2, "Alpha.txt")
+		if err := os.WriteFile(alpha, []byte("original"), 0o644); err != nil {
+			t.Fatalf("write prior Alpha.txt: %v", err)
+		}
+
+		beforeCommitHook = func() {
+			if err := os.Symlink(outside, filepath.Join(out2, "shared.txt")); err != nil {
+				t.Errorf("plant symlink before commit: %v", err)
+			}
+		}
+		t.Cleanup(func() { beforeCommitHook = nil })
+
+		written, manifest, err := r.Render(project, out2)
+		if err == nil {
+			t.Fatal("Render succeeded despite a symlink planted before commit")
+		}
+		if !strings.Contains(err.Error(), "shared.txt") || !strings.Contains(err.Error(), "symlink") {
+			t.Errorf("error = %q, want it to name the blocked target and symlink", err)
+		}
+		if written != nil || manifest != nil {
+			t.Errorf("failed render returned paths=%q manifest=%+v, want both nil", written, manifest)
+		}
+
+		data, err := os.ReadFile(alpha)
+		if err != nil || string(data) != "original" {
+			t.Errorf("backed-up target not restored: data=%q err=%v", data, err)
+		}
+		if _, err := os.Stat(filepath.Join(out2, "Beta.txt")); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("newly committed file survived rollback: %v", err)
+		}
+		outsideData, err := os.ReadFile(outside)
+		if err != nil || string(outsideData) != "keep" {
+			t.Errorf("outside file changed: data=%q err=%v", outsideData, err)
+		}
+		entries, err := os.ReadDir(out2)
+		if err != nil {
+			t.Fatalf("read output dir: %v", err)
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if strings.HasPrefix(name, ".domaincraft-render-") || strings.HasSuffix(name, ".bak") {
+				t.Errorf("leftover phase artifact: %s", name)
+			}
+		}
+	})
 }

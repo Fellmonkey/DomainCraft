@@ -1,6 +1,8 @@
 package renderer
 
 import (
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
@@ -32,6 +34,40 @@ func testMappings() *typeMappings {
 		Array:       ArrayLiteralSpec{Open: "new %s { ", Close: " }", Empty: "new %s()"},
 		ColumnSizes: map[string]string{"string": "255", "uuid": "36"},
 		InputTypes:  map[string]string{"datetime": "DatePicker"},
+	}
+}
+
+// The FuncMap key set is the bridge contract. Splitting the registrars must
+// neither add a core-invented key nor drop a bridge-declared one; columnSize and
+// inputType exist only when the bridge declared their mappings.
+func TestBuildBridgeFuncsKeySet(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		m    *typeMappings
+		want []string
+	}{
+		{name: "nil mappings", m: nil},
+		{
+			name: "minimal mappings",
+			m:    &typeMappings{Types: map[string]string{"int": "int"}},
+			want: []string{"arrayLiteralClose", "arrayLiteralOpen", "deleteBehaviorName", "isValueType", "languageType", "literalDefault", "literalMember", "literalValue"},
+		},
+		{
+			name: "full mappings",
+			m:    testMappings(),
+			want: []string{"arrayLiteralClose", "arrayLiteralOpen", "columnSize", "deleteBehaviorName", "inputType", "isValueType", "languageType", "literalDefault", "literalMember", "literalValue"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := slices.Sorted(maps.Keys(buildBridgeFuncs(tc.m, logger.New())))
+			want := slices.Sorted(slices.Values(tc.want))
+			if !slices.Equal(got, want) {
+				t.Errorf("FuncMap keys = %v, want %v", got, want)
+			}
+		})
 	}
 }
 

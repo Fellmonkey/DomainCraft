@@ -142,6 +142,254 @@ func rollbackError(err, rollbackErr error) error {
 	return errors.Join(err, fmt.Errorf("rollback writes: %w", rollbackErr))
 }
 
+// parseHelpers loads the named templates ({{ define "name" }}) declared by
+// every bridge in the chain. Bases are parsed first so a composed adapter
+// inherits their helpers; the adapter's definitions win on conflicts.
+func (r *Renderer) parseHelpers(funcMap template.FuncMap) (*template.Template, error) {
+	var helpersTemplate *template.Template
+	for _, src := range r.sources {
+		if src.config.Helpers == "" {
+			continue
+		}
+		helperPath, err := safeBridgeSource(src.dir, src.config.Helpers)
+		if err != nil {
+			return nil, err
+		}
+		helperBytes, err := os.ReadFile(helperPath) //nolint:gosec // helperPath passed safeBridgeSource validation
+		if err != nil {
+			return nil, fmt.Errorf("read helpers %s: %w", src.config.Helpers, err)
+		}
+		if helpersTemplate == nil {
+			helpersTemplate, err = r.applyDelimiters(template.New("helpers").Funcs(funcMap)).Parse(string(helperBytes))
+		} else {
+			helpersTemplate, err = helpersTemplate.Parse(string(helperBytes))
+		}
+		if err != nil {
+			return nil, fmt.Errorf("parse helpers %s: %w", src.config.Helpers, err)
+		}
+	}
+	return helpersTemplate, nil
+}
+
+// renderSession carries the mutable state shared by the three Render phases.
+// verified is local to one Render and never reused across the pre- and
+// post-MkdirAll containment passes: MkdirAll can create components, so the
+// latter pass always walks the path freshly.
+type renderSession struct {
+	outputDir string
+	project   *ir.Project
+	funcMap   template.FuncMap
+	pkgs      map[string]string
+	helpers   *template.Template
+
+	verified  map[string]bool
+	staged    []stagedWrite
+	committed []stagedWrite
+	manifest  []RenderedFile
+}
+
+// fail drops every staged temp file and restores committed files, attaching
+// any rollback failure to the primary error. The phase that detects a failure
+// calls it once, while the session still holds the exact writes performed.
+func (s *renderSession) fail(err error) error {
+	return rollbackError(err, rollbackWrites(s.staged, s.committed))
+}
+
+// stageTemplates parses each selected template and renders every target into a
+// temp file next to it. Nothing is written to outputDir until all templates
+// executed successfully; a failure drops the temp files staged so far.
+func (r *Renderer) stageTemplates(s *renderSession) error {
+	for _, src := range r.sources {
+		for _, spec := range src.config.Templates {
+			// Check if template should be rendered based on "When" condition
+			if !r.shouldRender(spec, s.project, s.pkgs) {
+				continue
+			}
+
+			sourcePath, err := safeBridgeSource(src.dir, spec.Source)
+			if err != nil {
+				return s.fail(err)
+			}
+			tplBytes, err := os.ReadFile(sourcePath) //nolint:gosec // sourcePath passed safeBridgeSource validation
+			if err != nil {
+				return s.fail(fmt.Errorf("read template %s: %w", spec.Source, err))
+			}
+
+			tplName := filepath.Base(spec.Source)
+			var parsedTemplate *template.Template
+			if s.helpers != nil {
+				// Clone helpers so all named templates are available
+				parsedTemplate, err = s.helpers.Clone()
+				if err != nil {
+					return s.fail(fmt.Errorf("clone helpers for %s: %w", spec.Source, err))
+				}
+				parsedTemplate, err = r.applyDelimiters(parsedTemplate.New(tplName)).Parse(string(tplBytes))
+			} else {
+				parsedTemplate, err = r.applyDelimiters(template.New(tplName).Funcs(s.funcMap)).Parse(string(tplBytes))
+			}
+			if err != nil {
+				return s.fail(fmt.Errorf("parse template %s: %w", spec.Source, err))
+			}
+
+			contexts, err := r.renderContexts(spec.For, s.project, s.pkgs)
+			if err != nil {
+				return s.fail(err)
+			}
+
+			for _, context := range contexts {
+				// Check if this specific context should be rendered based on "When" condition
+				if !r.shouldRenderContext(spec, context) {
+					continue
+				}
+
+				entityName := ""
+				if context.Entity != nil {
+					entityName = context.Entity.Name
+				}
+
+				for _, targetPattern := range spec.TargetPatterns() {
+					renderedTarget, err := renderTemplateString(targetPattern, context, s.funcMap)
+					if err != nil {
+						return s.fail(fmt.Errorf("render target path: %w", err))
+					}
+
+					absTarget, err := safeOutputPathCached(s.outputDir, renderedTarget, s.verified)
+					if err != nil {
+						return s.fail(err)
+					}
+
+					relPath := filepath.ToSlash(renderedTarget)
+					record := RenderedFile{
+						Path:    relPath,
+						Entity:  entityName,
+						Custom:  spec.IsCustom(),
+						Written: true,
+					}
+
+					// Scaffold semantics: overwrite: false files are created only once.
+					// The developer owns them afterwards, so they survive regeneration.
+					if spec.IsCustom() {
+						if _, statErr := os.Stat(absTarget); statErr == nil {
+							record.Written = false
+							s.manifest = append(s.manifest, record)
+							continue
+						}
+					}
+
+					if err := os.MkdirAll(filepath.Dir(absTarget), 0o755); err != nil { //nolint:gosec // generated project dirs must stay world-readable
+						return s.fail(fmt.Errorf("create output dir: %w", err))
+					}
+					// MkdirAll may have created the missing components above; re-check
+					// with a fully fresh walk (no cached directories) so a symlink
+					// planted in the meantime is still rejected.
+					if _, err := safeOutputPath(s.outputDir, renderedTarget); err != nil {
+						return s.fail(err)
+					}
+
+					existed := false
+					mode := os.FileMode(0o644) // os.Create's default under the usual umask
+					if info, statErr := os.Lstat(absTarget); statErr == nil {
+						if info.Mode()&os.ModeSymlink != 0 {
+							return s.fail(fmt.Errorf("template target path escapes output directory through a symlink: %s", renderedTarget))
+						}
+						existed = true
+						mode = info.Mode().Perm()
+						// The previous bytes are not read here: the commit phase moves
+						// the whole file aside and moves it back on rollback.
+					} else if !errors.Is(statErr, os.ErrNotExist) {
+						return s.fail(fmt.Errorf("inspect output file %s: %w", renderedTarget, statErr))
+					}
+
+					// Render into a temp file in the target's own directory so the
+					// final rename stays on the same filesystem. The prior file is
+					// never truncated, even if Execute or Close fails.
+					tmp, err := os.CreateTemp(filepath.Dir(absTarget), ".domaincraft-render-*")
+					if err != nil {
+						return s.fail(fmt.Errorf("create temp output file: %w", err))
+					}
+					tmpPath := tmp.Name()
+					// CreateTemp uses 0600; generated files stay readable as before.
+					if err := tmp.Chmod(mode); err != nil {
+						_ = tmp.Close()
+						_ = os.Remove(tmpPath)
+						return s.fail(fmt.Errorf("set mode on temp output %s: %w", tmpPath, err))
+					}
+					if err := parsedTemplate.Execute(tmp, context); err != nil {
+						_ = tmp.Close()
+						_ = os.Remove(tmpPath)
+						return s.fail(fmt.Errorf("execute template: %w", err))
+					}
+					if err := tmp.Close(); err != nil {
+						_ = os.Remove(tmpPath)
+						return s.fail(fmt.Errorf("close temp output %s: %w", tmpPath, err))
+					}
+					s.staged = append(s.staged, stagedWrite{
+						temp:    tmpPath,
+						target:  absTarget,
+						existed: existed,
+						mode:    mode,
+						record:  record,
+					})
+					s.manifest = append(s.manifest, record)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// commitWrites commits staged files in order. An existing target is renamed
+// aside into a sibling backup before the rendered temp file takes its place;
+// rollback moves the backup back, so no prior content is read into memory.
+func (r *Renderer) commitWrites(s *renderSession) error {
+	if beforeCommitHook != nil {
+		beforeCommitHook()
+	}
+	for _, w := range s.staged {
+		if info, err := os.Lstat(w.target); err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				return s.fail(fmt.Errorf("template target path escapes output directory through a symlink: %s", w.record.Path))
+			}
+			// The staged temp name is already unique in this directory.
+			backup := w.temp + ".bak"
+			if err := os.Rename(w.target, backup); err != nil {
+				return s.fail(fmt.Errorf("back up output file %s: %w", w.record.Path, err))
+			}
+			w.backup = backup
+			w.existed = true
+			w.mode = info.Mode().Perm()
+		} else if errors.Is(err, os.ErrNotExist) {
+			// The target vanished after staging. Restore the pre-commit state:
+			// this is now a new file, so rollback must remove it, not write nil
+			// bytes through the staging-time `existed` flag.
+			w.existed = false
+			w.backup = ""
+		} else {
+			return s.fail(fmt.Errorf("inspect output file %s: %w", w.record.Path, err))
+		}
+		// Record the write before the final rename so a failure here still
+		// restores the backup and removes the staged temp file.
+		s.committed = append(s.committed, w)
+		if err := os.Rename(w.temp, w.target); err != nil {
+			return s.fail(fmt.Errorf("commit output file %s: %w", w.record.Path, err))
+		}
+	}
+	return nil
+}
+
+// cleanupBackups removes the rename-aside backups after a successful commit.
+// A leftover backup is only warned about: the generated files are correct and
+// rollback no longer consumes those backups.
+func (r *Renderer) cleanupBackups(s *renderSession) {
+	for _, w := range s.committed {
+		if w.backup != "" {
+			if err := os.Remove(w.backup); err != nil && !errors.Is(err, os.ErrNotExist) {
+				r.log.Warn("remove backup %s: %v", w.backup, err)
+			}
+		}
+	}
+}
+
 // Render renders the IR through every bridge in the chain and returns the
 // written paths and the file manifest. Rendering is staged in temp files and
 // committed only after every template succeeded; a failure at any point removes
@@ -164,238 +412,37 @@ func (r *Renderer) Render(project *ir.Project, outputDir string) ([]string, []Re
 	// language-specific framework default.
 	pkgs := r.resolvePackages(project)
 
-	// Parse shared helper templates from every bridge in the chain (base first,
-	// adapter last). They define named templates ({{ define "name" }}) that all
-	// other templates can call; a composed adapter inherits its bases' helpers.
-	var helpersTemplate *template.Template
-	for _, src := range r.sources {
-		if src.config.Helpers == "" {
-			continue
-		}
-		helperPath, err := safeBridgeSource(src.dir, src.config.Helpers)
-		if err != nil {
-			return nil, nil, err
-		}
-		helperBytes, err := os.ReadFile(helperPath) //nolint:gosec // helperPath passed safeBridgeSource validation
-		if err != nil {
-			return nil, nil, fmt.Errorf("read helpers %s: %w", src.config.Helpers, err)
-		}
-		if helpersTemplate == nil {
-			helpersTemplate, err = r.applyDelimiters(template.New("helpers").Funcs(funcMap)).Parse(string(helperBytes))
-		} else {
-			helpersTemplate, err = helpersTemplate.Parse(string(helperBytes))
-		}
-		if err != nil {
-			return nil, nil, fmt.Errorf("parse helpers %s: %w", src.config.Helpers, err)
-		}
+	helpersTemplate, err := r.parseHelpers(funcMap)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	// verified holds directories checked by the pre-MkdirAll containment pass
-	// in Phase 1. It is local to this Render and never reused across passes:
-	// the post-MkdirAll pass below stays fully fresh, because MkdirAll itself
-	// can create components and an attacker can plant a link between calls.
-	verified := make(map[string]bool)
-	staged := make([]stagedWrite, 0)
-	// committed is empty during staging; phase 2 appends to it as files land.
-	committed := make([]stagedWrite, 0)
-	manifest := make([]RenderedFile, 0)
-	// fail drops every staged temp file (and restores committed files once
-	// phase 2 starts), attaching any rollback failure to the primary error.
-	fail := func(err error) ([]string, []RenderedFile, error) {
-		return nil, nil, rollbackError(err, rollbackWrites(staged, committed))
+	session := &renderSession{
+		outputDir: outputDir,
+		project:   project,
+		funcMap:   funcMap,
+		pkgs:      pkgs,
+		helpers:   helpersTemplate,
+		verified:  make(map[string]bool),
+		staged:    make([]stagedWrite, 0),
+		// committed is empty during staging; commitWrites appends as files land.
+		committed: make([]stagedWrite, 0),
+		manifest:  make([]RenderedFile, 0),
 	}
 
-	// Phase 1: parse templates and render each target into a temp file. Nothing
-	// is written to outputDir until every template has executed successfully.
-	for _, src := range r.sources {
-		for _, spec := range src.config.Templates {
-			// Check if template should be rendered based on "When" condition
-			if !r.shouldRender(spec, project, pkgs) {
-				continue
-			}
-
-			sourcePath, err := safeBridgeSource(src.dir, spec.Source)
-			if err != nil {
-				return fail(err)
-			}
-			tplBytes, err := os.ReadFile(sourcePath) //nolint:gosec // sourcePath passed safeBridgeSource validation
-			if err != nil {
-				return fail(fmt.Errorf("read template %s: %w", spec.Source, err))
-			}
-
-			tplName := filepath.Base(spec.Source)
-			var parsedTemplate *template.Template
-			if helpersTemplate != nil {
-				// Clone helpers so all named templates are available
-				parsedTemplate, err = helpersTemplate.Clone()
-				if err != nil {
-					return fail(fmt.Errorf("clone helpers for %s: %w", spec.Source, err))
-				}
-				parsedTemplate, err = r.applyDelimiters(parsedTemplate.New(tplName)).Parse(string(tplBytes))
-			} else {
-				parsedTemplate, err = r.applyDelimiters(template.New(tplName).Funcs(funcMap)).Parse(string(tplBytes))
-			}
-			if err != nil {
-				return fail(fmt.Errorf("parse template %s: %w", spec.Source, err))
-			}
-
-			contexts, err := r.renderContexts(spec.For, project, pkgs)
-			if err != nil {
-				return fail(err)
-			}
-
-			for _, context := range contexts {
-				// Check if this specific context should be rendered based on "When" condition
-				if !r.shouldRenderContext(spec, context) {
-					continue
-				}
-
-				entityName := ""
-				if context.Entity != nil {
-					entityName = context.Entity.Name
-				}
-
-				for _, targetPattern := range spec.TargetPatterns() {
-					renderedTarget, err := renderTemplateString(targetPattern, context, funcMap)
-					if err != nil {
-						return fail(fmt.Errorf("render target path: %w", err))
-					}
-
-					absTarget, err := safeOutputPathCached(outputDir, renderedTarget, verified)
-					if err != nil {
-						return fail(err)
-					}
-
-					relPath := filepath.ToSlash(renderedTarget)
-					record := RenderedFile{
-						Path:    relPath,
-						Entity:  entityName,
-						Custom:  spec.IsCustom(),
-						Written: true,
-					}
-
-					// Scaffold semantics: overwrite: false files are created only once.
-					// The developer owns them afterwards, so they survive regeneration.
-					if spec.IsCustom() {
-						if _, statErr := os.Stat(absTarget); statErr == nil {
-							record.Written = false
-							manifest = append(manifest, record)
-							continue
-						}
-					}
-
-					if err := os.MkdirAll(filepath.Dir(absTarget), 0o755); err != nil { //nolint:gosec // generated project dirs must stay world-readable
-						return fail(fmt.Errorf("create output dir: %w", err))
-					}
-					// MkdirAll may have created the missing components above; re-check
-					// with a fully fresh walk (no cached directories) so a symlink
-					// planted in the meantime is still rejected.
-					if _, err := safeOutputPath(outputDir, renderedTarget); err != nil {
-						return fail(err)
-					}
-
-					existed := false
-					mode := os.FileMode(0o644) // os.Create's default under the usual umask
-					if info, statErr := os.Lstat(absTarget); statErr == nil {
-						if info.Mode()&os.ModeSymlink != 0 {
-							return fail(fmt.Errorf("template target path escapes output directory through a symlink: %s", renderedTarget))
-						}
-						existed = true
-						mode = info.Mode().Perm()
-						// The previous bytes are not read here: phase 2 moves the
-						// whole file aside and moves it back on rollback.
-					} else if !errors.Is(statErr, os.ErrNotExist) {
-						return fail(fmt.Errorf("inspect output file %s: %w", renderedTarget, statErr))
-					}
-
-					// Render into a temp file in the target's own directory so the
-					// final rename stays on the same filesystem. The prior file is
-					// never truncated, even if Execute or Close fails.
-					tmp, err := os.CreateTemp(filepath.Dir(absTarget), ".domaincraft-render-*")
-					if err != nil {
-						return fail(fmt.Errorf("create temp output file: %w", err))
-					}
-					tmpPath := tmp.Name()
-					// CreateTemp uses 0600; generated files stay readable as before.
-					if err := tmp.Chmod(mode); err != nil {
-						_ = tmp.Close()
-						_ = os.Remove(tmpPath)
-						return fail(fmt.Errorf("set mode on temp output %s: %w", tmpPath, err))
-					}
-					if err := parsedTemplate.Execute(tmp, context); err != nil {
-						_ = tmp.Close()
-						_ = os.Remove(tmpPath)
-						return fail(fmt.Errorf("execute template: %w", err))
-					}
-					if err := tmp.Close(); err != nil {
-						_ = os.Remove(tmpPath)
-						return fail(fmt.Errorf("close temp output %s: %w", tmpPath, err))
-					}
-					staged = append(staged, stagedWrite{
-						temp:    tmpPath,
-						target:  absTarget,
-						existed: existed,
-						mode:    mode,
-						record:  record,
-					})
-					manifest = append(manifest, record)
-				}
-			}
-		}
+	if err := r.stageTemplates(session); err != nil {
+		return nil, nil, err
 	}
-
-	// Phase 2: commit staged files. An existing target is renamed aside into a
-	// sibling backup before the rendered temp file takes its place. Rollback
-	// renames the backup back, so no prior content is ever read into memory.
-	if beforeCommitHook != nil {
-		beforeCommitHook()
+	if err := r.commitWrites(session); err != nil {
+		return nil, nil, err
 	}
-	for _, w := range staged {
-		if info, err := os.Lstat(w.target); err == nil {
-			if info.Mode()&os.ModeSymlink != 0 {
-				return fail(fmt.Errorf("template target path escapes output directory through a symlink: %s", w.record.Path))
-			}
-			// The staged temp name is already unique in this directory.
-			backup := w.temp + ".bak"
-			if err := os.Rename(w.target, backup); err != nil {
-				return fail(fmt.Errorf("back up output file %s: %w", w.record.Path, err))
-			}
-			w.backup = backup
-			w.existed = true
-			w.mode = info.Mode().Perm()
-		} else if errors.Is(err, os.ErrNotExist) {
-			// The target vanished after staging. Restore the pre-commit state:
-			// this is now a new file, so rollback must remove it, not write nil
-			// bytes through the staging-time `existed` flag.
-			w.existed = false
-			w.backup = ""
-		} else {
-			return fail(fmt.Errorf("inspect output file %s: %w", w.record.Path, err))
-		}
-		// Record the write before the final rename so a failure here still
-		// restores the backup and removes the staged temp file.
-		committed = append(committed, w)
-		if err := os.Rename(w.temp, w.target); err != nil {
-			return fail(fmt.Errorf("commit output file %s: %w", w.record.Path, err))
-		}
-	}
+	r.cleanupBackups(session)
 
-	// Backups are only needed until every file has landed. Keep the render
-	// successful even if a leftover backup cannot be removed; the generated
-	// files are already correct and rollback must not consume the backups now.
-	for _, w := range committed {
-		if w.backup != "" {
-			if err := os.Remove(w.backup); err != nil && !errors.Is(err, os.ErrNotExist) {
-				r.log.Warn("remove backup %s: %v", w.backup, err)
-			}
-		}
-	}
-
-	written := make([]string, 0, len(committed))
-	for _, w := range committed {
+	written := make([]string, 0, len(session.committed))
+	for _, w := range session.committed {
 		written = append(written, w.target)
 	}
-	return written, manifest, nil
+	return written, session.manifest, nil
 }
 
 func (r *Renderer) shouldRender(spec TemplateSpec, project *ir.Project, pkgs map[string]string) bool {

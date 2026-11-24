@@ -178,21 +178,26 @@ func warnMissingSpec(log *logger.Logger, kind, key string) {
 // buildBridgeFuncs turns a merged type_mappings into the template func map that
 // bridges use to map IR types into language-specific code. A nil mapping (no
 // type_mappings.yaml anywhere in the chain) yields no bridge-specific funcs.
+// Each registrar owns one group of keys; the map keys and closure behavior are
+// the contract, so splitting the registrars does not change any value.
 func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
 	bridgeFuncs := make(map[string]any)
 	if m == nil {
 		return bridgeFuncs
 	}
 
+	languageType := registerTypeFuncs(bridgeFuncs, m, log)
+	registerLiteralFuncs(bridgeFuncs, m, log, languageType)
+	registerValueFuncs(bridgeFuncs, m, log)
+	return bridgeFuncs
+}
+
+// registerTypeFuncs registers languageType and isValueType. It returns the
+// languageType closure so the literal registrars reuse the very same mapping.
+func registerTypeFuncs(funcs map[string]any, m *typeMappings, log *logger.Logger) func(string, bool) string {
 	// wrapNullable applies the bridge-specific nullable format to a type name.
 	wrapNullable := func(typeName string) string {
 		return typeName + m.NullableFormat
-	}
-
-	// Build set of value types for quick lookup
-	valueTypeSet := make(map[string]bool, len(m.ValueTypes))
-	for _, vt := range m.ValueTypes {
-		valueTypeSet[vt] = true
 	}
 
 	// wrapArray wraps a type name in the bridge-specific array format.
@@ -240,12 +245,29 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
 		log.Warn("type_mappings.yaml has no type for %q; emitting raw type name %q", dbType, dbType)
 		return dbType
 	}
-	bridgeFuncs["languageType"] = languageType
+	funcs["languageType"] = languageType
 
+	// Build set of value types for quick lookup
+	valueTypeSet := make(map[string]bool, len(m.ValueTypes))
+	for _, vt := range m.ValueTypes {
+		valueTypeSet[vt] = true
+	}
+	funcs["isValueType"] = func(typeName string) bool {
+		if mapped, ok := m.Types[typeName]; ok {
+			return valueTypeSet[mapped]
+		}
+		return false
+	}
+	return languageType
+}
+
+// registerLiteralFuncs registers the literal/array expression funcs. languageType
+// is the closure returned by registerTypeFuncs; literal specs are bridge-owned.
+func registerLiteralFuncs(funcs map[string]any, m *typeMappings, log *logger.Logger, languageType func(string, bool) string) {
 	// literalValue renders a scalar value of an IR database type as a bridge
 	// literal/parse expression. value is a native Go value (string, int64,
 	// float64, bool) or the raw string from a domain.yaml default.
-	bridgeFuncs["literalValue"] = func(dbType string, value any) string {
+	funcs["literalValue"] = func(dbType string, value any) string {
 		kind := ir.KindOf(dbType)
 		spec := m.Literals[dbType]
 		switch kind {
@@ -273,7 +295,7 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
 	// literalDefault renders the value-less default expression for a type:
 	// a scalar default, a zero-valued enum, or an empty array. Missing specs
 	// produce an empty expression and a warning; the core never invents one.
-	bridgeFuncs["literalDefault"] = func(dbType string) string {
+	funcs["literalDefault"] = func(dbType string) string {
 		kind := ir.KindOf(dbType)
 		if kind == "array" {
 			if m.Array.Empty == "" {
@@ -302,7 +324,7 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
 
 	// literalMember renders a compile-time enum member reference (Type.Value),
 	// used for enum defaults in domain.yaml.
-	bridgeFuncs["literalMember"] = func(dbType string, value string) string {
+	funcs["literalMember"] = func(dbType string, value string) string {
 		if ir.KindOf(dbType) == "enum" {
 			spec := m.Literals["enum"]
 			if spec.Member == "" {
@@ -316,25 +338,23 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
 
 	// arrayLiteralOpen/Close wrap rendered elements in the bridge's array
 	// syntax (e.g. "new List<int> { " ... " }").
-	bridgeFuncs["arrayLiteralOpen"] = func(dbType string) string {
+	funcs["arrayLiteralOpen"] = func(dbType string) string {
 		if m.Array.Open == "" {
 			warnMissingSpec(log, "array.open", dbType)
 			return ""
 		}
 		return formatSpec(m.Array.Open, languageType(dbType, false))
 	}
-	bridgeFuncs["arrayLiteralClose"] = func() string {
+	funcs["arrayLiteralClose"] = func() string {
 		return m.Array.Close
 	}
+}
 
-	bridgeFuncs["isValueType"] = func(typeName string) bool {
-		if mapped, ok := m.Types[typeName]; ok {
-			return valueTypeSet[mapped]
-		}
-		return false
-	}
-
-	bridgeFuncs["deleteBehaviorName"] = func(value string) string {
+// registerValueFuncs registers the remaining bridge-specific value/config
+// helpers. columnSize and inputType are conditional: they exist only when the
+// bridge declared the corresponding mapping (no core-side fallback is added).
+func registerValueFuncs(funcs map[string]any, m *typeMappings, log *logger.Logger) {
+	funcs["deleteBehaviorName"] = func(value string) string {
 		key := strings.ToLower(strings.TrimSpace(value))
 		if v, ok := m.Behaviors[key]; ok {
 			return v
@@ -349,7 +369,7 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
 	// The input is the IR type name (element type for arrays, the field type
 	// otherwise).
 	if len(m.ColumnSizes) > 0 {
-		bridgeFuncs["columnSize"] = func(dbType string) string {
+		funcs["columnSize"] = func(dbType string) string {
 			return m.ColumnSizes[dbType]
 		}
 	}
@@ -357,7 +377,7 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
 	// inputType maps IR database types to UI input components. Bridges that
 	// generate UI code declare input_types in their type_mappings.yaml.
 	if len(m.InputTypes) > 0 {
-		bridgeFuncs["inputType"] = func(dbType string) string {
+		funcs["inputType"] = func(dbType string) string {
 			inner := specmeta.ParseArrayInner(dbType)
 			if mapped, ok := m.InputTypes[inner]; ok {
 				return mapped
@@ -369,8 +389,6 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
 			return ""
 		}
 	}
-
-	return bridgeFuncs
 }
 
 func renderTemplateString(pattern string, data any, funcMap template.FuncMap) (string, error) {
