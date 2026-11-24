@@ -250,28 +250,28 @@ entities:
 
 	product := parsed.Entities["Product"]
 
-	// Check categoryId
-	categoryId := product.Fields["categoryId"]
-	if categoryId.Type != "relation" {
-		t.Errorf("categoryId type should be relation")
+	// Check categoryID
+	categoryID := product.Fields["categoryId"]
+	if categoryID.Type != "relation" {
+		t.Errorf("categoryID type should be relation")
 	}
-	if categoryId.TargetEntity != "Category" {
-		t.Errorf("categoryId target should be Category")
+	if categoryID.TargetEntity != "Category" {
+		t.Errorf("categoryID target should be Category")
 	}
-	if !categoryId.IsOptional {
-		t.Errorf("categoryId should be optional")
+	if !categoryID.IsOptional {
+		t.Errorf("categoryID should be optional")
 	}
-	if categoryId.OnDelete != "set_null" {
-		t.Errorf("categoryId on_delete should be set_null")
+	if categoryID.OnDelete != "set_null" {
+		t.Errorf("categoryID on_delete should be set_null")
 	}
 
-	// Check supplierId
-	supplierId := product.Fields["supplierId"]
-	if supplierId.TargetEntity != "User" {
-		t.Errorf("supplierId target should be User")
+	// Check supplierID
+	supplierID := product.Fields["supplierId"]
+	if supplierID.TargetEntity != "User" {
+		t.Errorf("supplierID target should be User")
 	}
-	if supplierId.IsOptional {
-		t.Errorf("supplierId should not be optional")
+	if supplierID.IsOptional {
+		t.Errorf("supplierID should not be optional")
 	}
 }
 

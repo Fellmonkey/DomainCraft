@@ -7,6 +7,7 @@ package templatefuncs
 
 import (
 	"fmt"
+	"math"
 	"path"
 	"reflect"
 	"strconv"
@@ -154,7 +155,7 @@ func Dict(v ...any) map[string]any {
 			dict[key] = ""
 			continue
 		}
-		dict[key] = v[i+1]
+		dict[key] = v[i+1] //nolint:gosec // i+1 is guarded by the length check above
 	}
 	return dict
 }
@@ -294,6 +295,9 @@ func toInt64(v any) int64 {
 	case int64:
 		return val
 	case uint:
+		if val > math.MaxInt64 {
+			return math.MaxInt64
+		}
 		return int64(val)
 	case uint8:
 		return int64(val)
@@ -302,6 +306,9 @@ func toInt64(v any) int64 {
 	case uint32:
 		return int64(val)
 	case uint64:
+		if val > math.MaxInt64 {
+			return math.MaxInt64
+		}
 		return int64(val)
 	case float32:
 		return int64(val)

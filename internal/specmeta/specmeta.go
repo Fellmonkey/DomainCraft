@@ -13,12 +13,16 @@ type FeatureFieldDef struct {
 	DefaultValue  string `json:"defaultValue"`
 }
 
+// Databases lists the supported database backends.
 var Databases = []string{"postgresql", "mysql", "sqlite", "mssql", "mongodb", "appwrite"}
 
+// APIStyles lists the supported API styles.
 var APIStyles = []string{"rest", "graphql", "grpc"}
 
+// AuthTypes lists the supported authentication types.
 var AuthTypes = []string{"jwt", "none"}
 
+// Features lists the entity features the core injects fields for.
 var Features = []string{"audit", "audit_log", "soft_delete", "optimistic_lock", "event_sourced", "cacheable"}
 
 // Addons are optional infrastructure accelerators that a bridge can opt into
@@ -31,17 +35,25 @@ var Features = []string{"audit", "audit_log", "soft_delete", "optimistic_lock", 
 // (OpenTelemetry/Jaeger) for bridges that opt in.
 var Addons = []string{"dapr", "observability"}
 
-// Infrastructure providers declared in project.infrastructure. These are the
-// building blocks Dapr (and similar addons) wire up at runtime.
+// InfraQueues lists supported queue providers declared in project.infrastructure.
 var InfraQueues = []string{"pubsub", "rabbitmq", "kafka", "redis", "nats", "in-memory"}
+
+// InfraCacheStores lists supported cache providers.
 var InfraCacheStores = []string{"redis", "memcached", "in-memory"}
+
+// InfraSecretStores lists supported secret stores.
 var InfraSecretStores = []string{"local", "kubernetes", "azure-keyvault", "aws-secrets"}
+
+// InfraStores lists supported object stores.
 var InfraStores = []string{"local", "s3", "azure-blob", "gcs"}
 
+// MetaFieldTypes lists the non-primitive field types.
 var MetaFieldTypes = []string{"relation", "array", "enum"}
 
+// FieldTypes lists every valid field type.
 var FieldTypes = append(append([]string{}, PrimitiveFieldTypes...), MetaFieldTypes...)
 
+// FeatureFieldDefs maps injected field names to their feature definition.
 var FeatureFieldDefs = map[string]FeatureFieldDef{
 	"createdAt": {Feature: "audit", Type: "datetime", DBColumn: "created_at", IsFuncDefault: true, DefaultValue: "now"},
 	"updatedAt": {Feature: "audit", Type: "datetime", DBColumn: "updated_at", IsFuncDefault: true, DefaultValue: "now"},
@@ -51,40 +63,55 @@ var FeatureFieldDefs = map[string]FeatureFieldDef{
 	"version":   {Feature: "optimistic_lock", Type: "int", DBColumn: "version", DefaultValue: "0"},
 }
 
+// OnDeleteValues lists the valid on_delete modifier values.
 var OnDeleteValues = []string{"cascade", "set_null", "restrict", "no_action"}
 
+// PrimitiveFieldTypes lists the scalar field types.
 var PrimitiveFieldTypes = []string{
 	"string", "text", "int", "bigint", "float", "decimal",
 	"boolean", "date", "datetime", "uuid", "json", "jsonb",
 }
 
+// NumericFieldTypes lists the numeric scalar types.
 var NumericFieldTypes = []string{"int", "bigint", "float", "decimal"}
 
+// StringFieldTypes lists the string scalar types.
 var StringFieldTypes = []string{"string", "text"}
 
+// NumericValidationModifiers lists numeric validation modifier names.
 var NumericValidationModifiers = []string{"gte", "gt", "lte", "lt"}
 
+// StringValidationModifiers lists string validation modifier names.
 var StringValidationModifiers = []string{"min", "max", "email", "url", "ipv4", "regex"}
 
+// IndexTypes lists the supported database index types.
 var IndexTypes = []string{"btree", "hash", "gist", "gin", "brin"}
 
+// CacheProviders lists the supported cache providers.
 var CacheProviders = []string{"redis", "memcached", "in-memory"}
 
+// MultiTenancyModes lists the supported multi-tenancy modes.
 var MultiTenancyModes = []string{"column", "schema", "database"}
 
+// RateLimitPolicies lists the supported rate-limit policies.
 var RateLimitPolicies = []string{"fixed", "sliding"}
 
+// PermissionKeys lists the four permission operations.
 var PermissionKeys = []string{"read", "create", "update", "delete"}
 
+// SortDirections lists the valid sort directions.
 var SortDirections = []string{"asc", "desc"}
 
+// BooleanFieldTypes lists the boolean scalar types.
 var BooleanFieldTypes = []string{"boolean"}
 
+// FuncDefaults maps default functions to their compatible field types.
 var FuncDefaults = map[string][]string{
 	"now":  {"date", "datetime"},
 	"uuid": {"uuid"},
 }
 
+// DefaultFieldType is the fallback type for unresolvable fields.
 const DefaultFieldType = "string"
 
 var (

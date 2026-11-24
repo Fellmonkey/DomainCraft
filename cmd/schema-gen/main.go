@@ -1,3 +1,4 @@
+// Command schema-gen generates spec/domain.schema.json from specmeta.
 package main
 
 import (
@@ -21,7 +22,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := os.WriteFile(*outputPath, append(data, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(*outputPath, append(data, '\n'), 0o600); err != nil {
 		fmt.Fprintln(os.Stderr, "write schema:", err)
 		os.Exit(1)
 	}

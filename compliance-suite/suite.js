@@ -337,7 +337,9 @@ function testAuthAndJwtSecurity() {
 function testCrudAndValidation() {
   // Unique sku per run: a soft-deleted row from a previous run keeps its unique
   // column occupied, so a fixed sku would 409 instead of exercising CRUD.
-  const crudSku = 'PRD-' + Math.floor(Date.now() / 1000).toString(36).toUpperCase();
+  // Seconds alone collide when two runs land in the same second; add randomness.
+  const crudSku = 'PRD-' + Math.floor(Date.now() / 1000).toString(36).toUpperCase()
+    + '-' + Math.random().toString(36).slice(2, 10).toUpperCase();
 
   // CREATE
   const createRes = http.post(

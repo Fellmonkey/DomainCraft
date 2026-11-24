@@ -479,7 +479,7 @@ func TestBuildEntityFields(t *testing.T) {
 
 func TestBuildEntityFieldsEmptyOrder(t *testing.T) {
 	t.Parallel()
-	result := BuildEntityFields(nil, func(name string) []string { return nil })
+	result := BuildEntityFields(nil, func(_ string) []string { return nil })
 	if len(result) != 0 {
 		t.Errorf("BuildEntityFields(nil) returned %d entries, want 0", len(result))
 	}

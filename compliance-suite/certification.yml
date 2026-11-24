@@ -18,10 +18,13 @@ on:
   pull_request:
     branches: ["main"]
 
+permissions:
+  contents: read
+
 env:
-  # Core repo ref to checkout (branch or tag). Use a release tag like v1.2.3 to
-  # lock the TCK version, or leave as `main` to always run against the latest.
-  CORE_VERSION: main
+  # Core release tag to check out. Keep in sync with RELEASES.md; pinning
+  # locks the TCK version instead of tracking an unreleased main branch.
+  CORE_VERSION: v0.7.0
   # Port the generated app listens on. Must match `project.deploy.port` in
   # kitchen-sink.yaml (the compliance suite is generated from that file).
   API_PORT: 9000
@@ -43,18 +46,17 @@ jobs:
           path: core
           ref: ${{ env.CORE_VERSION }}
 
-      # 3. Set up Go. ubuntu-latest (24.04) does NOT ship a preinstalled Go,
-      #    and the core requires Go 1.25+ (see go.mod).
+      # 3. Set up Go. The core requires Go 1.27 (see go.mod); match ci.yml.
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version: "1.27"
+          cache: true
+          cache-dependency-path: core/go.sum
 
-      # 4. Build & install the CLI. `main` maps to the latest release; a pinned
-      #    CORE_VERSION (e.g. v1.2.3) installs that exact release.
+      # 4. Build & install the CLI at the pinned core release.
       - name: Install DomainCraft CLI
-        run: |
-          go install github.com/DomainCraft/DomainCraft/cmd/domaincraft@${{ env.CORE_VERSION == 'main' && 'latest' || env.CORE_VERSION }}
+        run: go install github.com/DomainCraft/DomainCraft/cmd/domaincraft@${{ env.CORE_VERSION }}
 
       # 5. Generate code from the kitchen-sink domain using the current bridge.
       - name: Generate Code

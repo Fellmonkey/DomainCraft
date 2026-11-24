@@ -42,16 +42,25 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Check go.mod/go.sum are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
       - name: Lint
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.15.0
 
+      - name: Vulnerability scan
+        # Pinned version, not @latest, so the gate is reproducible.
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
       - name: Build
         run: go build ./cmd/domaincraft
 
       - name: Test
-        run: go test ./...
+        run: go test -race -count=1 ./...
 
       - name: Integration tests
         run: go test -tags=integration ./internal/bridge

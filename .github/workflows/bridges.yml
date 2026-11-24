@@ -50,4 +50,12 @@ jobs:
         run: go build ./cmd/domaincraft
 
       - name: Verify every bundled bridge loads (contract gate)
-        run: go test ./internal/renderer/ -run TestBundledBridgesLoad -v
+        # DOMAINCRAFT_LOCAL_DEV is the explicit local opt-out for the test;
+        # CI must never skip the gate. A missing bridges tree is an error.
+        run: |
+          unset DOMAINCRAFT_LOCAL_DEV
+          if [ ! -d bridges ]; then
+            echo "::error::bridges/ tree missing - contract gate cannot run"
+            exit 1
+          fi
+          go test ./internal/renderer/ -run TestBundledBridgesLoad -v

@@ -21,3 +21,56 @@ internal/snapshot/rewrite_test.go::TestRenameTransformsIncludesFieldRenames	#5	f
 internal/bridge/clone_policy_test.go::TestMaybeUpdatePolicies	#5	bridge update policy decisions had no regression coverage
 internal/bridge/clone_policy_test.go::TestApplyUpdateRejectsUnsupportedContract	#5	apply path could hard-reset a bridge with an unsupported contract version
 internal/snapshot/rewrite_test.go::TestRewriteEntityContent	#5	inner identifiers such as myProduct were not protected from rename rewrite
+internal/ir/build_entities_test.go::TestBuildDetectsRelationPrimaryKeyCycle	#5	relation-typed primary keys overflowed the stack during IR build
+internal/ir/build_entities_test.go::TestResolveDatabaseTypeDetectsCycles	#5	relation PK cycles were followed recursively without a visited set
+internal/validator/validator_test.go::TestValidateRejectsRelationPrimaryKey	#5	validator accepted relation-typed primary keys
+internal/validator/validator_test.go::TestValidateRejectsNonPositiveStringBounds	#5	negative max: modifier reached mock data generation
+internal/seed/seed_test.go::TestGenerateClampsNonPositiveMaxLength	#5	negative max sliced a string with a negative bound and panicked
+internal/validator/validator_test.go::TestValidateRejectsEnumWireValueCollision	#5	case-insensitive enum duplicates generated duplicate members
+internal/validator/validator_test.go::TestValidateRejectsUnparseableNumericSeed	#5	unparseable numeric seed strings silently became zero
+internal/seed/seed_test.go::TestGenerateRotatesRelationPKs	#5	one-to-one seed rows reused the same parent primary key
+internal/seed/seed_test.go::TestRelationValueRotatesParentPKs	#5	relation seed ignored unique one-to-one constraints
+internal/validator/validator_test.go::TestValidateSortsErrorsByMessageTiebreaker	#5	same-field diagnostics had nondeterministic order
+internal/bridge/update_safety_test.go::TestMonorepoRelPathRejectsLookalikes	#5	lookalike bridge paths bypassed the community migration consent gate
+internal/bridge/hardening_test.go::TestValidatePinRef	#5	user @ref could be passed to git as an option
+internal/bridge/hardening_test.go::TestRecordPinIsPersisted	#5	pinned bridge ref was lost after an update
+internal/bridge/hardening_test.go::TestGitScrubbedEnvAllowlist	#5	git config and proxy environment variables could redirect bridge operations
+internal/bridge/hardening_test.go::TestTryMaterializeEmbeddedRefusesSymlinks	#5	cache symlink redirected embedded bridge writes
+internal/bridge/hardening_test.go::TestApplyUpdateFailsWhenFetchedManifestIsUnreadable	#5	contract gate was skipped when the remote bridge.yaml could not be read
+internal/bridge/update_contract_test.go::TestParseBridgeContractVersion	#5	malformed remote contract version defaulted to v1
+internal/bridge/update_contract_test.go::TestRemoteContractVersion	#5	contract probe error was treated as a supported version
+internal/bridge/hardening_test.go::TestHTTPProbeLimitsAndRedaction	#5	oversized HTTP bodies were truncated and URL credentials leaked into errors
+internal/bridge/hardening_test.go::TestHTTPProbeUsesCommandContext	#5	bridge update HTTP probe outlived Ctrl+C
+internal/packages/ssrf_test.go::TestRestrictedRegistryDialerRejectsInternalDNS	#5	registry hostname resolving to a private address bypassed SSRF checks
+internal/packages/ssrf_test.go::TestRestrictedRegistryDialerRejectsLiteralAndRedirectTargets	#5	redirect to a private address passed validation
+internal/packages/ssrf_test.go::TestValidateRegistryURLRedactsSecrets	#5	registry URL userinfo leaked into error messages
+internal/packages/ssrf_test.go::TestVersionCacheConcurrentWrites	#5	concurrent renders lost package version cache entries
+internal/packages/ssrf_test.go::TestVersionCacheWriteFailureIsSurfaced	#5	version cache write errors were discarded
+internal/packages/ssrf_test.go::TestFetchVersionsUsesCommandContext	#5	registry request outlived Ctrl+C
+internal/renderer/hardening_test.go::TestRenderRejectsSymlinkAtFinalComponent	#5	final-component symlink let a template write outside outputDir
+internal/renderer/hardening_test.go::TestRenderExecuteErrorPreservesPreviousOutput	#5	template error deleted the previous valid output file
+internal/renderer/hardening_test.go::TestRenderFailureRollsBackPriorWrites	#5	failed render left partially written files on disk
+internal/snapshot/hardening_test.go::TestSaveReplacesSnapshotWithoutTempLeftovers	#5	snapshot.json was written non-atomically
+internal/snapshot/hardening_test.go::TestRewriteEntityContentDoesNotRescanReplacement	#5	rename rewrite rescanned its own output and corrupted identifiers
+internal/snapshot/hardening_test.go::TestRenameRelPathDoesNotRescanReplacement	#5	renamed path was rewritten twice into ProductItemItems
+internal/snapshot/hardening_test.go::TestRewriteEntityContentUnicodeIdentifierBoundaries	#5	byte-based boundaries split UTF-8 identifiers
+internal/snapshot/hardening_test.go::TestSafeRelPathRejectsSymlinkEscape	#5	--prune followed symlinks inside the output directory
+internal/snapshot/hardening_test.go::TestComputeDiffIgnoresSnapshotPathsThroughSymlinks	#5	poisoned snapshot path escaped the output directory
+cmd/domaincraft/commands_hardening_test.go::TestBridgeEnsureOptionsRespectsNonInteractiveOnTTY	#5	--non-interactive was ignored by the bridge update prompt
+cmd/domaincraft/commands_hardening_test.go::TestMigrationCleanupDeferredOnTTYWhenNonInteractive	#5	--non-interactive was ignored by migration file cleanup
+cmd/domaincraft/commands_hardening_test.go::TestLoadAndValidateSendsDiagnosticsToStderr	#5	validator diagnostics were written to stdout
+cmd/domaincraft/commands_hardening_test.go::TestCommandLoggerWritesToStderr	#5	CLI logger wrote diagnostics to stdout
+cmd/domaincraft/commands_hardening_test.go::TestRootCommandSuppressesCobraErrorNoise	#5	usage text was printed on every runtime error
+cmd/domaincraft/commands_hardening_test.go::TestCommandTreesHaveIndependentFlags	#5	package-global flags leaked between command trees
+cmd/domaincraft/commands_hardening_test.go::TestExecutePrintsErrorOnce	#5	command errors were printed more than once
+cmd/domaincraft/commands_update_security_test.go::TestValidateReleaseURL	#5	self-update accepted an unvalidated download URL
+cmd/domaincraft/commands_update_security_test.go::TestRedactURL	#5	URL credentials leaked into update errors
+cmd/domaincraft/commands_update_security_test.go::TestReadResponseBodyRejectsOversizedPayload	#5	oversized release body was silently truncated into a corrupt binary
+cmd/domaincraft/commands_update_security_test.go::TestReadResponseBodyChecksRedirectHost	#5	self-update followed a redirect to an untrusted host
+cmd/domaincraft/commands_update_security_test.go::TestHTTPGetBodyUsesCommandContext	#5	update request outlived Ctrl+C
+cmd/domaincraft/commands_update_security_test.go::TestHTTPGetBodyRedactsURLInErrors	#5	update URL credentials leaked into errors
+cmd/domaincraft/commands_update_security_test.go::TestReleaseChecksum	#5	release checksum was not parsed
+cmd/domaincraft/commands_update_security_test.go::TestVerifyFileSHA256	#5	self-update installed a binary without checksum verification
+cmd/domaincraft/commands_update_security_test.go::TestRunCoreUpdateFailsClosed	#5	failed update path could still replace the executable
+cmd/domaincraft/commands_extends_test.go::TestBridgeUpdateNoticeOmitsCachedVersion	#5	cached old version was shown as the available version
+compliance-suite/regressions_test.go::TestRegressionsTable	#5	regression table validated format but not that named checks still exist

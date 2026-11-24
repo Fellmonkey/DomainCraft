@@ -1,7 +1,6 @@
 package parser
 
 import (
-	"fmt"
 	"testing"
 )
 
@@ -193,9 +192,9 @@ entities:
 	}
 
 	// Verify Product relations
-	categoryId := product.Fields["categoryId"]
-	if !categoryId.IsOptional || categoryId.OnDelete != "set_null" {
-		t.Errorf("categoryId should be optional with on_delete:set_null")
+	categoryID := product.Fields["categoryId"]
+	if !categoryID.IsOptional || categoryID.OnDelete != "set_null" {
+		t.Errorf("categoryID should be optional with on_delete:set_null")
 	}
 
 	tagsField := product.Fields["tags"]
@@ -212,9 +211,9 @@ entities:
 
 	// Verify cascade delete
 	orderItem := schema.Entities["OrderItem"]
-	orderIdField := orderItem.Fields["orderId"]
-	if orderIdField.OnDelete != "cascade" {
-		t.Errorf("orderId should have on_delete:cascade")
+	orderIDField := orderItem.Fields["orderId"]
+	if orderIDField.OnDelete != "cascade" {
+		t.Errorf("orderID should have on_delete:cascade")
 	}
 
 	// Verify indexes
@@ -232,9 +231,9 @@ entities:
 
 	// Verify Review with cascade delete
 	review := schema.Entities["Review"]
-	productIdField := review.Fields["productId"]
-	if productIdField.RelationType != "many-to-one" {
-		t.Errorf("review.productId should be many-to-one relation")
+	productIDField := review.Fields["productId"]
+	if productIDField.RelationType != "many-to-one" {
+		t.Errorf("review.productID should be many-to-one relation")
 	}
 }
 
@@ -259,13 +258,13 @@ entities:
 	}
 
 	category := schema.Entities["Category"]
-	parentId := category.Fields["parentId"]
+	parentID := category.Fields["parentId"]
 
-	if parentId.Type != "relation" || parentId.TargetEntity != "Category" {
-		t.Errorf("parentId should be self-referential relation to Category")
+	if parentID.Type != "relation" || parentID.TargetEntity != "Category" {
+		t.Errorf("parentID should be self-referential relation to Category")
 	}
-	if !parentId.IsOptional {
-		t.Errorf("parentId should be optional")
+	if !parentID.IsOptional {
+		t.Errorf("parentID should be optional")
 	}
 }
 
@@ -308,7 +307,7 @@ entities:
 	}
 
 	for _, tt := range tests {
-		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+		t.Run(tt.fieldName, func(t *testing.T) {
 			t.Parallel()
 			if field, ok := user.Fields[tt.fieldName]; ok {
 				if field.DatabaseColumnName != tt.wantDbName {

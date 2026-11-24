@@ -28,7 +28,7 @@ endif
 export GOCACHE := $(GO_CACHE_DIR)
 export GOTMPDIR := $(GO_TMP_DIR)
 
-.PHONY: help build install run test test-verbose test-coverage lint fmt clean install-deps cli-validate cli-generate cli-bridges regenerate-spec generate-gui-types copy-spec-skills build-wasm build-wasm-gui
+.PHONY: help build install run test test-verbose test-coverage lint fmt clean install-deps check-tidy cli-validate cli-generate cli-bridges regenerate-spec generate-gui-types copy-spec-skills build-wasm build-wasm-gui
 
 help:
 	@echo "DomainCraft CLI - Available Commands"
@@ -51,11 +51,18 @@ help:
 	@echo "  make fmt             - Format code (gofmt)"
 	@echo "  make clean           - Clean build artifacts"
 	@echo "  make install-deps    - Install dependencies"
+	@echo "  make check-tidy      - Fail if go mod tidy would change go.mod/go.sum"
 
 install-deps:
 	@echo "Installing dependencies..."
 	@go mod download
 	@go mod tidy
+
+# Check only: go mod tidy must not mutate go.mod/go.sum in CI.
+check-tidy:
+	@echo "Checking go.mod/go.sum are tidy..."
+	@go mod tidy
+	@git diff --exit-code -- go.mod go.sum
 
 build: install-deps
 	@echo "Building domaincraft ($(VERSION))..."
@@ -114,7 +121,7 @@ else
 	@echo "Copied schema to $(SKILLS_DIR)/domain.schema.json"
 endif
 
-test: install-deps
+test:
 	@echo "Running tests..."
 	@go test ./...
 
@@ -126,11 +133,11 @@ contract-test:
 contract-golden-update:
 	@go test ./internal/contract/ -run TestGoldenLeafBridges -update
 
-test-verbose: install-deps
+test-verbose:
 	@echo "Running tests (verbose)..."
 	@go test -v ./...
 
-test-coverage: install-deps
+test-coverage:
 	@echo "Running tests with coverage..."
 	@go test -cover ./...
 	@go test -coverprofile=coverage.out ./...
