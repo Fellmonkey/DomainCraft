@@ -103,3 +103,4 @@ internal/ir/build_relations_bench_test.go::TestBuildHubRelationsPreservesFirstMa
 internal/renderer/load_test.go::TestLoadSourceFailsClosedOnMissingBridgeYaml	#5	renderer guessed a config path for a directory without bridge.yaml
 internal/fsutil/fsutil_test.go::TestRefuseSymlinksCachedRejectsSymlinkAtFinalComponent	#5	cached containment check skipped the final symlink component
 internal/fsutil/fsutil_test.go::TestRefuseSymlinksCachedRechecksNewlyCreatedComponent	#5	newly created directory was served from the containment cache
+internal/bridge/embed_test.go::TestEmbeddedBridgesMatchTree	#5	embedded bridge tree omitted underscore-prefixed helper templates

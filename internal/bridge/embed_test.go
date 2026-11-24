@@ -1,18 +1,18 @@
 package bridge
 
 import (
+	"io/fs"
+	"maps"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	domaincraft "github.com/DomainCraft/DomainCraft"
 	"github.com/DomainCraft/DomainCraft/internal/appdir"
 )
 
-// TestEmbeddedContainsRegistryBridges guards against drift between the embedded
-// bridge tree (what ships in the binary) and the registry mapping. Every
-// registered, non-deprecated bridge must exist embedded; the deprecated
-// csharp-restful monolith is intentionally not bundled.
 // TestTryMaterializeEmbedded verifies that an embedded bridge can be
 // materialized into the cache directory (the offline fallback path).
 func TestTryMaterializeEmbedded(t *testing.T) {
@@ -47,6 +47,10 @@ func TestEmbeddedBridgeRel(t *testing.T) {
 	}
 }
 
+// TestEmbeddedContainsRegistryBridges guards against drift between the embedded
+// bridge tree (what ships in the binary) and the registry mapping. Every
+// registered, non-deprecated bridge must exist embedded; the deprecated
+// csharp-restful monolith is intentionally not bundled.
 func TestEmbeddedContainsRegistryBridges(t *testing.T) {
 	reg := Default()
 	for _, e := range reg.All() {
@@ -57,5 +61,82 @@ func TestEmbeddedContainsRegistryBridges(t *testing.T) {
 		if _, err := domaincraft.Bridges.ReadFile(rel); err != nil {
 			t.Errorf("embedded tree missing bridge %q (want %s): %v", e.ID, rel, err)
 		}
+	}
+}
+
+// TestEmbeddedBridgesMatchTree compares the embedded tree with the source tree.
+// Go drops "_"-prefixed files when embedding a directory, and bridge helper
+// templates use that prefix. The explicit directives in bridges_embed.go
+// must keep the two sets identical, or an installed binary cannot render.
+func TestEmbeddedBridgesMatchTree(t *testing.T) {
+	root := filepath.Join("..", "..", "bridges")
+	if _, err := os.Stat(root); err != nil {
+		if os.Getenv("DOMAINCRAFT_LOCAL_DEV") != "" {
+			t.Skipf("no bundled bridges tree at %s (DOMAINCRAFT_LOCAL_DEV set): %v", root, err)
+		}
+		t.Fatalf("bundled bridges tree missing at %s: %v", root, err)
+	}
+
+	embedded := make(map[string]bool)
+	if err := fs.WalkDir(domaincraft.Bridges, "bridges", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case "bin", "obj", "node_modules", ".git":
+				return fs.SkipDir
+			}
+			return nil
+		}
+		embedded[path] = true
+		return nil
+	}); err != nil {
+		t.Fatalf("walk embedded bridges: %v", err)
+	}
+
+	onDisk := make(map[string]bool)
+	if err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			// Local build artifacts are not part of the source tree and go:embed
+			// does not include them either.
+			switch d.Name() {
+			case "bin", "obj", "node_modules", ".git":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		onDisk["bridges/"+filepath.ToSlash(rel)] = true
+		return nil
+	}); err != nil {
+		t.Fatalf("walk source bridges: %v", err)
+	}
+
+	for _, path := range slices.Sorted(maps.Keys(onDisk)) {
+		if !embedded[path] {
+			t.Errorf("embedded tree missing %s: add an explicit //go:embed directive", path)
+		}
+	}
+	for _, path := range slices.Sorted(maps.Keys(embedded)) {
+		if !onDisk[path] {
+			t.Errorf("embedded tree has %s but the source tree does not", path)
+		}
+	}
+	embeddedHelpers := 0
+	for rel := range embedded {
+		switch path.Base(rel) {
+		case "_helpers.cs.tmpl", "_helpers.ts.tmpl", "_helpers.html.tmpl":
+			embeddedHelpers++
+		}
+	}
+	if embeddedHelpers == 0 {
+		t.Error("no helper templates in the embedded tree — the offline fallback cannot render")
 	}
 }
