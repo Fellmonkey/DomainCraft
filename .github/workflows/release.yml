@@ -5,6 +5,13 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-and-release:
     name: Build binaries and publish release
