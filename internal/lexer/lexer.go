@@ -91,11 +91,14 @@ func (l *Lexer) Parse() (*FieldDefinition, error) {
 func (l *Lexer) parseType(typeStr string, fd *FieldDefinition) error {
 	typeStr = strings.TrimSpace(typeStr)
 
-	// Check for relation(EntityName)
-	if strings.HasPrefix(typeStr, "relation(") {
-		fd.Type = "relation"
-		targetEntity := strings.TrimPrefix(typeStr, "relation(")
-		targetEntity = strings.TrimSuffix(targetEntity, ")")
+	// Check for relation(EntityName). A missing closing paren is an error, not
+	// a prefix to be trimmed away.
+	if strings.HasPrefix(typeStr, specmeta.FieldTypeRelation+"(") {
+		if !strings.HasSuffix(typeStr, ")") {
+			return fmt.Errorf("relation type requires a closing parenthesis")
+		}
+		fd.Type = specmeta.FieldTypeRelation
+		targetEntity := strings.TrimSuffix(strings.TrimPrefix(typeStr, specmeta.FieldTypeRelation+"("), ")")
 		fd.TargetEntity = strings.TrimSpace(targetEntity)
 		if fd.TargetEntity == "" {
 			return fmt.Errorf("relation type requires a target entity name")
@@ -104,9 +107,13 @@ func (l *Lexer) parseType(typeStr string, fd *FieldDefinition) error {
 	}
 
 	// Check for array(Type). The prefix/suffix handling lives in specmeta so
-	// every consumer extracts the element type the same way.
+	// every consumer extracts the element type the same way and rejects an
+	// unclosed declaration.
+	if strings.HasPrefix(typeStr, specmeta.FieldTypeArray+"(") && !strings.HasSuffix(typeStr, ")") {
+		return fmt.Errorf("array type requires a closing parenthesis")
+	}
 	if specmeta.IsArrayType(typeStr) {
-		fd.Type = "array"
+		fd.Type = specmeta.FieldTypeArray
 		fd.TargetType = strings.TrimSpace(specmeta.ParseArrayInner(typeStr))
 		if fd.TargetType == "" {
 			return fmt.Errorf("array type requires an element type")
@@ -115,10 +122,12 @@ func (l *Lexer) parseType(typeStr string, fd *FieldDefinition) error {
 	}
 
 	// Check for enum(Name)
-	if strings.HasPrefix(typeStr, "enum(") {
-		fd.Type = "enum"
-		enumName := strings.TrimPrefix(typeStr, "enum(")
-		enumName = strings.TrimSuffix(enumName, ")")
+	if strings.HasPrefix(typeStr, specmeta.FieldTypeEnum+"(") {
+		if !strings.HasSuffix(typeStr, ")") {
+			return fmt.Errorf("enum type requires a closing parenthesis")
+		}
+		fd.Type = specmeta.FieldTypeEnum
+		enumName := strings.TrimSuffix(strings.TrimPrefix(typeStr, specmeta.FieldTypeEnum+"("), ")")
 		fd.TargetType = strings.TrimSpace(enumName)
 		if fd.TargetType == "" {
 			return fmt.Errorf("enum type requires a name")
@@ -154,10 +163,10 @@ func (l *Lexer) parseModifiers(modStr string, fd *FieldDefinition) error {
 			// Strip quotes if present
 			value = strings.Trim(value, `"'`)
 
-			switch key {
-			case "min", "max", "gte", "gt", "lte", "lt", "regex":
+			switch {
+			case specmeta.IsStringValidationModifier(key) || specmeta.IsNumericValidationModifier(key):
 				fd.Validations[key] = value
-			case "default":
+			case key == "default":
 				// Check for function-style defaults like now(), uuid()
 				if strings.HasSuffix(value, "()") {
 					fd.DefaultIsFunc = true
@@ -165,12 +174,12 @@ func (l *Lexer) parseModifiers(modStr string, fd *FieldDefinition) error {
 				} else {
 					fd.DefaultValue = value
 				}
-			case "on_delete":
+			case key == "on_delete":
 				if !specmeta.IsOnDeleteValue(value) {
 					return fmt.Errorf("unknown on_delete value: %s. valid: %s", value, strings.Join(specmeta.OnDeleteValues, ", "))
 				}
 				fd.OnDelete = value
-			case "old_name":
+			case key == "old_name":
 				// Rename hint: `name: string [required, old_name: title]`. The value is
 				// the field's previous name; the migration engine + bridges turn it into
 				// a safe column rename instead of a destructive drop + add.
@@ -181,6 +190,12 @@ func (l *Lexer) parseModifiers(modStr string, fd *FieldDefinition) error {
 			default:
 				return fmt.Errorf("unknown modifier: %s", key)
 			}
+			continue
+		}
+
+		// Bare string flags live in specmeta alongside their key:value forms.
+		if specmeta.IsStringFlagValidationModifier(mod) {
+			fd.Validations[mod] = "true"
 			continue
 		}
 
@@ -200,12 +215,6 @@ func (l *Lexer) parseModifiers(modStr string, fd *FieldDefinition) error {
 			fd.IsReadonly = true
 		case "many":
 			fd.IsMany = true
-		case "email":
-			fd.Validations["email"] = "true"
-		case "url":
-			fd.Validations["url"] = "true"
-		case "ipv4":
-			fd.Validations["ipv4"] = "true"
 		default:
 			return fmt.Errorf("unknown modifier flag: %s", mod)
 		}
@@ -272,17 +281,17 @@ func (fd *FieldDefinition) Validate() error {
 	}
 
 	// on_delete is only valid on relation fields
-	if fd.OnDelete != "" && fd.Type != "relation" {
+	if fd.OnDelete != "" && fd.Type != specmeta.FieldTypeRelation {
 		return fmt.Errorf("on_delete is only valid on relation fields")
 	}
 
 	// many modifier is only valid on relation fields
-	if fd.IsMany && fd.Type != "relation" {
+	if fd.IsMany && fd.Type != specmeta.FieldTypeRelation {
 		return fmt.Errorf("many modifier is only valid on relation fields")
 	}
 
 	// on_delete:set_null is only valid for optional relation fields
-	if fd.Type == "relation" && fd.OnDelete == "set_null" && !fd.IsOptional {
+	if fd.Type == specmeta.FieldTypeRelation && fd.OnDelete == "set_null" && !fd.IsOptional {
 		return fmt.Errorf("on_delete:set_null is only allowed for optional relation fields")
 	}
 

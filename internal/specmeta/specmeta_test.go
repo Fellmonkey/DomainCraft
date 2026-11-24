@@ -594,6 +594,90 @@ func TestIsValidIdentifier(t *testing.T) {
 	}
 }
 
+func TestArrayDeclarationRequiresClosingParen(t *testing.T) {
+	t.Parallel()
+	for _, dbType := range []string{"array(int", "array(Status", "array(", "array"} {
+		if IsArrayType(dbType) {
+			t.Errorf("IsArrayType(%q) = true, want false", dbType)
+		}
+		if got := ParseArrayInner(dbType); got != dbType {
+			t.Errorf("ParseArrayInner(%q) = %q, want unchanged", dbType, got)
+		}
+	}
+	for _, c := range []struct{ in, want string }{
+		{in: "array(int)", want: "int"},
+		{in: "array(Status)", want: "Status"},
+	} {
+		if !IsArrayType(c.in) {
+			t.Errorf("IsArrayType(%q) = false, want true", c.in)
+		}
+		if got := ParseArrayInner(c.in); got != c.want {
+			t.Errorf("ParseArrayInner(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestIsSingleBackRelationField(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name                  string
+		isRelation, isMany    bool
+		targetName, sourceName string
+		want                  bool
+	}{
+		{name: "single FK back", isRelation: true, targetName: "Order", sourceName: "Order", want: true},
+		{name: "many is not a back FK", isRelation: true, isMany: true, targetName: "Order", sourceName: "Order"},
+		{name: "points elsewhere", isRelation: true, targetName: "User", sourceName: "Order"},
+		{name: "scalar field", targetName: "Order", sourceName: "Order"},
+		{name: "empty target", isRelation: true, sourceName: "Order"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsSingleBackRelationField(c.isRelation, c.isMany, c.targetName, c.sourceName); got != c.want {
+				t.Errorf("IsSingleBackRelationField(%t, %t, %q, %q) = %t, want %t",
+					c.isRelation, c.isMany, c.targetName, c.sourceName, got, c.want)
+			}
+		})
+	}
+}
+
+func TestFieldKind(t *testing.T) {
+	t.Parallel()
+	want := map[string]string{
+		FieldTypeUUID: "uuid", FieldTypeString: "text", FieldTypeText: "text",
+		FieldTypeInt: "int", FieldTypeBigint: "bigint", FieldTypeFloat: "float", FieldTypeDecimal: "decimal",
+		FieldTypeBoolean: "bool", FieldTypeDate: "date", FieldTypeDatetime: "datetime",
+		FieldTypeJSON: "json", FieldTypeJSONB: "json",
+	}
+	for _, typ := range PrimitiveFieldTypes {
+		expected, ok := want[typ]
+		if !ok {
+			t.Fatalf("no expected kind for primitive type %q", typ)
+		}
+		if got := FieldKind(typ); got != expected {
+			t.Errorf("FieldKind(%q) = %q, want %q", typ, got, expected)
+		}
+	}
+	if got := FieldKind("Status"); got != "enum" {
+		t.Errorf("FieldKind(Status) = %q, want enum", got)
+	}
+}
+
+func TestHasIDSuffix(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"categoryId", "categoryID"} {
+		if !HasIDSuffix(name) {
+			t.Errorf("HasIDSuffix(%q) = false, want true", name)
+		}
+	}
+	for _, name := range []string{"id", "category", "", "fluid", "squid", "avoid", "categoryid"} {
+		if HasIDSuffix(name) {
+			t.Errorf("HasIDSuffix(%q) = true, want false", name)
+		}
+	}
+}
+
 func TestIsIdentifierRune(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

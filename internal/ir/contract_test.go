@@ -33,6 +33,57 @@ func TestValidationRules(t *testing.T) {
 	}
 }
 
+// TestValidationRulesSemanticOrder pins the declared rule order:
+// format → length bounds → numeric bounds, regardless of modifier order.
+func TestValidationRulesSemanticOrder(t *testing.T) {
+	t.Parallel()
+	validations := []Validation{
+		{Name: "gte", Value: "1"},
+		{Name: "regex", Value: "^[a-z]+$"},
+		{Name: "max_length", Value: "50"},
+		{Name: "min_length", Value: "3"},
+		{Name: "email"},
+	}
+	reversed := []Validation{
+		{Name: "email"},
+		{Name: "min_length", Value: "3"},
+		{Name: "max_length", Value: "50"},
+		{Name: "regex", Value: "^[a-z]+$"},
+		{Name: "gte", Value: "1"},
+	}
+	want := []string{"email", "regex", "min_length", "max_length", "min_value"}
+
+	for _, tc := range []struct {
+		name string
+		in   []Validation
+	}{
+		{"declared", validations},
+		{"reversed", reversed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := Field{Name: "contact", DatabaseType: "string", IsNullable: true, Validations: tc.in}
+			rules := f.ValidationRules()
+			if len(rules) != len(want) {
+				t.Fatalf("ValidationRules() = %d rules (%+v), want %d", len(rules), rules, len(want))
+			}
+			for i, kind := range want {
+				if rules[i].Kind != kind {
+					t.Errorf("rule %d kind = %q, want %q (all kinds: %+v)", i, rules[i].Kind, kind, ruleKinds(rules))
+				}
+			}
+		})
+	}
+}
+
+func ruleKinds(rules []ValidationRule) []string {
+	kinds := make([]string, 0, len(rules))
+	for _, r := range rules {
+		kinds = append(kinds, r.Kind)
+	}
+	return kinds
+}
+
 func TestValidationRulesNumericBounds(t *testing.T) {
 	t.Parallel()
 	f := Field{

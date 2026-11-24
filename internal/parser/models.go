@@ -116,40 +116,52 @@ func yamlMergeKeyNames(value *yaml.Node) []string {
 	return names
 }
 
+// unmarshalYAMLWithPresence decodes a config block through target — an alias
+// of the concrete config type, so yaml.v3 does not re-enter UnmarshalYAML —
+// while recording which of the keys in presence were present. Presence is
+// tracked for direct keys and for keys contributed by a YAML merge ("<<"),
+// so an explicit zero survives the defaulting pass in ParseRawSchema.
+//
+// Every key must be listed in allowed. Node.Decode uses a fresh decoder without
+// KnownFields(true), so strict decoding is enforced here to keep the root
+// decoder's unknown-key behavior inside the block.
+func unmarshalYAMLWithPresence(value *yaml.Node, target any, typeName string, allowed []string, presence map[string]func()) error {
+	if value.Kind != yaml.MappingNode {
+		return value.Decode(target)
+	}
+	allowedKeys := specmeta.SliceToSet(allowed)
+	for i := 0; i < len(value.Content)-1; i += 2 {
+		key := value.Content[i]
+		if mark, tracked := presence[key.Value]; tracked {
+			mark()
+			continue
+		}
+		if key.Value == "<<" {
+			if key.Tag != "!!str" {
+				for _, name := range yamlMergeKeyNames(value.Content[i+1]) {
+					if mark, merged := presence[name]; merged {
+						mark()
+					}
+				}
+				continue
+			}
+			// A quoted "<<" is a regular key, not a merge — treat as unknown.
+		}
+		if !allowedKeys[key.Value] {
+			return fmt.Errorf("line %d: field %s not found in type parser.%s", key.Line, key.Value, typeName)
+		}
+	}
+	return value.Decode(target)
+}
+
 type deployConfigAlias DeployConfig
 
 // UnmarshalYAML records key presence before decoding the block. Decoding goes
 // through an alias so yaml.v3 does not call this method recursively.
 func (d *DeployConfig) UnmarshalYAML(value *yaml.Node) error {
-	if value.Kind != yaml.MappingNode {
-		return value.Decode((*deployConfigAlias)(d))
-	}
-	for i := 0; i < len(value.Content)-1; i += 2 {
-		key := value.Content[i]
-		switch key.Value {
-		case "port":
-			d.portSet = true
-		case "domain":
-			// no presence flag needed: the empty string default is unambiguous
-		case "<<":
-			if key.Tag != "!!str" {
-				for _, name := range yamlMergeKeyNames(value.Content[i+1]) {
-					if name == "port" {
-						d.portSet = true
-					}
-				}
-				continue
-			}
-			// A quoted "<<" is a regular key, not a merge, and falls through.
-			fallthrough
-		default:
-			// Node.Decode uses a fresh decoder without KnownFields(true), so
-			// strict decoding is enforced here to keep the root decoder's
-			// unknown-key behavior inside this block.
-			return fmt.Errorf("line %d: field %s not found in type parser.DeployConfig", key.Line, key.Value)
-		}
-	}
-	return value.Decode((*deployConfigAlias)(d))
+	return unmarshalYAMLWithPresence(value, (*deployConfigAlias)(d), "DeployConfig",
+		[]string{"domain", "port"},
+		map[string]func(){"port": func() { d.portSet = true }})
 }
 
 // CacheConfig represents cache configuration (agnostic — no language/platform specifics).
@@ -189,36 +201,12 @@ type rateLimitConfigAlias RateLimitConfig
 // UnmarshalYAML records key presence before decoding the block. Decoding goes
 // through an alias so yaml.v3 does not call this method recursively.
 func (r *RateLimitConfig) UnmarshalYAML(value *yaml.Node) error {
-	if value.Kind != yaml.MappingNode {
-		return value.Decode((*rateLimitConfigAlias)(r))
-	}
-	for i := 0; i < len(value.Content)-1; i += 2 {
-		key := value.Content[i]
-		switch key.Value {
-		case "permit_limit":
-			r.permitLimitSet = true
-		case "window_seconds":
-			r.windowSecondsSet = true
-		case "enabled", "policy":
-			// no presence flags needed: these defaults are unambiguous
-		case "<<":
-			if key.Tag != "!!str" {
-				for _, name := range yamlMergeKeyNames(value.Content[i+1]) {
-					switch name {
-					case "permit_limit":
-						r.permitLimitSet = true
-					case "window_seconds":
-						r.windowSecondsSet = true
-					}
-				}
-				continue
-			}
-			fallthrough
-		default:
-			return fmt.Errorf("line %d: field %s not found in type parser.RateLimitConfig", key.Line, key.Value)
-		}
-	}
-	return value.Decode((*rateLimitConfigAlias)(r))
+	return unmarshalYAMLWithPresence(value, (*rateLimitConfigAlias)(r), "RateLimitConfig",
+		[]string{"enabled", "policy", "permit_limit", "window_seconds"},
+		map[string]func(){
+			"permit_limit":   func() { r.permitLimitSet = true },
+			"window_seconds": func() { r.windowSecondsSet = true },
+		})
 }
 
 // PaginationConfig represents list pagination sizing.
@@ -236,34 +224,12 @@ type paginationConfigAlias PaginationConfig
 // UnmarshalYAML records key presence before decoding the block. Decoding goes
 // through an alias so yaml.v3 does not call this method recursively.
 func (p *PaginationConfig) UnmarshalYAML(value *yaml.Node) error {
-	if value.Kind != yaml.MappingNode {
-		return value.Decode((*paginationConfigAlias)(p))
-	}
-	for i := 0; i < len(value.Content)-1; i += 2 {
-		key := value.Content[i]
-		switch key.Value {
-		case "default_page_size":
-			p.defaultPageSizeSet = true
-		case "max_page_size":
-			p.maxPageSizeSet = true
-		case "<<":
-			if key.Tag != "!!str" {
-				for _, name := range yamlMergeKeyNames(value.Content[i+1]) {
-					switch name {
-					case "default_page_size":
-						p.defaultPageSizeSet = true
-					case "max_page_size":
-						p.maxPageSizeSet = true
-					}
-				}
-				continue
-			}
-			fallthrough
-		default:
-			return fmt.Errorf("line %d: field %s not found in type parser.PaginationConfig", key.Line, key.Value)
-		}
-	}
-	return value.Decode((*paginationConfigAlias)(p))
+	return unmarshalYAMLWithPresence(value, (*paginationConfigAlias)(p), "PaginationConfig",
+		[]string{"default_page_size", "max_page_size"},
+		map[string]func(){
+			"default_page_size": func() { p.defaultPageSizeSet = true },
+			"max_page_size":     func() { p.maxPageSizeSet = true },
+		})
 }
 
 // MultiTenancyConfig holds multi-tenancy settings

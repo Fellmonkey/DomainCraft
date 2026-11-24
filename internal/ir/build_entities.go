@@ -159,14 +159,17 @@ func Build(schema *parser.ParsedSchema) (*Project, error) {
 		return nil, err
 	}
 
+	// One index serves all three relation passes.
+	relationIndex := indexRelationsOut(irProject.Entities)
+
 	// Pass 2b: reconcile one-to-many
-	reconcileOneToMany(irProject.Entities)
+	reconcileOneToMany(irProject.Entities, relationIndex)
 
 	// Pass 2c: resolve inverse navigation names
-	resolveInverseNavs(irProject.Entities)
+	resolveInverseNavs(irProject.Entities, relationIndex)
 
 	// Pass 3d: incoming relations
-	buildIncomingRelations(irProject.Entities)
+	buildIncomingRelations(irProject.Entities, relationIndex)
 
 	// Topologically sort entities by FK dependencies (parents before children).
 	irProject.Entities = sortEntities(irProject.Entities)

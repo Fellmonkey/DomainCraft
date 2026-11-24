@@ -2,8 +2,30 @@
 package specmeta
 
 import (
+	"slices"
 	"strings"
 	"unicode"
+)
+
+// Field type constants. The lexer, validator and IR use these names instead of
+// retyping the literals from the spec.
+const (
+	FieldTypeRelation = "relation"
+	FieldTypeArray    = "array"
+	FieldTypeEnum     = "enum"
+
+	FieldTypeString   = "string"
+	FieldTypeText     = "text"
+	FieldTypeInt      = "int"
+	FieldTypeBigint   = "bigint"
+	FieldTypeFloat    = "float"
+	FieldTypeDecimal  = "decimal"
+	FieldTypeBoolean  = "boolean"
+	FieldTypeDate     = "date"
+	FieldTypeDatetime = "datetime"
+	FieldTypeUUID     = "uuid"
+	FieldTypeJSON     = "json"
+	FieldTypeJSONB    = "jsonb"
 )
 
 // FeatureFieldDef describes a field auto-injected by a feature macro.
@@ -51,19 +73,19 @@ var InfraSecretStores = []string{"local", "kubernetes", "azure-keyvault", "aws-s
 var InfraStores = []string{"local", "s3", "azure-blob", "gcs"}
 
 // MetaFieldTypes lists the non-primitive field types.
-var MetaFieldTypes = []string{"relation", "array", "enum"}
+var MetaFieldTypes = []string{FieldTypeRelation, FieldTypeArray, FieldTypeEnum}
 
 // FieldTypes lists every valid field type.
 var FieldTypes = append(append([]string{}, PrimitiveFieldTypes...), MetaFieldTypes...)
 
 // FeatureFieldDefs maps injected field names to their feature definition.
 var FeatureFieldDefs = map[string]FeatureFieldDef{
-	"createdAt": {Feature: "audit", Type: "datetime", DBColumn: "created_at", IsFuncDefault: true, DefaultValue: "now"},
-	"updatedAt": {Feature: "audit", Type: "datetime", DBColumn: "updated_at", IsFuncDefault: true, DefaultValue: "now"},
-	"createdBy": {Feature: "audit_log", Type: "uuid", DBColumn: "created_by"},
-	"updatedBy": {Feature: "audit_log", Type: "uuid", DBColumn: "updated_by"},
-	"deletedAt": {Feature: "soft_delete", Type: "datetime", DBColumn: "deleted_at", IsOptional: true},
-	"version":   {Feature: "optimistic_lock", Type: "int", DBColumn: "version", DefaultValue: "0"},
+	"createdAt": {Feature: "audit", Type: FieldTypeDatetime, DBColumn: "created_at", IsFuncDefault: true, DefaultValue: "now"},
+	"updatedAt": {Feature: "audit", Type: FieldTypeDatetime, DBColumn: "updated_at", IsFuncDefault: true, DefaultValue: "now"},
+	"createdBy": {Feature: "audit_log", Type: FieldTypeUUID, DBColumn: "created_by"},
+	"updatedBy": {Feature: "audit_log", Type: FieldTypeUUID, DBColumn: "updated_by"},
+	"deletedAt": {Feature: "soft_delete", Type: FieldTypeDatetime, DBColumn: "deleted_at", IsOptional: true},
+	"version":   {Feature: "optimistic_lock", Type: FieldTypeInt, DBColumn: "version", DefaultValue: "0"},
 }
 
 // OnDeleteValues lists the valid on_delete modifier values.
@@ -71,27 +93,30 @@ var OnDeleteValues = []string{"cascade", "set_null", "restrict", "no_action"}
 
 // PrimitiveFieldTypes lists the scalar field types.
 var PrimitiveFieldTypes = []string{
-	"string", "text", "int", "bigint", "float", "decimal",
-	"boolean", "date", "datetime", "uuid", "json", "jsonb",
+	FieldTypeString, FieldTypeText, FieldTypeInt, FieldTypeBigint, FieldTypeFloat, FieldTypeDecimal,
+	FieldTypeBoolean, FieldTypeDate, FieldTypeDatetime, FieldTypeUUID, FieldTypeJSON, FieldTypeJSONB,
 }
 
 // IntegralFieldTypes lists the integral scalar types.
-var IntegralFieldTypes = []string{"int", "bigint"}
+var IntegralFieldTypes = []string{FieldTypeInt, FieldTypeBigint}
 
 // FloatFieldTypes lists the floating-point scalar types.
-var FloatFieldTypes = []string{"float", "decimal"}
+var FloatFieldTypes = []string{FieldTypeFloat, FieldTypeDecimal}
 
 // NumericFieldTypes lists the numeric scalar types.
 var NumericFieldTypes = append(append([]string{}, IntegralFieldTypes...), FloatFieldTypes...)
 
 // StringFieldTypes lists the string scalar types.
-var StringFieldTypes = []string{"string", "text"}
+var StringFieldTypes = []string{FieldTypeString, FieldTypeText}
 
 // NumericValidationModifiers lists numeric validation modifier names.
 var NumericValidationModifiers = []string{"gte", "gt", "lte", "lt"}
 
 // StringValidationModifiers lists string validation modifier names.
 var StringValidationModifiers = []string{"min", "max", "email", "url", "ipv4", "regex"}
+
+// StringFlagValidationModifiers lists string validations usable as bare flags.
+var StringFlagValidationModifiers = []string{"email", "url", "ipv4"}
 
 // IndexTypes lists the supported database index types.
 var IndexTypes = []string{"btree", "hash", "gist", "gin", "brin"}
@@ -112,16 +137,16 @@ var PermissionKeys = []string{"read", "create", "update", "delete"}
 var SortDirections = []string{"asc", "desc"}
 
 // BooleanFieldTypes lists the boolean scalar types.
-var BooleanFieldTypes = []string{"boolean"}
+var BooleanFieldTypes = []string{FieldTypeBoolean}
 
 // FuncDefaults maps default functions to their compatible field types.
 var FuncDefaults = map[string][]string{
-	"now":  {"date", "datetime"},
-	"uuid": {"uuid"},
+	"now":  {FieldTypeDate, FieldTypeDatetime},
+	"uuid": {FieldTypeUUID},
 }
 
 // DefaultFieldType is the fallback type for unresolvable fields.
-const DefaultFieldType = "string"
+const DefaultFieldType = FieldTypeString
 
 // ContractVersion is the bridge-contract version this core implements. Bridges
 // declare their own version via `contract_version` in bridge.yaml; a declared
@@ -154,7 +179,6 @@ var (
 	multiTenancyModeSet     map[string]bool
 	rateLimitPolicySet      map[string]bool
 	permissionKeySet        map[string]bool
-	stringValidationModSet  map[string]bool
 	numericValidationModSet map[string]bool
 	sortDirectionSet        map[string]bool
 	databaseSet             map[string]bool
@@ -182,7 +206,6 @@ func init() {
 	multiTenancyModeSet = SliceToSet(MultiTenancyModes)
 	rateLimitPolicySet = SliceToSet(RateLimitPolicies)
 	permissionKeySet = SliceToSet(PermissionKeys)
-	stringValidationModSet = SliceToSet(StringValidationModifiers)
 	numericValidationModSet = SliceToSet(NumericValidationModifiers)
 	sortDirectionSet = SliceToSet(SortDirections)
 	databaseSet = SliceToSet(Databases)
@@ -264,8 +287,14 @@ func IsInfraSecretStore(value string) bool { return infraSecretStoreSet[value] }
 // IsInfraStore reports whether value is a supported object store.
 func IsInfraStore(value string) bool { return infraStoreSet[value] }
 
-// IsStringValidationModifier reports whether mod applies to string fields.
-func IsStringValidationModifier(mod string) bool { return stringValidationModSet[mod] }
+// IsStringValidationModifier reports whether mod applies to string fields. It
+// reads the slice directly so extending the spec needs no lexer change.
+func IsStringValidationModifier(mod string) bool { return slices.Contains(StringValidationModifiers, mod) }
+
+// IsStringFlagValidationModifier reports whether mod is a bare string flag.
+func IsStringFlagValidationModifier(mod string) bool {
+	return slices.Contains(StringFlagValidationModifiers, mod)
+}
 
 // IsNumericValidationModifier reports whether mod applies to numeric fields.
 func IsNumericValidationModifier(mod string) bool { return numericValidationModSet[mod] }
@@ -279,17 +308,63 @@ func SliceToSet(items []string) map[string]bool {
 	return set
 }
 
-// IsArrayType reports whether dbType is an array declaration.
+// IsArrayType reports whether dbType is a closed array declaration. An
+// unclosed `array(int` is not an array — it fails closed everywhere.
 func IsArrayType(dbType string) bool {
-	return strings.HasPrefix(dbType, "array(")
+	return strings.HasPrefix(dbType, FieldTypeArray+"(") && strings.HasSuffix(strings.TrimSpace(dbType), ")")
 }
 
-// ParseArrayInner returns the element type of an array declaration, or dbType unchanged.
+// ParseArrayInner returns the element type of a closed array declaration, or
+// dbType unchanged. An unclosed declaration is never silently repaired.
 func ParseArrayInner(dbType string) string {
 	if !IsArrayType(dbType) {
 		return dbType
 	}
-	return strings.TrimSuffix(strings.TrimPrefix(dbType, "array("), ")")
+	return strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(dbType), FieldTypeArray+"("), ")")
+}
+
+// IsSingleBackRelationField reports whether a single relation points from a
+// target entity back to a source entity. The validator and the IR builder share
+// this rule when pairing a `[many]` relation with the FK on its target.
+func IsSingleBackRelationField(isRelation, isMany bool, targetName, sourceName string) bool {
+	return isRelation && !isMany && targetName != "" && targetName == sourceName
+}
+
+// HasIDSuffix reports whether name ends with a supported FK suffix (Id or ID)
+// and is long enough to strip it without losing the whole name. Lowercase "id"
+// is not an FK format in this project: words such as fluid or squid keep it.
+func HasIDSuffix(name string) bool {
+	return len(name) > 2 && (strings.HasSuffix(name, "Id") || strings.HasSuffix(name, "ID"))
+}
+
+// FieldKind returns the language-agnostic value kind of a primitive type.
+func FieldKind(dbType string) string {
+	switch {
+	case IsStringType(dbType):
+		return "text"
+	case dbType == FieldTypeInt:
+		return "int"
+	case dbType == FieldTypeBigint:
+		return "bigint"
+	case dbType == FieldTypeFloat:
+		return "float"
+	case dbType == FieldTypeDecimal:
+		return "decimal"
+	case IsBooleanType(dbType):
+		return "bool"
+	case dbType == FieldTypeDate:
+		return "date"
+	case dbType == FieldTypeDatetime:
+		return "datetime"
+	case dbType == FieldTypeUUID:
+		return "uuid"
+	case dbType == FieldTypeJSON || dbType == FieldTypeJSONB:
+		return "json"
+	case !IsPrimitive(dbType):
+		return "enum"
+	default:
+		return "text"
+	}
 }
 
 // FindAuthEntity returns the first entity with email and password fields.

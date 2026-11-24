@@ -120,3 +120,4 @@ internal/ir/toposort_test.go::TestTopoSortInsertReadyKeepsNameOrder	#5	ready que
 internal/seed/seed_test.go::TestGenerateRespectsExclusiveBounds	#5	int and float seed bounds were clamped by two duplicated loops and could drift apart
 internal/seed/seed_test.go::TestStringValueMaxLengthClamp	#5	oversized max_length clamp was hand-rolled with no direct coverage at zero or above length
 internal/snapshot/snapshot_test.go::TestLoadRejectsIncompatibleFormatVersion	#5	Load accepted snapshots with any format_version, so stale snapshots could trigger destructive prune
+internal/parser/parser_test.go::TestNavigationNameStripsIdAndIDSuffixOnly	#5	HasIDSuffix treated lowercase id as an FK suffix and renamed fluid to Flu, squid to Squ and avoid to Avo

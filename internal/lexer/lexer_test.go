@@ -3,6 +3,8 @@ package lexer
 import (
 	"strings"
 	"testing"
+
+	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 )
 
 func TestParsePrimitiveTypes(t *testing.T) {
@@ -420,5 +422,66 @@ func TestParseRequiredOptionalConflict(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cannot be both required and optional") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestLexerRejectsUnclosedTypeDeclaration(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		input     string
+		wantErr   bool
+		wantType  string
+		wantInner string
+	}{
+		{input: "array(int", wantErr: true},
+		{input: "relation(User", wantErr: true},
+		// The unclosed enum form is enum(Status; enum(Status) is valid.
+		{input: "enum(Status", wantErr: true},
+		{input: "array(int)", wantType: "array", wantInner: "int"},
+		{input: "relation(User)", wantType: "relation", wantInner: "User"},
+		{input: "enum(Status)", wantType: "enum", wantInner: "Status"},
+	}
+	for _, c := range cases {
+		t.Run(c.input, func(t *testing.T) {
+			t.Parallel()
+			fd, err := ParseFieldString(c.input)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("ParseFieldString(%q) accepted an unclosed declaration", c.input)
+				}
+				if !strings.Contains(err.Error(), "closing parenthesis") {
+					t.Errorf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseFieldString(%q) error = %v", c.input, err)
+			}
+			if fd.Type != c.wantType {
+				t.Errorf("Type = %q, want %q", fd.Type, c.wantType)
+			}
+			got := fd.TargetType
+			if fd.Type == "relation" {
+				got = fd.TargetEntity
+			}
+			if got != c.wantInner {
+				t.Errorf("target = %q, want %q", got, c.wantInner)
+			}
+		})
+	}
+}
+
+func TestLexerAcceptsSpecmetaStringModifier(t *testing.T) {
+	// Not parallel: the spec list is extended for the duration of this test.
+	original := specmeta.StringValidationModifiers
+	t.Cleanup(func() { specmeta.StringValidationModifiers = original })
+	specmeta.StringValidationModifiers = append(append([]string(nil), original...), "startsWith")
+
+	fd, err := ParseFieldString("string [startsWith:foo]")
+	if err != nil {
+		t.Fatalf("ParseFieldString() error = %v", err)
+	}
+	if got := fd.Validations["startsWith"]; got != "foo" {
+		t.Errorf("Validations[startsWith] = %q, want foo", got)
 	}
 }

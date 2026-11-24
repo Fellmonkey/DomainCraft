@@ -64,10 +64,9 @@ func (f *ParsedField) NavigationName() string {
 	if f.IsMany {
 		name = textutil.Singularize(name)
 	}
-	// Strip "Id" or "ID" suffix (FK convention), not arbitrary "id" substrings.
-	if strings.HasSuffix(name, "Id") && len(name) > 2 {
-		name = name[:len(name)-2]
-	} else if strings.HasSuffix(name, "ID") && len(name) > 2 {
+	// Strip an FK id suffix (Id / ID) via the shared specmeta helper.
+	// Lowercase "id" is not an FK format: fluid and squid keep their names.
+	if len(name) > 2 && specmeta.HasIDSuffix(name) {
 		name = name[:len(name)-2]
 	}
 	if name == "" {

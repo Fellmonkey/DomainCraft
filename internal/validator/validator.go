@@ -440,7 +440,7 @@ func (v *Validator) singleFKBack(target *parser.ParsedEntity, sourceName string)
 	}
 	for _, fieldName := range target.FieldOrder {
 		field := target.Fields[fieldName]
-		if field != nil && field.IsRelation() && !field.IsMany && field.TargetEntity == sourceName {
+		if field != nil && specmeta.IsSingleBackRelationField(field.IsRelation(), field.IsMany, field.TargetEntity, sourceName) {
 			return field
 		}
 	}
@@ -489,10 +489,10 @@ func (v *Validator) validateEnums() []ValidationError {
 				if field == nil {
 					continue
 				}
-				if field.Type == "enum" && field.TargetType != "" {
+				if field.Type == specmeta.FieldTypeEnum && field.TargetType != "" {
 					usedEnums[field.TargetType] = true
 				}
-				if field.Type == "array" && field.TargetType != "" {
+				if field.Type == specmeta.FieldTypeArray && field.TargetType != "" {
 					usedEnums[field.TargetType] = true
 				}
 			}
@@ -751,7 +751,7 @@ func validatePrimaryKeyField(entityName, fieldName string, field *parser.ParsedF
 
 	// Primary key constraints.
 	if field.IsPrimary {
-		if field.Type == "array" {
+		if field.Type == specmeta.FieldTypeArray {
 			errs = append(errs, invalid(entityName, fieldName,
 				"primary key cannot be an array type"))
 		}
@@ -769,7 +769,7 @@ func (v *Validator) validateEnumField(entityName, fieldName string, field *parse
 	var errs []ValidationError
 
 	// Enum reference.
-	if field.Type == "enum" && field.TargetType != "" {
+	if field.Type == specmeta.FieldTypeEnum && field.TargetType != "" {
 		if _, ok := v.schema.Enums[field.TargetType]; !ok {
 			errs = append(errs, invalidf(entityName, fieldName,
 				"enum '%s' is not defined in enums section", field.TargetType))
@@ -785,7 +785,7 @@ func (v *Validator) validateArrayField(entityName, fieldName string, field *pars
 	var errs []ValidationError
 
 	// Array element type.
-	if field.Type == "array" && field.TargetType != "" {
+	if field.Type == specmeta.FieldTypeArray && field.TargetType != "" {
 		inner := strings.ToLower(field.TargetType)
 		if !specmeta.IsPrimitive(inner) {
 			if _, ok := v.schema.Enums[field.TargetType]; !ok {
@@ -843,16 +843,21 @@ func (v *Validator) validateFieldDefault(entityName, fieldName string, field *pa
 	var errs []ValidationError
 
 	ftype := strings.ToLower(field.Type)
+	defaultType := ftype
+	if ftype == specmeta.FieldTypeArray && field.TargetType != "" {
+		// The element type drives the default check; specmeta owns extraction.
+		defaultType = specmeta.FieldTypeArray + "(" + field.TargetType + ")"
+	}
 
 	// Default value type check.
 	if field.DefaultValue != "" && field.DefaultIsFunc {
 		errs = append(errs, validateFuncDefault(entityName, fieldName, ftype, field.DefaultValue)...)
 	} else if field.DefaultValue != "" {
-		errs = append(errs, validateDefaultValue(entityName, fieldName, ftype, field.DefaultValue)...)
+		errs = append(errs, validateDefaultValue(entityName, fieldName, defaultType, field.DefaultValue)...)
 	}
 
 	// Enum default must be one of the declared enum values.
-	if field.Type == "enum" && field.TargetType != "" && field.DefaultValue != "" && !field.DefaultIsFunc {
+	if field.Type == specmeta.FieldTypeEnum && field.TargetType != "" && field.DefaultValue != "" && !field.DefaultIsFunc {
 		if enumValues, ok := v.schema.Enums[field.TargetType]; ok {
 			found := slices.Contains(enumValues, field.DefaultValue)
 			if !found {
@@ -866,33 +871,67 @@ func (v *Validator) validateFieldDefault(entityName, fieldName string, field *pa
 	return errs
 }
 
+// splitArrayDefault splits an array literal into its elements. A scalar is
+// returned as a single element; an unclosed literal fails closed as one element
+// so the type checker can reject it.
+func splitArrayDefault(defaultVal string) []string {
+	if !strings.HasPrefix(defaultVal, "[") || !strings.HasSuffix(defaultVal, "]") {
+		return []string{defaultVal}
+	}
+	inner := strings.TrimSpace(defaultVal[1 : len(defaultVal)-1])
+	if inner == "" {
+		return nil
+	}
+	parts := strings.Split(inner, ",")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	return parts
+}
+
+// validateDefaultValue checks one scalar default, or every element of an array
+// default, against the field's element type. Numeric defaults must parse as a
+// number — the legacy true/false values no longer slip through.
 func validateDefaultValue(entityName, fieldName, ftype, defaultVal string) []ValidationError {
 	var errs []ValidationError
-	switch {
-	case specmeta.IsNumeric(ftype):
-		if boolValues[defaultVal] {
-			errs = append(errs, warnf(entityName, fieldName,
-				"default value '%s' is not valid for numeric type %s", defaultVal, ftype))
-		}
-	case ftype == "boolean":
-		if !boolValues[defaultVal] {
-			errs = append(errs, warnf(entityName, fieldName,
-				"default value '%s' is not valid for boolean (expected true/false)", defaultVal))
-		}
-	case ftype == "date":
-		if !isValidDate(defaultVal) {
-			errs = append(errs, warnf(entityName, fieldName,
-				"default value '%s' is not a valid date (expected YYYY-MM-DD)", defaultVal))
-		}
-	case ftype == "datetime":
-		if !isValidDatetime(defaultVal) {
-			errs = append(errs, warnf(entityName, fieldName,
-				"default value '%s' is not a valid datetime (expected ISO 8601 format, e.g. 2024-01-15T10:30:00Z)", defaultVal))
-		}
-	case ftype == "uuid":
-		if !isValidUUID(defaultVal) {
-			errs = append(errs, warnf(entityName, fieldName,
-				"default value '%s' is not a valid UUID", defaultVal))
+	inner := specmeta.ParseArrayInner(ftype)
+	values := []string{defaultVal}
+	if specmeta.IsArrayType(ftype) {
+		values = splitArrayDefault(defaultVal)
+	}
+
+	for _, value := range values {
+		switch {
+		case specmeta.IsIntegralType(inner):
+			if _, err := strconv.ParseInt(value, 10, 64); err != nil {
+				errs = append(errs, warnf(entityName, fieldName,
+					"default value '%s' is not valid for numeric type %s", value, inner))
+			}
+		case specmeta.IsFloatType(inner):
+			if _, err := strconv.ParseFloat(value, 64); err != nil {
+				errs = append(errs, warnf(entityName, fieldName,
+					"default value '%s' is not valid for numeric type %s", value, inner))
+			}
+		case inner == specmeta.FieldTypeBoolean:
+			if !boolValues[value] {
+				errs = append(errs, warnf(entityName, fieldName,
+					"default value '%s' is not valid for boolean (expected true/false)", value))
+			}
+		case inner == specmeta.FieldTypeDate:
+			if !isValidDate(value) {
+				errs = append(errs, warnf(entityName, fieldName,
+					"default value '%s' is not a valid date (expected YYYY-MM-DD)", value))
+			}
+		case inner == specmeta.FieldTypeDatetime:
+			if !isValidDatetime(value) {
+				errs = append(errs, warnf(entityName, fieldName,
+					"default value '%s' is not a valid datetime (expected ISO 8601 format, e.g. 2024-01-15T10:30:00Z)", value))
+			}
+		case inner == specmeta.FieldTypeUUID:
+			if !isValidUUID(value) {
+				errs = append(errs, warnf(entityName, fieldName,
+					"default value '%s' is not a valid UUID", value))
+			}
 		}
 	}
 	return errs
@@ -1164,7 +1203,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 			errs = append(errs, invalidf(entityName, fieldName,
 				"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
 		}
-	case ftype == "boolean":
+	case ftype == specmeta.FieldTypeBoolean:
 		switch v := seedValue.(type) {
 		case bool:
 			// OK
@@ -1178,7 +1217,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 			errs = append(errs, invalidf(entityName, fieldName,
 				"seed entry %d: value %v is not compatible with boolean type", entryIdx, seedValue))
 		}
-	case ftype == "date":
+	case ftype == specmeta.FieldTypeDate:
 		s, ok := seedValue.(string)
 		if !ok {
 			errs = append(errs, invalidf(entityName, fieldName,
@@ -1187,7 +1226,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 			errs = append(errs, invalidf(entityName, fieldName,
 				"seed entry %d: value %q is not a valid date (expected YYYY-MM-DD)", entryIdx, s))
 		}
-	case ftype == "uuid":
+	case ftype == specmeta.FieldTypeUUID:
 		s, ok := seedValue.(string)
 		if !ok {
 			errs = append(errs, invalidf(entityName, fieldName,
@@ -1196,7 +1235,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 			errs = append(errs, invalidf(entityName, fieldName,
 				"seed entry %d: value %q is not a valid UUID (expected xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)", entryIdx, s))
 		}
-	case ftype == "datetime":
+	case ftype == specmeta.FieldTypeDatetime:
 		s, ok := seedValue.(string)
 		if !ok {
 			errs = append(errs, invalidf(entityName, fieldName,
@@ -1206,7 +1245,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 				"seed entry %d: value %q is not a valid datetime (expected ISO 8601 format, e.g. 2024-01-15T10:30:00Z)", entryIdx,
 				s))
 		}
-	case ftype == "json" || ftype == "jsonb":
+	case ftype == specmeta.FieldTypeJSON || ftype == specmeta.FieldTypeJSONB:
 		// JSON values can be any valid JSON — accept any type.
 		// String values are validated as parseable JSON.
 		if s, ok := seedValue.(string); ok {
@@ -1215,7 +1254,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 					"seed entry %d: value %q is not valid JSON", entryIdx, s))
 			}
 		}
-	case ftype == "enum":
+	case ftype == specmeta.FieldTypeEnum:
 		// The value must be one of the declared enum values.
 		sv, ok := seedValue.(string)
 		if !ok {
@@ -1231,7 +1270,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 					strings.Join(values, ", ")))
 			}
 		}
-	case ftype == "array":
+	case ftype == specmeta.FieldTypeArray:
 		// Accept a YAML list. String values are accepted as JSON arrays.
 		switch v := seedValue.(type) {
 		case []any:
@@ -1247,7 +1286,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 			errs = append(errs, invalidf(entityName, fieldName,
 				"seed entry %d: value %v is not compatible with array type (expected a list)", entryIdx, seedValue))
 		}
-	case ftype == "relation":
+	case ftype == specmeta.FieldTypeRelation:
 		// FK values reference the target entity's PK. Accept scalar values
 		// (string/number/bool matching the target PK type); more precise
 		// cross-entity type checking is left to the seed FK dependency check.
@@ -1274,9 +1313,9 @@ func isValidJSONArray(s string) bool {
 }
 
 // isFKFieldName reports whether a field name is already an FK-style name
-// (ends with "Id"/"id"), in which case indexing it maps to a real FK column.
+// (ends with "Id" or "ID"), in which case indexing it maps to a real FK column.
 func isFKFieldName(name string) bool {
-	return strings.HasSuffix(name, "Id") || strings.HasSuffix(name, "id")
+	return specmeta.HasIDSuffix(name)
 }
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)

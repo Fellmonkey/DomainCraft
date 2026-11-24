@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/DomainCraft/DomainCraft/internal/parser"
+	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 	"github.com/DomainCraft/DomainCraft/internal/testutil"
 )
 
@@ -2755,6 +2756,66 @@ func TestValidateRejectsNegativeProjectNumericValues(t *testing.T) {
 			}
 			if !found {
 				t.Fatalf("expected diagnostic %q (warning=%t), got %v", tt.wantText, tt.wantWarn, errs)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsInvalidNumericDefault(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		ftype       string
+		defaultVal  string
+		wantWarning bool
+	}{
+		{name: "int rejects text", ftype: specmeta.FieldTypeInt, defaultVal: "abc", wantWarning: true},
+		{name: "int accepts integer", ftype: specmeta.FieldTypeInt, defaultVal: "42"},
+		{name: "bigint rejects text", ftype: specmeta.FieldTypeBigint, defaultVal: "twelve", wantWarning: true},
+		{name: "bigint accepts integer", ftype: specmeta.FieldTypeBigint, defaultVal: "-9000000000"},
+		{name: "float rejects text", ftype: specmeta.FieldTypeFloat, defaultVal: "1.2.3", wantWarning: true},
+		{name: "float accepts decimal", ftype: specmeta.FieldTypeFloat, defaultVal: "1.25"},
+		{name: "decimal rejects text", ftype: specmeta.FieldTypeDecimal, defaultVal: "price", wantWarning: true},
+		{name: "decimal accepts decimal", ftype: specmeta.FieldTypeDecimal, defaultVal: "99.95"},
+		{name: "legacy true still warns on int", ftype: specmeta.FieldTypeInt, defaultVal: "true", wantWarning: true},
+		{name: "legacy false still warns on bigint", ftype: specmeta.FieldTypeBigint, defaultVal: "false", wantWarning: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			errs := validateDefaultValue("Item", "amount", c.ftype, c.defaultVal)
+			if c.wantWarning {
+				if len(errs) != 1 || !errs[0].Warning {
+					t.Fatalf("validateDefaultValue(%q, %q) = %v, want one warning", c.ftype, c.defaultVal, errs)
+				}
+				msg := errs[0].Message
+				if msg != strings.ToLower(msg) || strings.HasSuffix(msg, ".") {
+					t.Errorf("warning message %q is not lowercase or ends with punctuation", msg)
+				}
+				return
+			}
+			if len(errs) != 0 {
+				t.Fatalf("validateDefaultValue(%q, %q) = %v, want no warnings", c.ftype, c.defaultVal, errs)
+			}
+		})
+	}
+
+	// The element type of an array drives the same numeric check.
+	v := New(&parser.ParsedSchema{})
+	for _, c := range []struct {
+		name string
+		def  string
+		want int
+	}{
+		{name: "array int accepts numbers", def: "array(int) [default:[1, 2]]", want: 0},
+		{name: "array int rejects text", def: "array(int) [default:[1, abc]]", want: 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			field := testutil.MustParsedField(t, "scores", c.def)
+			errs := v.validateFieldDefault("Item", "scores", field)
+			if len(errs) != c.want {
+				t.Fatalf("validateFieldDefault(%q) = %v, want %d warnings", c.def, errs, c.want)
 			}
 		})
 	}

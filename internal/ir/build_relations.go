@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/DomainCraft/DomainCraft/internal/parser"
+	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 	"github.com/DomainCraft/DomainCraft/pkg/textutil"
 )
 
@@ -90,8 +91,7 @@ func indexRelationsOut(entities []Entity) map[string]*relationIndex {
 // relationship — not a many-to-many. The FK lives on B; A's [many] is its
 // collection navigation. Without this reconciliation a bridge would generate a
 // spurious join table in addition to the FK.
-func reconcileOneToMany(entities []Entity) {
-	index := indexRelationsOut(entities)
+func reconcileOneToMany(entities []Entity, index map[string]*relationIndex) {
 	for i := range entities {
 		entity := &entities[i]
 		for j := range entity.RelationsOut {
@@ -103,7 +103,9 @@ func reconcileOneToMany(entities []Entity) {
 			if bySource := index[rel.TargetEntity.Name]; bySource != nil {
 				pair = bySource.singleBack[entity.Name]
 			}
-			if pair == nil {
+			// The single-back rule is shared with the validator warning.
+			if pair == nil || pair.TargetEntity == nil ||
+				!specmeta.IsSingleBackRelationField(true, pair.IsMany, pair.TargetEntity.Name, entity.Name) {
 				continue
 			}
 			rel.RelationType = "one-to-many"
@@ -118,8 +120,7 @@ func reconcileOneToMany(entities []Entity) {
 // resolveInverseNavs (Pass 2c) resolves each forward relation's inverse-navigation
 // name to the actual collection on the target entity. For OrderItem→Order the
 // inverse should be "Items" (Order's forward nav), not the computed "OrderItems".
-func resolveInverseNavs(entities []Entity) {
-	index := indexRelationsOut(entities)
+func resolveInverseNavs(entities []Entity, index map[string]*relationIndex) {
 	for i := range entities {
 		entity := &entities[i]
 		for j := range entity.RelationsOut {
@@ -139,8 +140,7 @@ func resolveInverseNavs(entities []Entity) {
 // buildIncomingRelations (Pass 3d) builds inverse (incoming) relations. Each
 // incoming relation is a collection navigation on the target that points back
 // to the owning entity.
-func buildIncomingRelations(entities []Entity) {
-	index := indexRelationsOut(entities)
+func buildIncomingRelations(entities []Entity, index map[string]*relationIndex) {
 	usedInverse := make(map[string]map[string]bool) // target entity -> defined inverse nav names
 	for i := range entities {
 		entity := &entities[i]

@@ -1,6 +1,10 @@
 package ir
 
-import "strings"
+import (
+	"cmp"
+	"slices"
+	"strings"
+)
 
 // ValidationRule is a normalized, language-agnostic validation rule. The core
 // derives these from the field's type, nullability and the declared validation
@@ -73,9 +77,41 @@ func newRule(kind, value string, exclusive bool) ValidationRule {
 	return ValidationRule{Kind: kind, Code: code, Value: value, Exclusive: exclusive, Message: message}
 }
 
+// validationRuleOrder is the semantic rank used to order normalized rules.
+// The order is required → format (email/url/ipv4/regex) → length bounds
+// (min→max) → numeric bounds (min→max), independent of the order in which the
+// modifiers were declared (convertValidations sorts keys alphabetically, so
+// declaration order cannot be relied on here).
+func validationRuleOrder(kind string) int {
+	switch kind {
+	case "required":
+		return 0
+	case "email":
+		return 1
+	case "url":
+		return 2
+	case "ipv4":
+		return 3
+	case "regex":
+		return 4
+	case "min_length":
+		return 5
+	case "max_length":
+		return 6
+	case "min_value":
+		return 7
+	case "max_value":
+		return 8
+	default:
+		return 9
+	}
+}
+
 // ValidationRules returns the field's validations as a normalized, ordered list
-// of rules. The order is stable and semantic: required first, then format
-// validators, then length bounds, then numeric bounds.
+// of rules. The order is stable and semantic: required, then format validators
+// (email/url/ipv4/regex), then length bounds (min_length → max_length), then
+// numeric bounds (min_value → max_value, inclusive or exclusive). Rules of the
+// same kind keep their relative input order.
 //
 // Mapping from the raw modifiers:
 //
@@ -85,6 +121,8 @@ func newRule(kind, value string, exclusive bool) ValidationRule {
 //	                               min_value / max_value on numeric types
 //	gte / lte                   -> inclusive min_value / max_value
 //	gt / lt                     -> min_value / max_value with Exclusive=true
+//	min_length / max_length /   -> the canonical rule kind, as-is
+//	min_value / max_value
 func (f Field) ValidationRules() []ValidationRule {
 	rules := make([]ValidationRule, 0, len(f.Validations)+1)
 
@@ -107,6 +145,10 @@ func (f Field) ValidationRules() []ValidationRule {
 			rules = append(rules, newRule(name, "", false))
 		case "regex":
 			rules = append(rules, newRule("regex", v.Value, false))
+		case "min_length", "max_length", "min_value", "max_value":
+			// Canonical rule names are accepted as-is so IR fields built
+			// directly (tests, bridge-side helpers) use the same vocabulary.
+			rules = append(rules, newRule(name, v.Value, false))
 		case "min", "max":
 			if f.IsNumeric() {
 				rules = append(rules, newRule(name+"_value", v.Value, false))
@@ -123,6 +165,12 @@ func (f Field) ValidationRules() []ValidationRule {
 			rules = append(rules, newRule("max_value", v.Value, true))
 		}
 	}
+
+	// Stable sort keeps same-rank rules in declaration order while enforcing
+	// the semantic contract above.
+	slices.SortStableFunc(rules, func(a, b ValidationRule) int {
+		return cmp.Compare(validationRuleOrder(a.Kind), validationRuleOrder(b.Kind))
+	})
 
 	return rules
 }

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestParseStrictRejectsUnknownKeys(t *testing.T) {
@@ -112,6 +114,51 @@ entities: {}
 			}
 			if !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("ParseRawSchema() error = %q, want it to contain %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestUnmarshalYAMLHelpersRejectUnknownKeysForAllConfigs pins the shared
+// presence-aware UnmarshalYAML helper: every config block that opts into it
+// must reject unknown keys with the same strict-decoding message, and must
+// still accept its own keys (the latter is covered by the explicit-zero tests).
+func TestUnmarshalYAMLHelpersRejectUnknownKeysForAllConfigs(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		newValue func() any
+		yaml     string
+		wantErr  string
+	}{
+		{
+			name:     "DeployConfig",
+			newValue: func() any { return &DeployConfig{} },
+			yaml:     "port: 8080\ntypo_field: 1\n",
+			wantErr:  "field typo_field not found in type parser.DeployConfig",
+		},
+		{
+			name:     "RateLimitConfig",
+			newValue: func() any { return &RateLimitConfig{} },
+			yaml:     "permit_limit: 100\nwindow_seconds: 60\ntypo_field: 1\n",
+			wantErr:  "field typo_field not found in type parser.RateLimitConfig",
+		},
+		{
+			name:     "PaginationConfig",
+			newValue: func() any { return &PaginationConfig{} },
+			yaml:     "default_page_size: 20\nmax_page_size: 200\ntypo_field: 1\n",
+			wantErr:  "field typo_field not found in type parser.PaginationConfig",
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := yaml.Unmarshal([]byte(tt.yaml), tt.newValue())
+			if err == nil {
+				t.Fatalf("yaml.Unmarshal() expected error containing %q, got nil", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("yaml.Unmarshal() error = %q, want it to contain %q", err.Error(), tt.wantErr)
 			}
 		})
 	}
@@ -973,5 +1020,50 @@ entities: {}
 	}
 	if parsed.Project.Pagination.MaxPageSize != 0 {
 		t.Errorf("Pagination.MaxPageSize = %d, want explicit 0", parsed.Project.Pagination.MaxPageSize)
+	}
+}
+
+// TestNavigationNameStripsIdAndIDSuffixOnly pins the FK convention shared with
+// the validator: only Id and ID are stripped. Lowercase id is not an FK format,
+// so categoryid keeps its final two letters in the navigation name.
+func TestNavigationNameStripsIdAndIDSuffixOnly(t *testing.T) {
+	t.Parallel()
+	yamlData := []byte(`
+project:
+  name: Test
+entities:
+  Category:
+    fields:
+      id: uuid [primary]
+  Order:
+    fields:
+      id: uuid [primary]
+      categoryId: relation(Category)
+      categoryID: relation(Category)
+      categoryid: relation(Category)
+`)
+	parsed, err := ParseYAML(yamlData)
+	if err != nil {
+		t.Fatalf("ParseYAML() error = %v", err)
+	}
+	order := parsed.Entities["Order"]
+	if order == nil {
+		t.Fatal("Order entity not parsed")
+	}
+	for _, tt := range []struct {
+		fieldName string
+		want      string
+	}{
+		{fieldName: "categoryId", want: "Category"},
+		{fieldName: "categoryID", want: "Category"},
+		{fieldName: "categoryid", want: "Categoryid"},
+	} {
+		field := order.Fields[tt.fieldName]
+		if field == nil {
+			t.Fatalf("field %q not parsed", tt.fieldName)
+		}
+		if got := field.NavigationName(); got != tt.want {
+			t.Errorf("%s.NavigationName() = %q, want %q", tt.fieldName, got, tt.want)
+		}
 	}
 }

@@ -300,6 +300,11 @@ func TestNavigationNameStripsIdSuffix(t *testing.T) {
 			wantNav: "Category",
 		},
 		{
+			name:    "categoryid does not strip id",
+			field:   &parser.ParsedField{FieldDefinition: &lexer.FieldDefinition{Name: "categoryid", Type: "relation", TargetEntity: "Category"}},
+			wantNav: "Categoryid",
+		},
+		{
 			name:    "fluid does not strip id",
 			field:   &parser.ParsedField{FieldDefinition: &lexer.FieldDefinition{Name: "fluid", Type: "string"}},
 			wantNav: "Fluid",

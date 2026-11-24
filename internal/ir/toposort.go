@@ -1,9 +1,6 @@
 package ir
 
-import (
-	"slices"
-	"sort"
-)
+import "slices"
 
 // sortEntities reorders the slice by FK dependencies using Kahn's algorithm.
 // The order is deterministic: ties are broken by entity name.
@@ -45,7 +42,7 @@ func sortEntities(entities []Entity) []Entity {
 	// Deterministic ordering: process ready entities in name order.
 	slices.Sort(ready)
 	insertReady := func(name string) {
-		at := sort.Search(len(ready), func(i int) bool { return ready[i] >= name })
+		at, _ := slices.BinarySearch(ready, name)
 		ready = slices.Insert(ready, at, name)
 	}
 

@@ -26,37 +26,13 @@ func (v SeedValue) Kind() string { return KindOf(v.DBType) }
 // elements without string-slicing their own array syntax.
 func (v SeedValue) ElementType() string { return specmeta.ParseArrayInner(v.DBType) }
 
-// KindOf maps an IR database type to its language-agnostic value kind.
+// KindOf maps an IR database type to its language-agnostic value kind. The
+// classification lives in specmeta so seeds and bridges agree on it.
 func KindOf(dbType string) string {
-	inner := specmeta.ParseArrayInner(dbType)
-	switch {
-	case specmeta.IsArrayType(dbType):
+	if specmeta.IsArrayType(dbType) {
 		return "array"
-	case inner == "uuid":
-		return "uuid"
-	case inner == "string" || inner == "text":
-		return "text"
-	case inner == "int":
-		return "int"
-	case inner == "bigint":
-		return "bigint"
-	case inner == "float":
-		return "float"
-	case inner == "decimal":
-		return "decimal"
-	case inner == "boolean":
-		return "bool"
-	case inner == "date":
-		return "date"
-	case inner == "datetime":
-		return "datetime"
-	case inner == "json" || inner == "jsonb":
-		return "json"
-	case !specmeta.IsPrimitive(inner):
-		return "enum"
-	default:
-		return "text"
 	}
+	return specmeta.FieldKind(specmeta.ParseArrayInner(dbType))
 }
 
 // SeedRecord is one seed row for an entity: its fields in declaration order.
