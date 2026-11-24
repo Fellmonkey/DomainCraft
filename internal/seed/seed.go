@@ -252,11 +252,31 @@ func stringValue(field ir.Field, record int) string {
 	// negative max must never reach a slice index and an oversized max must
 	// never exceed the string length.
 	if n, err := strconv.Atoi(maxLen); err == nil {
-		if n < 0 {
-			n = 0
+		v = v[:min(max(n, 0), len(v))]
+	}
+	return v
+}
+
+// clampNumericBounds applies the normalized min_value/max_value rules to a
+// numeric mock value. An exclusive bound steps one unit past the bound; an
+// inclusive bound lands on it. Rules are applied in their normalized order,
+// each one clamping the current value. Int and float paths share this loop so
+// their bound semantics cannot drift apart.
+func clampNumericBounds[T ~int64 | ~float64](v T, rules []ir.ValidationRule, parse func(string) (T, error)) T {
+	for _, r := range rules {
+		n, err := parse(r.Value)
+		if err != nil {
+			continue
 		}
-		if n < len(v) {
-			v = v[:n]
+		switch {
+		case r.Kind == "min_value" && r.Exclusive && v <= n:
+			v = n + 1
+		case r.Kind == "min_value" && v < n:
+			v = n
+		case r.Kind == "max_value" && r.Exclusive && v >= n:
+			v = n - 1
+		case r.Kind == "max_value" && v > n:
+			v = n
 		}
 	}
 	return v
@@ -265,47 +285,15 @@ func stringValue(field ir.Field, record int) string {
 // intValue returns an int honoring the numeric min/max bounds (inclusive or
 // exclusive) from the normalized ValidationRules contract.
 func intValue(field ir.Field, record int) int64 {
-	v := int64(record + 1)
-	for _, r := range field.ValidationRules() {
-		n, err := strconv.ParseInt(r.Value, 10, 64)
-		if err != nil {
-			continue
-		}
-		switch {
-		case r.Kind == "min_value" && r.Exclusive && v <= n:
-			v = n + 1
-		case r.Kind == "min_value" && v < n:
-			v = n
-		case r.Kind == "max_value" && r.Exclusive && v >= n:
-			v = n - 1
-		case r.Kind == "max_value" && v > n:
-			v = n
-		}
-	}
-	return v
+	parse := func(s string) (int64, error) { return strconv.ParseInt(s, 10, 64) }
+	return clampNumericBounds(int64(record+1), field.ValidationRules(), parse)
 }
 
 // floatValue returns a float honoring the numeric min/max bounds (inclusive or
 // exclusive) from the normalized ValidationRules contract.
 func floatValue(field ir.Field, record int) float64 {
-	v := float64(record+1) + 0.5
-	for _, r := range field.ValidationRules() {
-		n, err := strconv.ParseFloat(r.Value, 64)
-		if err != nil {
-			continue
-		}
-		switch {
-		case r.Kind == "min_value" && r.Exclusive && v <= n:
-			v = n + 1
-		case r.Kind == "min_value" && v < n:
-			v = n
-		case r.Kind == "max_value" && r.Exclusive && v >= n:
-			v = n - 1
-		case r.Kind == "max_value" && v > n:
-			v = n
-		}
-	}
-	return v
+	parse := func(s string) (float64, error) { return strconv.ParseFloat(s, 64) }
+	return clampNumericBounds(float64(record+1)+0.5, field.ValidationRules(), parse)
 }
 
 // coerceValue converts a declared seed/default value (from YAML: string, number,

@@ -242,6 +242,55 @@ func TestGenerateHonorsNumericBounds(t *testing.T) {
 	}
 }
 
+// TestGenerateRespectsExclusiveBounds pins the mock value at the bound for
+// inclusive rules and one unit past it for exclusive ones, across every
+// numeric database type. Int/bigint start at record+1 (1 here), float/decimal
+// at record+1+0.5 (1.5 here), so a bound equal to the base exercises the
+// exclusive branch while an inclusive bound keeps the base unchanged.
+func TestGenerateRespectsExclusiveBounds(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		dbType      string
+		validations []ir.Validation
+		want        any
+	}{
+		{name: "int exclusive min steps above bound", dbType: "int", validations: []ir.Validation{{Name: "gt", Value: "5"}}, want: int64(6)},
+		{name: "bigint exclusive min steps above bound", dbType: "bigint", validations: []ir.Validation{{Name: "gt", Value: "5"}}, want: int64(6)},
+		{name: "int exclusive max steps below bound", dbType: "int", validations: []ir.Validation{{Name: "lt", Value: "1"}}, want: int64(0)},
+		{name: "bigint exclusive max steps below bound", dbType: "bigint", validations: []ir.Validation{{Name: "lt", Value: "1"}}, want: int64(0)},
+		{name: "int inclusive min holds bound", dbType: "int", validations: []ir.Validation{{Name: "gte", Value: "1"}}, want: int64(1)},
+		{name: "bigint inclusive max holds bound", dbType: "bigint", validations: []ir.Validation{{Name: "lte", Value: "1"}}, want: int64(1)},
+		{name: "float exclusive min steps above bound", dbType: "float", validations: []ir.Validation{{Name: "gt", Value: "1.5"}}, want: float64(2.5)},
+		{name: "decimal exclusive min steps above bound", dbType: "decimal", validations: []ir.Validation{{Name: "gt", Value: "1.5"}}, want: float64(2.5)},
+		{name: "float exclusive max steps below bound", dbType: "float", validations: []ir.Validation{{Name: "lt", Value: "1.5"}}, want: float64(0.5)},
+		{name: "decimal exclusive max steps below bound", dbType: "decimal", validations: []ir.Validation{{Name: "lt", Value: "1.5"}}, want: float64(0.5)},
+		{name: "float inclusive min holds bound", dbType: "float", validations: []ir.Validation{{Name: "gte", Value: "1.5"}}, want: float64(1.5)},
+		{name: "decimal inclusive max holds bound", dbType: "decimal", validations: []ir.Validation{{Name: "lte", Value: "1.5"}}, want: float64(1.5)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			project := &ir.Project{
+				Entities: []ir.Entity{
+					{
+						Name: "Bounds",
+						Fields: []ir.Field{
+							{Name: "id", DatabaseType: "uuid", IsPrimary: true},
+							{Name: "amount", DatabaseType: tt.dbType, Validations: tt.validations},
+						},
+					},
+				},
+			}
+			ds := Generate(project, Options{CountPerEntity: 1})
+			got := ds.Entities[0].Records[0].Fields[1].Value
+			if got != tt.want {
+				t.Errorf("amount = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGenerateHonorsStringValidations(t *testing.T) {
 	t.Parallel()
 	project := &ir.Project{
@@ -375,6 +424,39 @@ func TestGenerateClampsNonPositiveMaxLength(t *testing.T) {
 			got := ds.Entities[0].Records[0].Fields[1].Value
 			if got != tt.want {
 				t.Errorf("name = %v, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestStringValueMaxLengthClamp pins the defensive max_length clamp on a
+// hand-built field: an oversized max leaves the base string untouched, a zero
+// (or negative) max empties it, and a smaller max truncates to that length.
+func TestStringValueMaxLengthClamp(t *testing.T) {
+	t.Parallel()
+	const base = "mock_name_1" // len(base) == 11
+	tests := []struct {
+		name string
+		max  string
+		want string
+	}{
+		{name: "max above length is a no-op", max: "1000", want: base},
+		{name: "max equal to length is a no-op", max: "11", want: base},
+		{name: "max zero is empty", max: "0", want: ""},
+		{name: "max negative is empty", max: "-1", want: ""},
+		{name: "max below length truncates", max: "4", want: "mock"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			field := ir.Field{
+				Name:         "name",
+				DatabaseType: "string",
+				Validations:  []ir.Validation{{Name: "max", Value: tt.max}},
+			}
+			got := stringValue(field, 0)
+			if got != tt.want {
+				t.Errorf("stringValue(max=%q) = %q, want %q", tt.max, got, tt.want)
 			}
 		})
 	}
