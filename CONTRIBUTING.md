@@ -150,7 +150,7 @@ See [Migrations](https://fellmonkey.github.io/domaincraft-site/docs/guides/migra
 
 ## Pull requests
 
-- One change per pull request, with a title in the form **«Area: what changed (#issue)»** — for example «CI: gate e2e by paths (#12)». The first word is the area (CI, Core, Bridges, Studio, Docs…), then a third-person verb.
+- One change per pull request, with a title in the form **«Area: what changed (#issue)»** — for example «CI: gate e2e by paths (#12)». The first word is the area (CI, Core, Bridges, Studio, Docs…), then a third-person verb. Keep the description short — facts, no water.
 - Anything larger than a small fix needs an agreed issue first — open one and wait before writing the code.
 - **Commits are signed and verified** (GitHub shows "Verified"); unverified commits are not accepted.
 - **An AI agent cannot be a contributor.** The author of a pull request is always a person, responsible for the change. AI may be used as a tool, but the description must state whether AI tools were used, which parts they wrote, and why.

@@ -1,5 +1,8 @@
 ## What this changes and why
 
+<!-- Title: Area: what changed (#issue) — e.g. "CI: gate e2e by paths (#12)".
+     Keep the description short: facts, no water. -->
+
 <!-- One change per pull request. Say what it does and what problem it solves. -->
 
 Fixes #
