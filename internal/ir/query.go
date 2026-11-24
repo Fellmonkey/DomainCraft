@@ -101,8 +101,7 @@ func (e IREntity) SearchableFields() []IRField {
 // primary key are excluded (the PK is the default order, not an explicit key).
 func (e IREntity) SortableFields() []IRField {
 	return e.queryFields(func(f IRField) bool {
-		return !f.IsFeatureField() && !f.IsPrimary && !f.IsRelation &&
-			!f.IsEnum() && !f.IsArray() && !f.IsJson() && !f.IsHidden
+		return f.isFilterableScalar() && !f.IsEnum()
 	})
 }
 

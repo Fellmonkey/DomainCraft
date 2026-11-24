@@ -15,6 +15,24 @@ import (
 	"github.com/DomainCraft/DomainCraft/internal/packages"
 )
 
+// safeBridgeSource resolves a template or helper path declared by bridge.yaml
+// and rejects paths that escape the bridge directory.
+func safeBridgeSource(dir, rel string) (string, error) {
+	if !filepath.IsLocal(rel) {
+		return "", fmt.Errorf("unsafe bridge source path %q", rel)
+	}
+	path := filepath.Join(dir, rel)
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve bridge dir: %w", err)
+	}
+	if real, err := filepath.EvalSymlinks(path); err == nil &&
+		real != realDir && !strings.HasPrefix(real, realDir+string(filepath.Separator)) {
+		return "", fmt.Errorf("bridge source path %q escapes the bridge directory", rel)
+	}
+	return path, nil
+}
+
 // Render renders the IR through every bridge in the chain and returns the
 // written paths and the file manifest.
 func (r *Renderer) Render(project *ir.IRProject, outputDir string) ([]string, []RenderedFile, error) {
@@ -43,7 +61,10 @@ func (r *Renderer) Render(project *ir.IRProject, outputDir string) ([]string, []
 		if src.config.Helpers == "" {
 			continue
 		}
-		helperPath := filepath.Join(src.dir, src.config.Helpers)
+		helperPath, err := safeBridgeSource(src.dir, src.config.Helpers)
+		if err != nil {
+			return nil, nil, err
+		}
 		helperBytes, err := os.ReadFile(helperPath)
 		if err != nil {
 			return nil, nil, fmt.Errorf("read helpers %s: %w", src.config.Helpers, err)
@@ -67,7 +88,10 @@ func (r *Renderer) Render(project *ir.IRProject, outputDir string) ([]string, []
 				continue
 			}
 
-			sourcePath := filepath.Join(src.dir, spec.Source)
+			sourcePath, err := safeBridgeSource(src.dir, spec.Source)
+			if err != nil {
+				return nil, nil, err
+			}
 			tplBytes, err := os.ReadFile(sourcePath)
 			if err != nil {
 				return nil, nil, fmt.Errorf("read template %s: %w", spec.Source, err)

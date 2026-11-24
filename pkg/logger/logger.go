@@ -28,7 +28,7 @@ func (l *Logger) SetWriter(w io.Writer) {
 
 // Info logs a key stage message (e.g. "Validating schema...").
 // Safe to call on a nil Logger (no-op), so renderers can accept an optional logger.
-func (l *Logger) Info(format string, args ...interface{}) {
+func (l *Logger) Info(format string, args ...any) {
 	if l == nil {
 		return
 	}
@@ -42,7 +42,7 @@ func (l *Logger) Info(format string, args ...interface{}) {
 
 // Success logs a completed stage (e.g. "✓ Generated 12 files").
 // Safe to call on a nil Logger (no-op).
-func (l *Logger) Success(format string, args ...interface{}) {
+func (l *Logger) Success(format string, args ...any) {
 	if l == nil {
 		return
 	}
@@ -56,7 +56,7 @@ func (l *Logger) Success(format string, args ...interface{}) {
 
 // Warn logs a non-fatal warning.
 // Safe to call on a nil Logger (no-op).
-func (l *Logger) Warn(format string, args ...interface{}) {
+func (l *Logger) Warn(format string, args ...any) {
 	if l == nil {
 		return
 	}
@@ -70,7 +70,7 @@ func (l *Logger) Warn(format string, args ...interface{}) {
 
 // Error logs an error message (does not exit).
 // Safe to call on a nil Logger (no-op).
-func (l *Logger) Error(format string, args ...interface{}) {
+func (l *Logger) Error(format string, args ...any) {
 	if l == nil {
 		return
 	}

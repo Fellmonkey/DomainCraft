@@ -36,15 +36,15 @@ func main() {
 	<-c
 }
 
-func versionFunc(_ js.Value, _ []js.Value) interface{} {
+func versionFunc(_ js.Value, _ []js.Value) any {
 	return version
 }
 
-func specmetaFunc(_ js.Value, _ []js.Value) interface{} {
+func specmetaFunc(_ js.Value, _ []js.Value) any {
 	return marshal(specmeta.SpecmetaJSON())
 }
 
-func validate(_ js.Value, args []js.Value) interface{} {
+func validate(_ js.Value, args []js.Value) any {
 	if len(args) < 1 {
 		return marshal(validationResult{
 			Errors: []validationError{{Message: "no YAML input provided"}},
@@ -70,7 +70,7 @@ func validate(_ js.Value, args []js.Value) interface{} {
 	return marshal(validationResult{Errors: result})
 }
 
-func parseField(_ js.Value, args []js.Value) interface{} {
+func parseField(_ js.Value, args []js.Value) any {
 	if len(args) < 1 {
 		return marshal(map[string]string{"error": "no field definition provided"})
 	}
@@ -87,7 +87,7 @@ func parseField(_ js.Value, args []js.Value) interface{} {
 	return marshal(fd)
 }
 
-func parseDomain(_ js.Value, args []js.Value) interface{} {
+func parseDomain(_ js.Value, args []js.Value) any {
 	if len(args) < 1 {
 		return marshal(map[string]string{"error": "no YAML input provided"})
 	}
@@ -98,7 +98,7 @@ func parseDomain(_ js.Value, args []js.Value) interface{} {
 	return marshal(raw)
 }
 
-func marshal(v interface{}) string {
+func marshal(v any) string {
 	data, err := json.Marshal(v)
 	if err != nil {
 		data, _ = json.Marshal(map[string]string{"error": "marshal failed"})

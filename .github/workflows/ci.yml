@@ -53,6 +53,9 @@ jobs:
       - name: Test
         run: go test ./...
 
+      - name: Integration tests
+        run: go test -tags=integration ./internal/bridge
+
   schema-check:
     name: Verify generated schema is up to date
     runs-on: ubuntu-latest

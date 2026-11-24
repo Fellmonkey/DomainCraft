@@ -187,7 +187,8 @@ type Diff struct {
 
 // IsEmpty reports whether the diff contains nothing actionable.
 func (d *Diff) IsEmpty() bool {
-	return len(d.Deleted) == 0 && len(d.Renamed) == 0 && len(d.TypeChanges) == 0 && len(d.FieldRenames) == 0 && d.NamespaceRename == nil
+	hasNoChanges := len(d.Deleted) == 0 && len(d.Renamed) == 0 && len(d.TypeChanges) == 0 && len(d.FieldRenames) == 0
+	return hasNoChanges && d.NamespaceRename == nil
 }
 
 // HasSchemaChanges reports whether the diff contains changes that must reach the

@@ -12,7 +12,7 @@ type SeedValue struct {
 	DBType     string      // IR database type (e.g. "uuid", "decimal", "Status", "array(int)")
 	IsRelation bool        // true when the field is a relation (FK or collection)
 	IsMany     bool        // true when the relation is a collection ([many])
-	Value      interface{} // native Go value (string, int64, float64, bool, []interface{}, map, nil)
+	Value      any // native Go value (string, int64, float64, bool, []any, map, nil)
 }
 
 // Kind returns the language-agnostic value kind for serialization, derived from

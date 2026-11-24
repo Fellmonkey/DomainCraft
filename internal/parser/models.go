@@ -134,7 +134,7 @@ type RawEntity struct {
 	FieldOrder  []string                 `yaml:"-" json:"fieldOrder"` // preserved from YAML — not a yaml tag
 	Indexes     []RawIndex               `yaml:"indexes" json:"indexes,omitempty"`
 	Permissions *RawPermissions          `yaml:"permissions" json:"permissions,omitempty"`
-	Seed        []map[string]interface{} `yaml:"seed" json:"seed,omitempty"`
+	Seed        []map[string]any `yaml:"seed" json:"seed,omitempty"`
 }
 
 // RawPermissions represents entity permissions before parsing.

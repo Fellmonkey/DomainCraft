@@ -154,7 +154,7 @@ type IREntity struct {
 	RelationsOut []IRRelation
 	RelationsIn  []IRRelation
 	Indexes      []IRIndex
-	Seed         []map[string]interface{}
+	Seed         []map[string]any
 	Permissions  *IRPermissions
 }
 

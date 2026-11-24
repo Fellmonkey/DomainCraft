@@ -321,7 +321,8 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		autoMigrate = false
 	}
 	shouldMigrate := migrateFlag || autoMigrate
-	if applied && shouldMigrate && rendererInstance.MigrationConfig() != nil && rendererInstance.MigrationConfig().Enabled {
+	cfg := rendererInstance.MigrationConfig()
+	if applied && shouldMigrate && cfg != nil && cfg.Enabled {
 		if err := runDatabaseMigrations(rendererInstance.MigrationConfig(), outputDir, cmd, log); err != nil {
 			if migrateFlag {
 				// Explicit --migrate: a failed migration is a hard error.

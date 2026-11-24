@@ -158,7 +158,7 @@ func mergeLiterals(base, overlay map[string]LiteralSpec) map[string]LiteralSpec 
 // getBridgeSpecificFuncs loads type_mappings from every bridge in the chain
 // (base-first, adapter last) and merges them before building the language
 // functions, so an adapter inherits its base's type mapping and can override it.
-func (r *Renderer) getBridgeSpecificFuncs() (map[string]interface{}, error) {
+func (r *Renderer) getBridgeSpecificFuncs() (map[string]any, error) {
 	var merged *typeMappings
 	for _, src := range r.sources {
 		m, err := r.loadTypeMappings(src.dir)
@@ -173,8 +173,8 @@ func (r *Renderer) getBridgeSpecificFuncs() (map[string]interface{}, error) {
 // buildBridgeFuncs turns a merged type_mappings into the template func map that
 // bridges use to map IR types into language-specific code. A nil mapping (no
 // type_mappings.yaml anywhere in the chain) yields no bridge-specific funcs.
-func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]interface{} {
-	bridgeFuncs := make(map[string]interface{})
+func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
+	bridgeFuncs := make(map[string]any)
 	if m == nil {
 		return bridgeFuncs
 	}

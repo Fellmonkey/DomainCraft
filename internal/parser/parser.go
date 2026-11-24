@@ -38,7 +38,7 @@ type ParsedEntity struct {
 	FieldOrder  []string // field order for generation
 	Indexes     []*ParsedIndex
 	Permissions *ParsedPermissions
-	Seed        []map[string]interface{}
+	Seed        []map[string]any
 }
 
 // ParsedField represents a fully parsed field

@@ -42,7 +42,7 @@ func Generate(project *ir.IRProject, opts Options) *ir.SeedDataset {
 	// Primary keys generated so far, keyed by entity name, so FK references can
 	// point at real, already-generated parent rows (project.Entities is already
 	// topologically sorted by the IR builder).
-	generated := map[string][]interface{}{}
+	generated := map[string][]any{}
 	counter := opts.Seed
 
 	for i := range project.Entities {
@@ -59,7 +59,7 @@ func Generate(project *ir.IRProject, opts Options) *ir.SeedDataset {
 				if field.IsSensitive() || field.IsFeatureField() {
 					continue
 				}
-				v := valueFor(field, entity, project, generated, &counter, n)
+				v := valueFor(field, project, generated, &counter, n)
 				rec.Fields = append(rec.Fields, ir.SeedValue{
 					Field:      field.Name,
 					DBType:     field.DatabaseType,
@@ -135,7 +135,7 @@ func primaryKey(entity *ir.IREntity) *ir.IRField {
 
 // valueFor produces one field value for generated mock seed, honoring type,
 // validations, defaults and relations.
-func valueFor(field ir.IRField, entity *ir.IREntity, project *ir.IRProject, generated map[string][]interface{}, counter *int, record int) interface{} {
+func valueFor(field ir.IRField, project *ir.IRProject, generated map[string][]any, counter *int, record int) any {
 	// Default value wins when the model declares one (and it's not a function).
 	if field.DefaultValue != "" && !field.DefaultIsFunc {
 		return coerceValue(field.DefaultValue, field.DatabaseType)
@@ -152,7 +152,7 @@ func valueFor(field ir.IRField, entity *ir.IREntity, project *ir.IRProject, gene
 // collection the value is nil (the child side owns the FK); for a single FK it
 // returns the parent's primary-key value. When no parent was generated yet
 // (self-reference or a dependency cycle) it falls back to nil.
-func relationValue(field ir.IRField, generated map[string][]interface{}) interface{} {
+func relationValue(field ir.IRField, generated map[string][]any) any {
 	if field.IsMany {
 		return nil
 	}
@@ -164,13 +164,13 @@ func relationValue(field ir.IRField, generated map[string][]interface{}) interfa
 }
 
 // scalarValue produces a scalar value from the field's type and constraints.
-func scalarValue(field ir.IRField, project *ir.IRProject, counter *int, record int) interface{} {
+func scalarValue(field ir.IRField, project *ir.IRProject, counter *int, record int) any {
 	dbType := field.DatabaseType
 
 	if field.IsArray() {
 		inner := specmeta.ParseArrayInner(dbType)
 		elem := innerValue(inner, field, project, counter, record)
-		return []interface{}{elem}
+		return []any{elem}
 	}
 
 	switch dbType {
@@ -201,7 +201,7 @@ func scalarValue(field ir.IRField, project *ir.IRProject, counter *int, record i
 }
 
 // innerValue produces a scalar for an array element type.
-func innerValue(dbType string, field ir.IRField, project *ir.IRProject, counter *int, record int) interface{} {
+func innerValue(dbType string, field ir.IRField, project *ir.IRProject, counter *int, record int) any {
 	inner := ir.IRField{Name: field.Name, DatabaseType: dbType}
 	if specmeta.IsPrimitive(strings.ToLower(dbType)) {
 		return scalarValue(inner, project, counter, record)
@@ -297,19 +297,19 @@ func floatValue(field ir.IRField, record int) float64 {
 
 // coerceValue converts a declared seed/default value (from YAML: string, number,
 // bool, list or map) to the field's native Go type.
-func coerceValue(value interface{}, dbType string) interface{} {
+func coerceValue(value any, dbType string) any {
 	inner := specmeta.ParseArrayInner(dbType)
 
 	// Arrays produce a slice of coerced elements.
 	if specmeta.IsArrayType(dbType) {
-		if list, ok := value.([]interface{}); ok {
-			out := make([]interface{}, 0, len(list))
+		if list, ok := value.([]any); ok {
+			out := make([]any, 0, len(list))
 			for _, item := range list {
 				out = append(out, coerceValue(item, inner))
 			}
 			return out
 		}
-		return []interface{}{}
+		return []any{}
 	}
 
 	switch {

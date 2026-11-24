@@ -65,7 +65,9 @@ func (r *Resolver) Resolve(input string) (string, error) {
 	// 3. GitHub shorthand "owner/repo" — clone directly. An owner of "." or
 	// ".." would be a path fragment, not a GitHub user (looksLikePath already
 	// rejects dot-led inputs; this keeps step 3 correct on its own too).
-	if parts := strings.SplitN(input, "/", 2); len(parts) == 2 && parts[0] != "" && parts[1] != "" && parts[0] != "." && parts[0] != ".." {
+	parts := strings.SplitN(input, "/", 2)
+	isOwnerRepo := len(parts) == 2 && parts[0] != "" && parts[1] != "" && parts[0] != "." && parts[0] != ".."
+	if isOwnerRepo {
 		if strings.ContainsAny(parts[1], "/\\") || parts[1] == "." || parts[1] == ".." {
 			return "", fmt.Errorf("bridge %q not found: invalid repository name", input)
 		}
