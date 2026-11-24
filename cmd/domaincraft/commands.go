@@ -941,7 +941,7 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 			shell = "sh"
 			argv = []string{"-c", command}
 		}
-		c := execCommandFn(commandCtx, shell, argv...) //nolint:gosec // shell line is gated by explicit bridge-command consent
+		c := execCommandFn(commandCtx, shell, argv...)
 		c.Dir = outDir
 		c.Stdout = out
 		c.Stderr = out
@@ -1016,7 +1016,7 @@ func sanitizeCommandLine(s string) string {
 			continue
 		}
 		if isInvisibleFormat(r) {
-			b.WriteString(fmt.Sprintf("<U+%04X>", r))
+			fmt.Fprintf(&b, "<U+%04X>", r)
 			i += size
 			continue
 		}

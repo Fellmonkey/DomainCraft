@@ -264,7 +264,7 @@ func ApplyUpdate(entry RegistryEntry, u *Update) (string, error) {
 // contract this core cannot support. An unreadable manifest is an error, never
 // a pass — the same rule the fast path applies to FETCH_HEAD.
 func checkCachedContract(entry RegistryEntry) error {
-	data, err := os.ReadFile(filepath.Join(CachePath(entry), "bridge.yaml")) //nolint:gosec // path built from a validated cache ID
+	data, err := os.ReadFile(filepath.Join(CachePath(entry), "bridge.yaml"))
 	if err != nil {
 		return fmt.Errorf("read re-cloned bridge manifest: %w", err)
 	}
