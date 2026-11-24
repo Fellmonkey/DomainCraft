@@ -95,11 +95,57 @@ func TestBuildBridgeFuncs_DefaultArrayFormatAndOptionalFuncs(t *testing.T) {
 		t.Error("inputType must be absent when no input_types are declared")
 	}
 	arr := funcs["languageType"].(func(string, bool) string)
-	if got := arr("array(int)", false); got != "int32[]" {
-		t.Errorf("default array format = %q, want int32[]", got)
+	if got := arr("array(int)", false); got != "" {
+		t.Errorf("array type without array_format = %q, want an empty expression (no core-side syntax)", got)
 	}
 	if got := arr("int", true); got != "int32" {
 		t.Errorf("empty nullable_format must not append a suffix, got %q", got)
+	}
+}
+
+// With no literal/array/input specs declared, the core must emit no C# or UI
+// syntax of its own. Missing specs produce empty expressions and a warning.
+func TestBuildBridgeFuncsRequiresLiteralSpecs(t *testing.T) {
+	t.Parallel()
+	m := &typeMappings{
+		Types:      map[string]string{"int": "MyInt"},
+		InputTypes: map[string]string{"string": "textbox"},
+	}
+	funcs := buildBridgeFuncs(m, logger.New())
+
+	literalDefault := funcs["literalDefault"].(func(string) string)
+	for _, dbType := range []string{"boolean", "OrderStatus", "array(int)"} {
+		if got := literalDefault(dbType); got != "" {
+			t.Errorf("literalDefault(%q) = %q, want an empty expression", dbType, got)
+		}
+	}
+	literalMember := funcs["literalMember"].(func(string, string) string)
+	if got := literalMember("OrderStatus", "draft"); got != "" {
+		t.Errorf("literalMember = %q, want an empty expression", got)
+	}
+	arrayOpen := funcs["arrayLiteralOpen"].(func(string) string)
+	if got := arrayOpen("array(int)"); got != "" {
+		t.Errorf("arrayLiteralOpen = %q, want an empty expression", got)
+	}
+	if got := funcs["arrayLiteralClose"].(func() string)(); got != "" {
+		t.Errorf("arrayLiteralClose = %q, want an empty expression", got)
+	}
+	languageType := funcs["languageType"].(func(string, bool) string)
+	if got := languageType("array(int)", false); got != "" {
+		t.Errorf("languageType(array(int)) = %q, want an empty expression without array_format", got)
+	}
+	inputType := funcs["inputType"].(func(string) string)
+	if got := inputType("unknown"); got != "" {
+		t.Errorf("inputType(unknown) = %q, want an empty expression", got)
+	}
+
+	// A bridge that declares the generic enum zero spec keeps its own syntax:
+	// the core reads it from type_mappings.yaml, never hardcodes it.
+	withZero := testMappings()
+	withZero.Literals["enum"] = LiteralSpec{Zero: "(%s)0"}
+	declared := buildBridgeFuncs(withZero, logger.New())["literalDefault"].(func(string) string)
+	if got := declared("OrderStatus"); got != "(OrderStatus)0" {
+		t.Errorf("declared enum zero = %q, want (OrderStatus)0", got)
 	}
 }
 
@@ -137,8 +183,8 @@ func TestBuildBridgeFuncs_LiteralDefault(t *testing.T) {
 	cases := []struct{ name, dbType, want string }{
 		{"declared default expression", "uuid", "Guid.NewGuid()"},
 		{"scalar default literal", "decimal", "0m"},
-		{"no default spec falls back to default(T)", "boolean", "default(boolean)"},
-		{"enum generic zero fallback", "OrderStatus", "(OrderStatus)0"},
+		{"no default spec emits no language syntax", "boolean", ""},
+		{"no enum zero spec emits no language syntax", "OrderStatus", ""},
 		{"empty array literal", "array(int)", "new List<int>()"},
 	}
 	for _, c := range cases {
@@ -171,10 +217,10 @@ func TestBuildBridgeFuncs_LiteralMember(t *testing.T) {
 	}
 
 	m := testMappings()
-	m.Literals["enum"] = LiteralSpec{} // Member unset → Type.Value fallback
+	m.Literals["enum"] = LiteralSpec{} // Member unset → no core-side Type.Member syntax
 	fallback := buildBridgeFuncs(m, logger.New())["literalMember"].(func(string, string) string)
-	if got := fallback("OrderStatus", "draft"); got != "OrderStatus.Draft" {
-		t.Errorf("member fallback = %q, want OrderStatus.Draft", got)
+	if got := fallback("OrderStatus", "draft"); got != "" {
+		t.Errorf("member fallback = %q, want an empty expression", got)
 	}
 }
 
@@ -221,8 +267,8 @@ func TestBuildBridgeFuncs_ArrayLiteralAndHelpers(t *testing.T) {
 	if got := inputType("array(datetime)"); got != "DatePicker" {
 		t.Errorf("inputType(array(datetime)) = %q, want the inner type's mapping", got)
 	}
-	if got := inputType("unknown"); got != "Input" {
-		t.Errorf("inputType(unknown) = %q, want the Input fallback", got)
+	if got := inputType("unknown"); got != "" {
+		t.Errorf("inputType(unknown) = %q, want an empty UI type when no mapping is declared", got)
 	}
 }
 
@@ -262,7 +308,58 @@ func TestMergeTypeMappings_AdapterWinsOnConflicts(t *testing.T) {
 	if !merged.EnumNullable {
 		t.Error("enum_nullable should OR-merge across the chain")
 	}
-	if mergeLiterals(nil, nil) != nil {
+	if mergeMaps[LiteralSpec](nil, nil) != nil {
 		t.Error("merging two empty literal maps should yield nil")
+	}
+}
+
+func TestMergeTypeMappingsAllFields(t *testing.T) {
+	t.Parallel()
+	base := &typeMappings{
+		Types:          map[string]string{"uuid": "BaseId", "int": "int"},
+		Behaviors:      map[string]string{"cascade": "BaseCascade", "restrict": "Restrict"},
+		ValueTypes:     []string{"BaseId"},
+		ArrayFormat:    "BaseArray<%s>",
+		NullableFormat: "?",
+		InputTypes:     map[string]string{"string": "base-input", "int": "base-number"},
+		Literals:       map[string]LiteralSpec{"uuid": {Default: "base"}, "int": {Default: "0"}},
+		Array:          ArrayLiteralSpec{Open: "base(", Close: "base)", Empty: "baseEmpty"},
+		ColumnSizes:    map[string]string{"string": "100", "uuid": "36"},
+	}
+	overlay := &typeMappings{
+		Types:          map[string]string{"uuid": "AdapterId"},
+		Behaviors:      map[string]string{"cascade": "AdapterCascade"},
+		InputTypes:     map[string]string{"string": "adapter-input"},
+		Literals:       map[string]LiteralSpec{"uuid": {Default: "adapter"}},
+		ColumnSizes:    map[string]string{"string": "255"},
+		ArrayFormat:    "AdapterArray<%s>",
+		NullableFormat: " | null",
+		EnumNullable:   true,
+		ValueTypes:     []string{"AdapterId"},
+		Array:          ArrayLiteralSpec{Open: "adapter(", Close: "adapter)", Empty: "adapterEmpty"},
+	}
+
+	merged := mergeTypeMappings(base, overlay)
+	if merged.Types["uuid"] != "AdapterId" || merged.Types["int"] != "int" {
+		t.Errorf("Types = %v, want adapter override and base entry", merged.Types)
+	}
+	if merged.Behaviors["cascade"] != "AdapterCascade" || merged.Behaviors["restrict"] != "Restrict" {
+		t.Errorf("Behaviors = %v, want adapter override and base entry", merged.Behaviors)
+	}
+	if merged.InputTypes["string"] != "adapter-input" || merged.InputTypes["int"] != "base-number" {
+		t.Errorf("InputTypes = %v, want adapter override and base entry", merged.InputTypes)
+	}
+	if merged.ColumnSizes["string"] != "255" || merged.ColumnSizes["uuid"] != "36" {
+		t.Errorf("ColumnSizes = %v, want adapter override and base entry", merged.ColumnSizes)
+	}
+	if merged.Literals["uuid"].Default != "adapter" || merged.Literals["int"].Default != "0" {
+		t.Errorf("Literals = %v, want adapter override and base entry", merged.Literals)
+	}
+	if merged.ArrayFormat != "AdapterArray<%s>" || merged.NullableFormat != " | null" ||
+		!merged.EnumNullable || len(merged.ValueTypes) != 1 || merged.ValueTypes[0] != "AdapterId" {
+		t.Errorf("scalar fields = %+v, want the adapter's values", merged)
+	}
+	if merged.Array != overlay.Array {
+		t.Errorf("Array = %+v, want %+v", merged.Array, overlay.Array)
 	}
 }

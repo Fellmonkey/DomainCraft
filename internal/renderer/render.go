@@ -38,6 +38,24 @@ func safeBridgeSource(dir, rel string) (string, error) {
 	return path, nil
 }
 
+// safeOutputPathChecked is the shared implementation: lexical containment,
+// absolute output dir, then the caller's symlink policy. Both wrappers keep the
+// same error messages and return the same absolute target.
+func safeOutputPathChecked(outputDir, renderedTarget string, refuse func(base, target string) error) (string, error) {
+	absTarget, _, err := fsutil.LocalPathWithin(outputDir, renderedTarget)
+	if err != nil {
+		return "", fmt.Errorf("template target path %s: %w", renderedTarget, err)
+	}
+	absOutput, err := filepath.Abs(outputDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve output directory: %w", err)
+	}
+	if err := refuse(absOutput, absTarget); err != nil {
+		return "", fmt.Errorf("template target path %s: %w", renderedTarget, err)
+	}
+	return absTarget, nil
+}
+
 // safeOutputPath resolves a rendered template target against outputDir. It keeps
 // the lexical containment check and additionally rejects a symlink at every
 // existing path component (including the final one): os.Rename follows a
@@ -45,36 +63,16 @@ func safeBridgeSource(dir, rel string) (string, error) {
 // output tree even when the lexical path is clean. Missing components are left
 // to the caller's MkdirAll and are re-checked before the file is committed.
 func safeOutputPath(outputDir, renderedTarget string) (string, error) {
-	absTarget, _, err := fsutil.LocalPathWithin(outputDir, renderedTarget)
-	if err != nil {
-		return "", fmt.Errorf("template target path %s: %w", renderedTarget, err)
-	}
-	absOutput, err := filepath.Abs(outputDir)
-	if err != nil {
-		return "", fmt.Errorf("resolve output directory: %w", err)
-	}
-	if err := fsutil.RefuseSymlinks(absOutput, absTarget); err != nil {
-		return "", fmt.Errorf("template target path %s: %w", renderedTarget, err)
-	}
-	return absTarget, nil
+	return safeOutputPathChecked(outputDir, renderedTarget, fsutil.RefuseSymlinks)
 }
 
 // safeOutputPathCached mirrors safeOutputPath but reuses directory components
 // verified by earlier containment checks in the same Render. The final target
 // component is always re-inspected. A nil cache gives a fully fresh walk.
 func safeOutputPathCached(outputDir, renderedTarget string, verified map[string]bool) (string, error) {
-	absTarget, _, err := fsutil.LocalPathWithin(outputDir, renderedTarget)
-	if err != nil {
-		return "", fmt.Errorf("template target path %s: %w", renderedTarget, err)
-	}
-	absOutput, err := filepath.Abs(outputDir)
-	if err != nil {
-		return "", fmt.Errorf("resolve output directory: %w", err)
-	}
-	if err := fsutil.RefuseSymlinksCached(absOutput, absTarget, verified); err != nil {
-		return "", fmt.Errorf("template target path %s: %w", renderedTarget, err)
-	}
-	return absTarget, nil
+	return safeOutputPathChecked(outputDir, renderedTarget, func(base, target string) error {
+		return fsutil.RefuseSymlinksCached(base, target, verified)
+	})
 }
 
 // beforeCommitHook is a test seam called once between staging and commit. It is
@@ -162,8 +160,8 @@ func (r *Renderer) Render(project *ir.Project, outputDir string) ([]string, []Re
 	}
 
 	// Resolve package versions once — avoids repeated HTTP requests per template.
-	// The target framework constrains the major version (net10.0 cannot use
-	// packages that only ship for net11.0).
+	// The project's platform constrains the major version; the core bakes in no
+	// language-specific framework default.
 	pkgs := r.resolvePackages(project)
 
 	// Parse shared helper templates from every bridge in the chain (base first,
@@ -387,7 +385,7 @@ func (r *Renderer) Render(project *ir.Project, outputDir string) ([]string, []Re
 	// files are already correct and rollback must not consume the backups now.
 	for _, w := range committed {
 		if w.backup != "" {
-			if err := os.Remove(w.backup); err != nil && !errors.Is(err, os.ErrNotExist) && r.log != nil {
+			if err := os.Remove(w.backup); err != nil && !errors.Is(err, os.ErrNotExist) {
 				r.log.Warn("remove backup %s: %v", w.backup, err)
 			}
 		}
@@ -478,14 +476,17 @@ func (r *Renderer) shouldRenderContext(spec TemplateSpec, context RenderContext)
 // When the renderer is composed (extends chain), registry_packages from all
 // bridges are merged base-first so inner layers can declare their own
 // dependencies; the adapter's values win on conflicts.
+// targetFramework returns the project's declared platform. An absent platform
+// leaves package version selection unconstrained — the core has no TFM default.
+func targetFramework(project *ir.Project) string {
+	if project == nil {
+		return ""
+	}
+	return project.Platform
+}
+
 func (r *Renderer) resolvePackages(project *ir.Project) map[string]string {
-	framework := ""
-	if project != nil {
-		framework = project.Platform
-	}
-	if framework == "" {
-		framework = "net10.0" // same default as the C# csproj templates
-	}
+	framework := targetFramework(project)
 
 	// Merge registry_packages from all sources in the chain (base-first,
 	// adapter wins on conflicts — consistent with type_mappings merge).

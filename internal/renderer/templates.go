@@ -3,6 +3,7 @@ package renderer
 import (
 	"cmp"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -88,7 +89,7 @@ func (r *Renderer) loadTypeMappings(dir string) (*typeMappings, error) {
 	}
 	data, err := os.ReadFile(path) //nolint:gosec // path passed safeBridgeSource validation
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, err
@@ -110,25 +111,16 @@ func mergeTypeMappings(base, overlay *typeMappings) *typeMappings {
 	if overlay == nil {
 		overlay = &typeMappings{}
 	}
-	mergeStrings := func(dst, src map[string]string) map[string]string {
-		if len(dst) == 0 && len(src) == 0 {
-			return nil
-		}
-		m := make(map[string]string, len(dst)+len(src))
-		maps.Copy(m, dst)
-		maps.Copy(m, src)
-		return m
-	}
 	out := &typeMappings{
-		Types:          mergeStrings(base.Types, overlay.Types),
-		Behaviors:      mergeStrings(base.Behaviors, overlay.Behaviors),
-		InputTypes:     mergeStrings(base.InputTypes, overlay.InputTypes),
-		ColumnSizes:    mergeStrings(base.ColumnSizes, overlay.ColumnSizes),
+		Types:          mergeMaps(base.Types, overlay.Types),
+		Behaviors:      mergeMaps(base.Behaviors, overlay.Behaviors),
+		InputTypes:     mergeMaps(base.InputTypes, overlay.InputTypes),
+		ColumnSizes:    mergeMaps(base.ColumnSizes, overlay.ColumnSizes),
 		ArrayFormat:    cmp.Or(overlay.ArrayFormat, base.ArrayFormat),
 		NullableFormat: cmp.Or(overlay.NullableFormat, base.NullableFormat),
 		EnumNullable:   overlay.EnumNullable || base.EnumNullable,
 		ValueTypes:     overlay.ValueTypes,
-		Literals:       mergeLiterals(base.Literals, overlay.Literals),
+		Literals:       mergeMaps(base.Literals, overlay.Literals),
 		Array: ArrayLiteralSpec{
 			Open:  cmp.Or(overlay.Array.Open, base.Array.Open),
 			Close: cmp.Or(overlay.Array.Close, base.Array.Close),
@@ -141,13 +133,15 @@ func mergeTypeMappings(base, overlay *typeMappings) *typeMappings {
 	return out
 }
 
-func mergeLiterals(base, overlay map[string]LiteralSpec) map[string]LiteralSpec {
-	if len(base) == 0 && len(overlay) == 0 {
+// mergeMaps overlays src on dst without mutating either input. Two empty maps
+// merge to nil so bridges with no mapping keep a zero-valued result.
+func mergeMaps[V any](dst, src map[string]V) map[string]V {
+	if len(dst) == 0 && len(src) == 0 {
 		return nil
 	}
-	m := make(map[string]LiteralSpec, len(base)+len(overlay))
-	maps.Copy(m, base)
-	maps.Copy(m, overlay)
+	m := make(map[string]V, len(dst)+len(src))
+	maps.Copy(m, dst)
+	maps.Copy(m, src)
 	return m
 }
 
@@ -166,6 +160,21 @@ func (r *Renderer) getBridgeSpecificFuncs() (map[string]any, error) {
 	return buildBridgeFuncs(merged, r.log), nil
 }
 
+// formatSpec renders a bridge-declared printf spec. An absent spec yields an
+// empty expression — the core never substitutes syntax a bridge did not declare.
+func formatSpec(format string, args ...any) string {
+	if format == "" {
+		return ""
+	}
+	return fmt.Sprintf(format, args...)
+}
+
+// warnMissingSpec reports a spec the bridge must declare in type_mappings.yaml.
+// Logger.Warn is nil-safe, so silent mode needs no extra guard.
+func warnMissingSpec(log *logger.Logger, kind, key string) {
+	log.Warn("type_mappings.yaml has no %s for %q; emitting an empty expression", kind, key)
+}
+
 // buildBridgeFuncs turns a merged type_mappings into the template func map that
 // bridges use to map IR types into language-specific code. A nil mapping (no
 // type_mappings.yaml anywhere in the chain) yields no bridge-specific funcs.
@@ -174,38 +183,31 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
 	if m == nil {
 		return bridgeFuncs
 	}
-	mapping := m
-
-	arrayFormat := mapping.ArrayFormat
-	if arrayFormat == "" {
-		arrayFormat = "%s[]" // default: generic array syntax (override in type_mappings.yaml for target language)
-	}
-
-	nullableSuffix := mapping.NullableFormat
-	if nullableSuffix == "" {
-		nullableSuffix = "" // no default — bridges must set nullable_format explicitly
-	}
 
 	// wrapNullable applies the bridge-specific nullable format to a type name.
 	wrapNullable := func(typeName string) string {
-		return typeName + nullableSuffix
+		return typeName + m.NullableFormat
 	}
 
 	// Build set of value types for quick lookup
-	valueTypeSet := make(map[string]bool, len(mapping.ValueTypes))
-	for _, vt := range mapping.ValueTypes {
+	valueTypeSet := make(map[string]bool, len(m.ValueTypes))
+	for _, vt := range m.ValueTypes {
 		valueTypeSet[vt] = true
 	}
 
 	// wrapArray wraps a type name in the bridge-specific array format.
 	wrapArray := func(elementType string) string {
-		return fmt.Sprintf(arrayFormat, elementType)
+		if m.ArrayFormat == "" {
+			warnMissingSpec(log, "array_format", elementType)
+			return ""
+		}
+		return fmt.Sprintf(m.ArrayFormat, elementType)
 	}
 
 	// languageType maps IR database types to language-specific types via type_mappings.yaml
 	languageType := func(dbType string, nullable bool) string {
 		// Check explicit type mapping first (covers primitives and arrays)
-		if mapped, ok := mapping.Types[dbType]; ok {
+		if mapped, ok := m.Types[dbType]; ok {
 			if nullable && !specmeta.IsArrayType(dbType) {
 				return wrapNullable(mapped)
 			}
@@ -220,7 +222,7 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
 			if specmeta.IsArrayType(dbType) {
 				return wrapArray(formatted)
 			}
-			if nullable && mapping.EnumNullable {
+			if nullable && m.EnumNullable {
 				return wrapNullable(formatted)
 			}
 			return formatted
@@ -228,7 +230,7 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
 
 		// Primitive array not in explicit mapping — wrap inner type
 		if specmeta.IsArrayType(dbType) {
-			if mapped, ok := mapping.Types[inner]; ok {
+			if mapped, ok := m.Types[inner]; ok {
 				return wrapArray(mapped)
 			}
 			log.Warn("type_mappings.yaml has no type for %q; emitting raw type name %q", inner, inner)
@@ -245,7 +247,7 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
 	// float64, bool) or the raw string from a domain.yaml default.
 	bridgeFuncs["literalValue"] = func(dbType string, value any) string {
 		kind := ir.KindOf(dbType)
-		spec := mapping.Literals[dbType]
+		spec := m.Literals[dbType]
 		switch kind {
 		case "text":
 			return jsonValue(value)
@@ -253,34 +255,47 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
 			return fmt.Sprintf("%v", value) + spec.Suffix
 		case "uuid", "date", "datetime", "json":
 			if spec.Parse == "" {
-				return jsonValue(value)
+				warnMissingSpec(log, "literals.parse", dbType)
+				return jsonValue(value) // JSON literal is language-neutral, not a target-language expression
 			}
-			return fmt.Sprintf(spec.Parse, jsonValue(value))
+			return formatSpec(spec.Parse, jsonValue(value))
 		case "enum":
-			e := mapping.Literals["enum"]
+			e := m.Literals["enum"]
 			if e.Parse == "" {
+				warnMissingSpec(log, "literals.enum.parse", dbType)
 				return jsonValue(value)
 			}
-			return fmt.Sprintf(e.Parse, languageType(dbType, false), jsonValue(textutil.PascalCase(fmt.Sprintf("%v", value))))
+			return formatSpec(e.Parse, languageType(dbType, false), jsonValue(textutil.PascalCase(fmt.Sprintf("%v", value))))
 		}
 		return jsonValue(value)
 	}
 
 	// literalDefault renders the value-less default expression for a type:
-	// a scalar default, a zero-valued enum, or an empty array.
+	// a scalar default, a zero-valued enum, or an empty array. Missing specs
+	// produce an empty expression and a warning; the core never invents one.
 	bridgeFuncs["literalDefault"] = func(dbType string) string {
-		if ir.KindOf(dbType) == "array" {
-			return fmt.Sprintf(mapping.Array.Empty, languageType(dbType, false))
-		}
-		spec := mapping.Literals[dbType]
-		if ir.KindOf(dbType) == "enum" {
-			if spec.Zero != "" {
-				return fmt.Sprintf(spec.Zero, languageType(dbType, false))
+		kind := ir.KindOf(dbType)
+		if kind == "array" {
+			if m.Array.Empty == "" {
+				warnMissingSpec(log, "array.empty", dbType)
+				return ""
 			}
-			return fmt.Sprintf("(%s)0", languageType(dbType, false))
+			return formatSpec(m.Array.Empty, languageType(dbType, false))
+		}
+		spec := m.Literals[dbType]
+		if kind == "enum" {
+			if spec.Zero == "" {
+				spec = m.Literals["enum"] // generic enum spec covers user-declared enums
+			}
+			if spec.Zero == "" {
+				warnMissingSpec(log, "literals.zero", dbType)
+				return ""
+			}
+			return formatSpec(spec.Zero, languageType(dbType, false))
 		}
 		if spec.Default == "" {
-			return "default(" + languageType(dbType, false) + ")"
+			warnMissingSpec(log, "literals.default", dbType)
+			return ""
 		}
 		return spec.Default
 	}
@@ -289,10 +304,12 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
 	// used for enum defaults in domain.yaml.
 	bridgeFuncs["literalMember"] = func(dbType string, value string) string {
 		if ir.KindOf(dbType) == "enum" {
-			if spec := mapping.Literals["enum"]; spec.Member != "" {
-				return fmt.Sprintf(spec.Member, languageType(dbType, false), textutil.PascalCase(value))
+			spec := m.Literals["enum"]
+			if spec.Member == "" {
+				warnMissingSpec(log, "literals.enum.member", dbType)
+				return ""
 			}
-			return languageType(dbType, false) + "." + textutil.PascalCase(value)
+			return formatSpec(spec.Member, languageType(dbType, false), textutil.PascalCase(value))
 		}
 		return jsonValue(value)
 	}
@@ -300,14 +317,18 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
 	// arrayLiteralOpen/Close wrap rendered elements in the bridge's array
 	// syntax (e.g. "new List<int> { " ... " }").
 	bridgeFuncs["arrayLiteralOpen"] = func(dbType string) string {
-		return fmt.Sprintf(mapping.Array.Open, languageType(dbType, false))
+		if m.Array.Open == "" {
+			warnMissingSpec(log, "array.open", dbType)
+			return ""
+		}
+		return formatSpec(m.Array.Open, languageType(dbType, false))
 	}
 	bridgeFuncs["arrayLiteralClose"] = func() string {
-		return mapping.Array.Close
+		return m.Array.Close
 	}
 
 	bridgeFuncs["isValueType"] = func(typeName string) bool {
-		if mapped, ok := mapping.Types[typeName]; ok {
+		if mapped, ok := m.Types[typeName]; ok {
 			return valueTypeSet[mapped]
 		}
 		return false
@@ -315,7 +336,7 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
 
 	bridgeFuncs["deleteBehaviorName"] = func(value string) string {
 		key := strings.ToLower(strings.TrimSpace(value))
-		if v, ok := mapping.Behaviors[key]; ok {
+		if v, ok := m.Behaviors[key]; ok {
 			return v
 		}
 		return textutil.PascalCase(value)
@@ -327,24 +348,25 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
 	// they live in type_mappings.yaml `column_sizes:`, keyed by IR type name.
 	// The input is the IR type name (element type for arrays, the field type
 	// otherwise).
-	if len(mapping.ColumnSizes) > 0 {
+	if len(m.ColumnSizes) > 0 {
 		bridgeFuncs["columnSize"] = func(dbType string) string {
-			return mapping.ColumnSizes[dbType]
+			return m.ColumnSizes[dbType]
 		}
 	}
 
-	// inputType maps IR database types to UI input components (e.g. "string" -> "Input", "datetime" -> "DatePicker").
-	// Bridges that generate UI code define input_types in their type_mappings.yaml.
-	if len(mapping.InputTypes) > 0 {
+	// inputType maps IR database types to UI input components. Bridges that
+	// generate UI code declare input_types in their type_mappings.yaml.
+	if len(m.InputTypes) > 0 {
 		bridgeFuncs["inputType"] = func(dbType string) string {
 			inner := specmeta.ParseArrayInner(dbType)
-			if mapped, ok := mapping.InputTypes[inner]; ok {
+			if mapped, ok := m.InputTypes[inner]; ok {
 				return mapped
 			}
-			if mapped, ok := mapping.InputTypes[dbType]; ok {
+			if mapped, ok := m.InputTypes[dbType]; ok {
 				return mapped
 			}
-			return "Input"
+			warnMissingSpec(log, "input type", dbType)
+			return ""
 		}
 	}
 

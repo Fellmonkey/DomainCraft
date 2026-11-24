@@ -1,6 +1,7 @@
 package packages
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -62,7 +63,7 @@ func versionStore(bridgeID string) (map[string]versionEntry, error) {
 	}
 	// A missing or corrupt cache file yields an empty cache rather than an
 	// error, so a broken cache never breaks the caller.
-	if err := fsutil.ReadJSON(filepath.Join(dir, CacheFileName), &data); err != nil && !os.IsNotExist(err) {
+	if err := fsutil.ReadJSON(filepath.Join(dir, CacheFileName), &data); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
 	if data.Entries == nil {

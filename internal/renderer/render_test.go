@@ -353,6 +353,21 @@ func TestRenderContext_PrimaryKey(t *testing.T) {
 	}
 }
 
+// The core must not bake in a language-specific TFM (net10.0) when a project
+// declares no platform: package resolution stays unconstrained.
+func TestResolvePackagesHasNoLanguageSpecificFrameworkDefault(t *testing.T) {
+	t.Parallel()
+	if got := targetFramework(nil); got != "" {
+		t.Errorf("targetFramework(nil) = %q, want empty (no core-side default)", got)
+	}
+	if got := targetFramework(&ir.Project{}); got != "" {
+		t.Errorf("targetFramework(empty project) = %q, want empty (no core-side default)", got)
+	}
+	if got := targetFramework(&ir.Project{Platform: "net11.0"}); got != "net11.0" {
+		t.Errorf("targetFramework(net11.0) = %q, want the declared platform", got)
+	}
+}
+
 func TestResolvePackagesNilLoggerDoesNotPanic(t *testing.T) {
 	t.Parallel()
 	// A nil logger is valid (silent mode). A failed registry lookup must not
