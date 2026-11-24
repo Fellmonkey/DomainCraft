@@ -59,6 +59,27 @@ func TestApplyMigrationActionsRewritesFieldRenames(t *testing.T) {
 	}
 }
 
+func TestBridgeCommandsAllowed(t *testing.T) {
+	tests := []struct {
+		name      string
+		community bool
+		allow     bool
+		want      bool
+	}{
+		{name: "official bridge", community: false, allow: false, want: true},
+		{name: "community bridge without consent", community: true, allow: false, want: false},
+		{name: "community bridge with consent", community: true, allow: true, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := bridgeCommandsAllowed(tt.community, tt.allow); got != tt.want {
+				t.Fatalf("bridgeCommandsAllowed(%v, %v) = %v, want %v", tt.community, tt.allow, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestChooseMigrationFiles(t *testing.T) {
 	files := []snapshot.FileRef{{Path: "src/A.cs"}, {Path: "src/B.cs"}}
 

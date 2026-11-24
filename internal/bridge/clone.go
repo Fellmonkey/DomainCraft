@@ -201,7 +201,7 @@ func CloneBridge(entry RegistryEntry) error {
 	}
 
 	url := fmt.Sprintf("https://github.com/%s.git", entry.GitHub)
-	cmd := exec.Command("git", "clone", "--depth", "1", url, cacheDir)
+	cmd := exec.CommandContext(commandCtx, "git", "clone", "--depth", "1", url, cacheDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		_ = os.RemoveAll(cacheDir)
 		return fmt.Errorf("clone %s: %w: %s", url, err, out)

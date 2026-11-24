@@ -239,7 +239,7 @@ func httpGetBody(url string) ([]byte, error) {
 // can never redirect a bridge-cache operation onto the wrong repository — the
 // command always acts on the repo in dir.
 func runGit(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(commandCtx, "git", args...)
 	cmd.Dir = dir
 	cmd.Env = gitScrubbedEnv()
 	out, err := cmd.Output()

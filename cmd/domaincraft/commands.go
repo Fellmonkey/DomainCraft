@@ -15,6 +15,7 @@ package main
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,17 +45,21 @@ import (
 )
 
 var (
-	domainFile     string
-	bridgePath     string
-	outputDir      string
-	nonInteractive bool
-	adminBridge    string // --admin [bridge-id]; empty = not requested
-	prune          bool   // --prune: apply migration cleanup without prompting
-	addonsFlag     string // --addons "dapr,pulsar": comma-separated infrastructure accelerators
-	migrateFlag    bool   // --migrate: run the bridge's database-migration commands after generation
-	updateBridges  bool   // --update-bridges: download newer bridge versions before generating
-	checkUpdates   bool   // bridges --check-updates: contact remotes and report outdated cached bridges
-	replaceFlags   []string
+	domainFile          string
+	bridgePath          string
+	outputDir           string
+	nonInteractive      bool
+	adminBridge         string // --admin [bridge-id]; empty = not requested
+	prune               bool   // --prune: apply migration cleanup without prompting
+	addonsFlag          string // --addons "dapr,pulsar": comma-separated infrastructure accelerators
+	migrateFlag         bool   // --migrate: run the bridge's database-migration commands after generation
+	updateBridges       bool   // --update-bridges: download newer bridge versions before generating
+	checkUpdates        bool   // bridges --check-updates: contact remotes and report outdated cached bridges
+	allowBridgeCommands bool   // explicit consent to run shell lines declared by community bridges
+	replaceFlags        []string
+
+	// commandCtx is cancelled on interrupt so child processes are not orphaned.
+	commandCtx = context.Background()
 
 	// version is stamped at build time via -ldflags "-X main.version=vX.Y.Z" and,
 	// when it isn't, backed by the module version in build info (see init).
@@ -180,6 +185,7 @@ func newGenerateCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&prune, "prune", false, "automatically remove/rename orphaned files and rewrite renamed identifiers in custom files, then run the bridge's database migrations (best-effort) when the schema changed (no prompts; CI-safe)")
 	// --migrate — after generation, run the bridge's declared database-migration commands.
 	cmd.Flags().BoolVar(&migrateFlag, "migrate", false, "run the bridge's database-migration commands after generation (e.g. dotnet ef database update)")
+	cmd.Flags().BoolVar(&allowBridgeCommands, "allow-bridge-commands", false, "allow shell commands declared by community bridges (required with --migrate or automatic --prune migrations)")
 	cmd.Flags().StringArrayVar(&replaceFlags, "replace", nil, "replace a bridge in the extends chain: layer=bridgeRef or bridgeId=bridgeRef (repeatable)")
 
 	return cmd
@@ -323,6 +329,9 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	shouldMigrate := migrateFlag || autoMigrate
 	cfg := rendererInstance.MigrationConfig()
 	if applied && shouldMigrate && cfg != nil && cfg.Enabled {
+		if !bridgeCommandsAllowed(chainHasCommunity, allowBridgeCommands) {
+			return fmt.Errorf("community bridge(s) declared database migrations; re-run with --allow-bridge-commands to execute them")
+		}
 		if err := runDatabaseMigrations(rendererInstance.MigrationConfig(), outputDir, cmd, log); err != nil {
 			if migrateFlag {
 				// Explicit --migrate: a failed migration is a hard error.
@@ -810,6 +819,13 @@ func generateAdminPanel(irProject *ir.IRProject, seedData, mockDataset *ir.SeedD
 	return adminManifest, nil
 }
 
+// bridgeCommandsAllowed reports whether shell lines from a community bridge
+// may run. Official bundled bridges are trusted; community bridges need the
+// explicit --allow-bridge-commands consent.
+func bridgeCommandsAllowed(chainHasCommunity, allow bool) bool {
+	return !chainHasCommunity || allow
+}
+
 // runDatabaseMigrations executes the bridge's declared database-migration
 // commands in order, from the generated output directory. Commands are shell
 // lines invoked through the platform shell so bridges can rely on standard
@@ -836,7 +852,7 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 			shell = "sh"
 			argv = []string{"-c", command}
 		}
-		c := exec.Command(shell, argv...)
+		c := exec.CommandContext(commandCtx, shell, argv...)
 		c.Dir = outDir
 		c.Stdout = out
 		c.Stderr = out
