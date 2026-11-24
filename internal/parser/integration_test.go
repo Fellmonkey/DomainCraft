@@ -7,6 +7,7 @@ import (
 
 // TestFullSchemaWithAllFeatures tests a full schema using all features
 func TestFullSchemaWithAllFeatures(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: ECommerce Platform
@@ -239,6 +240,7 @@ entities:
 
 // TestCircularRelationships tests self-referential (circular) relationships
 func TestCircularRelationships(t *testing.T) {
+	t.Parallel()
 	// A category can have a parent category -- this is a self-referential relationship
 	yamlData := []byte(`
 project:
@@ -269,6 +271,7 @@ entities:
 
 // TestDatabaseColumnNameGeneration tests database column name generation
 func TestDatabaseColumnNameGeneration(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -306,6 +309,7 @@ entities:
 
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
 			if field, ok := user.Fields[tt.fieldName]; ok {
 				if field.DatabaseColumnName != tt.wantDbName {
 					t.Errorf("field %s: got db name %v, want %v",
@@ -318,6 +322,7 @@ entities:
 
 // TestSeedData tests seed data parsing
 func TestSeedData(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -353,6 +358,7 @@ entities:
 
 // TestEntityOrdering tests entity ordering
 func TestEntityOrdering(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -384,6 +390,7 @@ entities:
 
 // TestComplexValidations tests complex validation rules
 func TestComplexValidations(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test

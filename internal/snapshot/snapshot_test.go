@@ -12,6 +12,7 @@ import (
 )
 
 func TestSaveLoadRoundtrip(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := SnapshotPath(dir)
 
@@ -47,6 +48,7 @@ func TestSaveLoadRoundtrip(t *testing.T) {
 }
 
 func TestLoadMissingSnapshotReturnsNil(t *testing.T) {
+	t.Parallel()
 	loaded, err := Load(filepath.Join(t.TempDir(), "nope", "snapshot.json"))
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -57,6 +59,7 @@ func TestLoadMissingSnapshotReturnsNil(t *testing.T) {
 }
 
 func TestComputeDiffDeletedEntity(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeTestFile(t, dir, "src/Domain/Entities/Product.cs")
 	writeTestFile(t, dir, "src/Services/ProductService.cs")
@@ -88,6 +91,7 @@ func TestComputeDiffDeletedEntity(t *testing.T) {
 }
 
 func TestComputeDiffRenameAndTypeChange(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeTestFile(t, dir, "src/Domain/Entities/Product.cs")
 	writeTestFile(t, dir, "src/Services/ProductService.cs")
@@ -141,6 +145,7 @@ func TestComputeDiffRenameAndTypeChange(t *testing.T) {
 }
 
 func TestRenameRelPath(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		rel, old, new, want string
 	}{
@@ -154,6 +159,7 @@ func TestRenameRelPath(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
 			if got := RenameRelPath(tt.rel, tt.old, tt.new); got != tt.want {
 				t.Errorf("RenameRelPath(%q, %q, %q) = %q, want %q", tt.rel, tt.old, tt.new, got, tt.want)
 			}
@@ -162,6 +168,7 @@ func TestRenameRelPath(t *testing.T) {
 }
 
 func TestDeleteFileAndRenameEntityFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeTestFile(t, dir, "src/Services/ProductService.cs")
 
@@ -186,6 +193,7 @@ func TestDeleteFileAndRenameEntityFile(t *testing.T) {
 }
 
 func TestComputeDiffNamespaceRename(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeTestFile(t, dir, "src/Application/Services/UserService.cs")
 	writeTestFile(t, dir, "src/WebApi/Program.cs")
@@ -223,6 +231,7 @@ func TestComputeDiffNamespaceRename(t *testing.T) {
 }
 
 func TestComputeDiffFieldRename(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeTestFile(t, dir, "src/Application/Services/ProductService.cs")
 
@@ -282,6 +291,7 @@ func TestComputeDiffFieldRename(t *testing.T) {
 }
 
 func TestComputeDiffChainedFieldRename(t *testing.T) {
+	t.Parallel()
 	// The developer renamed title -> name, generated, but NEVER applied the
 	// migration. Then they renamed name -> description and generated again. The
 	// previous snapshot shows that `name` was itself a rename (of `title`), so the
@@ -330,6 +340,7 @@ func TestComputeDiffChainedFieldRename(t *testing.T) {
 }
 
 func TestComputeDiffFieldRenameSkipsTypeChangeOnly(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	// Field keeps its name but the type changes — that is a type change, not a rename.
@@ -349,6 +360,7 @@ func TestComputeDiffFieldRenameSkipsTypeChangeOnly(t *testing.T) {
 }
 
 func TestComputeDiffDeletedEntityWithoutFiles(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// Files are NOT created on disk — should filter them out.
 
@@ -371,6 +383,7 @@ func TestComputeDiffDeletedEntityWithoutFiles(t *testing.T) {
 }
 
 func TestComputeDiffMultipleDeletedEntities(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeTestFile(t, dir, "src/Domain/Entities/Product.cs")
 	writeTestFile(t, dir, "src/Domain/Entities/Category.cs")
@@ -417,6 +430,7 @@ func TestComputeDiffMultipleDeletedEntities(t *testing.T) {
 }
 
 func TestComputeDiffEntityRenameOnly(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeTestFile(t, dir, "src/Domain/Entities/Product.cs")
 	writeTestFile(t, dir, "src/Services/ProductService.cs")
@@ -469,6 +483,7 @@ func TestComputeDiffEntityRenameOnly(t *testing.T) {
 }
 
 func TestComputeDiffEntityRenameWithoutFiles(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// No files created on disk.
 
@@ -502,6 +517,7 @@ func TestComputeDiffEntityRenameWithoutFiles(t *testing.T) {
 }
 
 func TestComputeDiffFieldRenameWithTypeChange(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeTestFile(t, dir, "src/Services/ProductService.cs")
 
@@ -562,6 +578,7 @@ func TestComputeDiffFieldRenameWithTypeChange(t *testing.T) {
 }
 
 func TestComputeDiffSimultaneousChanges(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeTestFile(t, dir, "src/Domain/Entities/Item.cs")
 	writeTestFile(t, dir, "src/Services/ItemService.cs")
@@ -663,6 +680,7 @@ func TestComputeDiffSimultaneousChanges(t *testing.T) {
 }
 
 func TestComputeDiffMultipleRenames(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeTestFile(t, dir, "src/Domain/Entities/Item.cs")
 	writeTestFile(t, dir, "src/Domain/Entities/Group.cs")
@@ -720,6 +738,7 @@ func TestComputeDiffMultipleRenames(t *testing.T) {
 }
 
 func TestComputeDiffExistingFileFiltersDeleted(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// Only create A.cs — B.cs does not exist on disk.
 	writeTestFile(t, dir, "src/Services/A.cs")
@@ -768,7 +787,9 @@ func writeTestFile(t *testing.T, root, rel string) {
 }
 
 func TestTypeChangeReport(t *testing.T) {
+	t.Parallel()
 	t.Run("empty diff yields empty report", func(t *testing.T) {
+		t.Parallel()
 		d := &Diff{}
 		if got := d.TypeChangeReport(); got != "" {
 			t.Errorf("report = %q, want empty", got)
@@ -776,6 +797,7 @@ func TestTypeChangeReport(t *testing.T) {
 	})
 
 	t.Run("lists changes and custom files", func(t *testing.T) {
+		t.Parallel()
 		d := &Diff{TypeChanges: []TypeChange{
 			{Entity: "Product", Field: "price", OldType: "decimal", NewType: "int", CustomFiles: []string{"src/Services/ProductService.cs"}},
 			{Entity: "Order", Field: "note", OldType: "text", NewType: "string"},

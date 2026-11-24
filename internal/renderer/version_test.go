@@ -10,6 +10,7 @@ import (
 // hard error naming both versions. This is the core guard against silent
 // incompatibility between a bridge and the core.
 func TestContractVersionMatrix(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		yaml    string
@@ -23,6 +24,7 @@ func TestContractVersionMatrix(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			dir := writeBridgeConfig(t, c.yaml)
 			r, err := New(dir, nil)
 			if c.wantOK {
@@ -47,6 +49,7 @@ func TestContractVersionMatrix(t *testing.T) {
 // TestBridgeVersionParsed ensures the bridge `version:` field (independent per
 // bridge) is parsed and surfaced — it feeds the lock file and version reporting.
 func TestBridgeVersionParsed(t *testing.T) {
+	t.Parallel()
 	dir := writeBridgeConfig(t, "name: b\nversion: \"2.3.4\"\n")
 	r, err := New(dir, nil)
 	if err != nil {
@@ -61,6 +64,7 @@ func TestBridgeVersionParsed(t *testing.T) {
 // composed chain: an adapter that is fine must still fail when a base bridge
 // declares a newer contract.
 func TestNewerContractRejectedInBase(t *testing.T) {
+	t.Parallel()
 	base := writeBridgeConfig(t, "name: base\ncontract_version: 2\n")
 	adapter := writeBridgeConfig(t, "name: adapter\nextends: "+base+"\n")
 
@@ -76,6 +80,7 @@ func TestNewerContractRejectedInBase(t *testing.T) {
 // TestMatchingContractAcceptedInBase is the positive control: an equal-contract
 // base attaches cleanly.
 func TestMatchingContractAcceptedInBase(t *testing.T) {
+	t.Parallel()
 	base := writeBridgeConfig(t, "name: base\ncontract_version: 1\n")
 	adapter := writeBridgeConfig(t, "name: adapter\nextends: "+base+"\n")
 

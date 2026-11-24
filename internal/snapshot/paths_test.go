@@ -9,6 +9,7 @@ import (
 )
 
 func TestSafeRelPathKeepsPathsInsideOutputDir(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 
 	tests := []struct {
@@ -32,6 +33,7 @@ func TestSafeRelPathKeepsPathsInsideOutputDir(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got, err := safeRelPath(root, tt.path)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("safeRelPath(%q) error = %v, wantErr %v", tt.path, err, tt.wantErr)
@@ -44,6 +46,7 @@ func TestSafeRelPathKeepsPathsInsideOutputDir(t *testing.T) {
 }
 
 func TestDeleteFileRejectsSnapshotEscape(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	victim := filepath.Join(filepath.Dir(root), "dc-victim-"+filepath.Base(root)+".txt")
 	if err := os.WriteFile(victim, []byte("keep"), 0o600); err != nil {
@@ -61,6 +64,7 @@ func TestDeleteFileRejectsSnapshotEscape(t *testing.T) {
 }
 
 func TestRewriteFileRejectsSnapshotEscape(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	victim := filepath.Join(filepath.Dir(root), "dc-rewrite-victim-"+filepath.Base(root)+".txt")
 	if err := os.WriteFile(victim, []byte("Product"), 0o600); err != nil {

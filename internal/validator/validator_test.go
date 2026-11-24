@@ -11,6 +11,7 @@ import (
 )
 
 func TestValidateDetectsMissingPrimaryKey(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -36,6 +37,7 @@ func TestValidateDetectsMissingPrimaryKey(t *testing.T) {
 }
 
 func TestValidateRejectsOldNameEqualToFieldName(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Product"},
@@ -65,6 +67,7 @@ func TestValidateRejectsOldNameEqualToFieldName(t *testing.T) {
 }
 
 func TestValidateRejectsOldNameCollidingWithExistingField(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Product"},
@@ -95,6 +98,7 @@ func TestValidateRejectsOldNameCollidingWithExistingField(t *testing.T) {
 }
 
 func TestValidateAcceptsValidOldName(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Product"},
@@ -119,6 +123,7 @@ func TestValidateAcceptsValidOldName(t *testing.T) {
 }
 
 func TestValidateDetectsDuplicatePrimaryKey(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -148,6 +153,7 @@ func TestValidateDetectsDuplicatePrimaryKey(t *testing.T) {
 }
 
 func TestValidateDetectsBrokenRelation(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Product"},
@@ -173,6 +179,7 @@ func TestValidateDetectsBrokenRelation(t *testing.T) {
 }
 
 func TestValidateDetectsSetNullOnRequiredField(t *testing.T) {
+	t.Parallel()
 	// Note: on_delete:set_null on a required relation is caught by the lexer, not the validator.
 	// This test verifies the schema passes validation when the lexer constraint is respected.
 	schema := &parser.ParsedSchema{
@@ -209,6 +216,7 @@ func TestValidateDetectsSetNullOnRequiredField(t *testing.T) {
 }
 
 func TestValidateDetectsUndefinedEnum(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Product"},
@@ -239,6 +247,7 @@ func TestValidateDetectsUndefinedEnum(t *testing.T) {
 }
 
 func TestValidatePassesValidEnums(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Product"},
@@ -265,6 +274,7 @@ func TestValidatePassesValidEnums(t *testing.T) {
 }
 
 func TestValidateDetectsEmptyProjectName(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		EntityOrder: []string{"User"},
 		Entities: map[string]*parser.ParsedEntity{
@@ -292,6 +302,7 @@ func TestValidateDetectsEmptyProjectName(t *testing.T) {
 }
 
 func TestValidateDetectsManyOnNonRelation(t *testing.T) {
+	t.Parallel()
 	// Note: "many" on non-relation is caught by the lexer, not the validator.
 	// This test verifies the lexer catches it before validation.
 	schema := &parser.ParsedSchema{
@@ -318,6 +329,7 @@ func TestValidateDetectsManyOnNonRelation(t *testing.T) {
 }
 
 func TestValidateDetectsOnDeleteOnNonRelation(t *testing.T) {
+	t.Parallel()
 	// Note: on_delete on non-relation is caught by the lexer, not the validator.
 	// This test verifies the lexer catches it before validation.
 	schema := &parser.ParsedSchema{
@@ -344,6 +356,7 @@ func TestValidateDetectsOnDeleteOnNonRelation(t *testing.T) {
 }
 
 func TestValidateDetectsEmptyEnum(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -373,6 +386,7 @@ func TestValidateDetectsEmptyEnum(t *testing.T) {
 }
 
 func TestValidateDetectsEmptyIndexFields(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -404,6 +418,7 @@ func TestValidateDetectsEmptyIndexFields(t *testing.T) {
 }
 
 func TestValidateDetectsSortLengthMismatch(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -450,6 +465,7 @@ func nonWarnings(errs []ValidationError) []ValidationError {
 }
 
 func TestValidateAuthEntityMissingEmailPassword(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		Auth:        &parser.AuthConfig{Type: "jwt", Entity: "Product"},
@@ -480,6 +496,7 @@ func TestValidateAuthEntityMissingEmailPassword(t *testing.T) {
 }
 
 func TestValidateAuthEntityValidEmailPassword(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		Auth:        &parser.AuthConfig{Type: "jwt", Entity: "User"},
@@ -508,6 +525,7 @@ func TestValidateAuthEntityValidEmailPassword(t *testing.T) {
 }
 
 func TestValidateDefaultNowOnNonDatetime(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -537,6 +555,7 @@ func TestValidateDefaultNowOnNonDatetime(t *testing.T) {
 }
 
 func TestValidateDefaultNowOnDatetime(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -563,6 +582,7 @@ func TestValidateDefaultNowOnDatetime(t *testing.T) {
 }
 
 func TestValidateDefaultUuidOnNonUuid(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -592,6 +612,7 @@ func TestValidateDefaultUuidOnNonUuid(t *testing.T) {
 }
 
 func TestValidateDeployPortRange(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		port    int
@@ -606,6 +627,7 @@ func TestValidateDeployPortRange(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			schema := &parser.ParsedSchema{
 				Project: parser.ProjectConfig{
 					Name:   "Test",
@@ -643,7 +665,9 @@ func TestValidateDeployPortRange(t *testing.T) {
 }
 
 func TestValidateCacheConfigWarnings(t *testing.T) {
+	t.Parallel()
 	t.Run("provider without connection_string", func(t *testing.T) {
+		t.Parallel()
 		schema := &parser.ParsedSchema{
 			Project: parser.ProjectConfig{
 				Name: "Test",
@@ -678,6 +702,7 @@ func TestValidateCacheConfigWarnings(t *testing.T) {
 	})
 
 	t.Run("provider specified but disabled", func(t *testing.T) {
+		t.Parallel()
 		schema := &parser.ParsedSchema{
 			Project: parser.ProjectConfig{
 				Name: "Test",
@@ -713,6 +738,7 @@ func TestValidateCacheConfigWarnings(t *testing.T) {
 }
 
 func TestValidateIndexOnRelationFieldWithoutIdSuffix(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Product", "Category"},
@@ -752,6 +778,7 @@ func TestValidateIndexOnRelationFieldWithoutIdSuffix(t *testing.T) {
 }
 
 func TestValidateIndexOnFKFieldNoWarning(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Product", "Category"},
@@ -787,6 +814,7 @@ func TestValidateIndexOnFKFieldNoWarning(t *testing.T) {
 }
 
 func TestValidateIndexOnPrimitiveField(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -816,6 +844,7 @@ func TestValidateIndexOnPrimitiveField(t *testing.T) {
 }
 
 func TestValidateEnumDefaultMustMatchDeclaredValues(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Product"},
@@ -847,6 +876,7 @@ func TestValidateEnumDefaultMustMatchDeclaredValues(t *testing.T) {
 }
 
 func TestValidateEnumDefaultValidValue(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Product"},
@@ -874,6 +904,7 @@ func TestValidateEnumDefaultValidValue(t *testing.T) {
 }
 
 func TestValidateNumericValidationValueNotNumeric(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -904,6 +935,7 @@ func TestValidateNumericValidationValueNotNumeric(t *testing.T) {
 }
 
 func TestValidateNumericValidationValueValid(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -930,6 +962,7 @@ func TestValidateNumericValidationValueValid(t *testing.T) {
 }
 
 func TestValidateEntityEnumNameCollision(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Status"},
@@ -959,6 +992,7 @@ func TestValidateEntityEnumNameCollision(t *testing.T) {
 }
 
 func TestValidatePermissionRolesEmptyAuthRoles(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		Auth:        &parser.AuthConfig{Type: "jwt"},
@@ -993,6 +1027,7 @@ func TestValidatePermissionRolesEmptyAuthRoles(t *testing.T) {
 }
 
 func TestValidateContradictoryStringMinMax(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -1023,6 +1058,7 @@ func TestValidateContradictoryStringMinMax(t *testing.T) {
 }
 
 func TestValidateValidStringMinMax(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -1049,6 +1085,7 @@ func TestValidateValidStringMinMax(t *testing.T) {
 }
 
 func TestValidateContradictoryNumericGteLt(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -1079,6 +1116,7 @@ func TestValidateContradictoryNumericGteLt(t *testing.T) {
 }
 
 func TestValidateContradictoryNumericGtLte(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -1109,6 +1147,7 @@ func TestValidateContradictoryNumericGtLte(t *testing.T) {
 }
 
 func TestValidateValidNumericRange(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -1135,6 +1174,7 @@ func TestValidateValidNumericRange(t *testing.T) {
 }
 
 func TestValidateUnusedEnumWarning(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -1167,6 +1207,7 @@ func TestValidateUnusedEnumWarning(t *testing.T) {
 }
 
 func TestValidateUsedEnumNoWarning(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -1195,6 +1236,7 @@ func TestValidateUsedEnumNoWarning(t *testing.T) {
 }
 
 func TestValidateOnDeleteValueInvalid(t *testing.T) {
+	t.Parallel()
 	// Note: invalid on_delete values are caught by the lexer, not the validator.
 	// This test verifies the lexer catches it before validation.
 	schema := &parser.ParsedSchema{
@@ -1229,6 +1271,7 @@ func TestValidateOnDeleteValueInvalid(t *testing.T) {
 }
 
 func TestValidateSeedValueTypeMismatch(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -1262,6 +1305,7 @@ func TestValidateSeedValueTypeMismatch(t *testing.T) {
 }
 
 func TestValidateSeedBooleanTypeMismatch(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Config"},
@@ -1295,6 +1339,7 @@ func TestValidateSeedBooleanTypeMismatch(t *testing.T) {
 }
 
 func TestValidateOnDeleteOnManyToManyWarning(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Product", "Tag"},
@@ -1332,6 +1377,7 @@ func TestValidateOnDeleteOnManyToManyWarning(t *testing.T) {
 }
 
 func TestValidateOnDeleteOnManyToManyNoWarningWithoutOnDelete(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Product", "Tag"},
@@ -1365,6 +1411,7 @@ func TestValidateOnDeleteOnManyToManyNoWarningWithoutOnDelete(t *testing.T) {
 }
 
 func TestValidateReconciledOneToManyWarning(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Article", "Tag"},
@@ -1405,6 +1452,7 @@ func TestValidateReconciledOneToManyWarning(t *testing.T) {
 // Regression: the hint must print the FK field name as declared. Appending a
 // second "Id" to a field already named `articleId` produced `articleIdId`.
 func TestValidateReconciledWarningKeepsFKName(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Article", "Tag"},
@@ -1450,6 +1498,7 @@ func TestValidateReconciledWarningKeepsFKName(t *testing.T) {
 
 // The shipped example must not emit warnings: an example is a template users copy.
 func TestExampleDomainHasNoWarnings(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile(filepath.Join("..", "..", "examples", "domain.yaml"))
 	if err != nil {
 		t.Fatalf("read example: %v", err)
@@ -1468,6 +1517,7 @@ func TestExampleDomainHasNoWarnings(t *testing.T) {
 // TestValidateGenuineManyToManyHasNoReconciliationWarning ensures that a real
 // many-to-many (target has no FK back) does NOT trigger the reconciliation hint.
 func TestValidateGenuineManyToManyHasNoReconciliationWarning(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Product", "Tag"},
@@ -1499,6 +1549,7 @@ func TestValidateGenuineManyToManyHasNoReconciliationWarning(t *testing.T) {
 }
 
 func TestValidateSeedUniqueConstraintViolation(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -1533,6 +1584,7 @@ func TestValidateSeedUniqueConstraintViolation(t *testing.T) {
 }
 
 func TestValidateSeedUniqueConstraintPass(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -1563,6 +1615,7 @@ func TestValidateSeedUniqueConstraintPass(t *testing.T) {
 }
 
 func TestValidateSeedInvalidUUID(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -1595,6 +1648,7 @@ func TestValidateSeedInvalidUUID(t *testing.T) {
 }
 
 func TestValidateSeedValidUUID(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -1623,6 +1677,7 @@ func TestValidateSeedValidUUID(t *testing.T) {
 }
 
 func TestValidateSeedInvalidDatetime(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -1656,6 +1711,7 @@ func TestValidateSeedInvalidDatetime(t *testing.T) {
 }
 
 func TestValidateSeedValidDatetime(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -1685,6 +1741,7 @@ func TestValidateSeedValidDatetime(t *testing.T) {
 }
 
 func TestValidateSeedInvalidJSON(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -1718,6 +1775,7 @@ func TestValidateSeedInvalidJSON(t *testing.T) {
 }
 
 func TestValidateSeedValidJSON(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -1747,6 +1805,7 @@ func TestValidateSeedValidJSON(t *testing.T) {
 }
 
 func TestValidatePermissionRoleIdentifierInvalid(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -1778,6 +1837,7 @@ func TestValidatePermissionRoleIdentifierInvalid(t *testing.T) {
 }
 
 func TestValidatePermissionRoleSpecialTokensAllowed(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -1806,6 +1866,7 @@ func TestValidatePermissionRoleSpecialTokensAllowed(t *testing.T) {
 }
 
 func TestValidateSeedDateTypeMismatch(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Event"},
@@ -1839,6 +1900,7 @@ func TestValidateSeedDateTypeMismatch(t *testing.T) {
 }
 
 func TestValidateSeedDateValid(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Event"},
@@ -1868,6 +1930,7 @@ func TestValidateSeedDateValid(t *testing.T) {
 }
 
 func TestValidateSeedEnumInvalidValue(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project: parser.ProjectConfig{Name: "Test"},
 		Enums: map[string][]string{
@@ -1904,6 +1967,7 @@ func TestValidateSeedEnumInvalidValue(t *testing.T) {
 }
 
 func TestValidateSeedEnumValidValue(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project: parser.ProjectConfig{Name: "Test"},
 		Enums: map[string][]string{
@@ -1936,6 +2000,7 @@ func TestValidateSeedEnumValidValue(t *testing.T) {
 }
 
 func TestValidateSeedArrayInvalidValue(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Item"},
@@ -1969,6 +2034,7 @@ func TestValidateSeedArrayInvalidValue(t *testing.T) {
 }
 
 func TestValidateSeedArrayValidValue(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Item"},
@@ -1998,6 +2064,7 @@ func TestValidateSeedArrayValidValue(t *testing.T) {
 }
 
 func TestValidateStringMinMaxNonNumeric(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},
@@ -2027,6 +2094,7 @@ func TestValidateStringMinMaxNonNumeric(t *testing.T) {
 }
 
 func TestValidateCircularRelationWarning(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User", "Team"},
@@ -2065,6 +2133,7 @@ func TestValidateCircularRelationWarning(t *testing.T) {
 }
 
 func TestValidateNoCircularRelationWarningForAcyclic(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User", "Team"},
@@ -2098,6 +2167,7 @@ func TestValidateNoCircularRelationWarningForAcyclic(t *testing.T) {
 }
 
 func TestValidateNoCircularRelationWarningForSelfReference(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Category"},
@@ -2123,6 +2193,7 @@ func TestValidateNoCircularRelationWarningForSelfReference(t *testing.T) {
 }
 
 func TestValidateNoCircularRelationWarningForManyToMany(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Order", "OrderItem"},
@@ -2157,6 +2228,7 @@ func TestValidateNoCircularRelationWarningForManyToMany(t *testing.T) {
 }
 
 func TestValidateDefaultDateInvalid(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Event"},
@@ -2186,6 +2258,7 @@ func TestValidateDefaultDateInvalid(t *testing.T) {
 }
 
 func TestValidateDefaultUuidInvalid(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"Doc"},
@@ -2219,6 +2292,7 @@ func TestValidateDefaultUuidInvalid(t *testing.T) {
 // spurious "collides with field '<itself>'" error. Self-collisions are silently
 // ignored; only genuine collisions between two different fields are reported.
 func TestValidateColumnSelfCollisionGuard(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		EntityOrder: []string{"User"},

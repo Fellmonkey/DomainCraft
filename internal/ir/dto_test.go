@@ -7,6 +7,7 @@ func entityWithFields(fields ...IRField) IREntity {
 }
 
 func TestIRField_IsSensitive(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		want bool
@@ -19,6 +20,7 @@ func TestIRField_IsSensitive(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			f := IRField{Name: tc.name}
 			if got := f.IsSensitive(); got != tc.want {
 				t.Errorf("IsSensitive(%q) = %v, want %v", tc.name, got, tc.want)
@@ -28,6 +30,7 @@ func TestIRField_IsSensitive(t *testing.T) {
 }
 
 func TestIRField_IsFeatureField(t *testing.T) {
+	t.Parallel()
 	if !(IRField{Name: "createdAt"}).IsFeatureField() {
 		t.Error("createdAt should be a feature field")
 	}
@@ -40,6 +43,7 @@ func TestIRField_IsFeatureField(t *testing.T) {
 }
 
 func TestIRField_IsConcurrencyToken(t *testing.T) {
+	t.Parallel()
 	if !(IRField{Name: "version"}).IsConcurrencyToken() {
 		t.Error("version should be a concurrency token")
 	}
@@ -49,6 +53,7 @@ func TestIRField_IsConcurrencyToken(t *testing.T) {
 }
 
 func TestIREntity_ReadFields(t *testing.T) {
+	t.Parallel()
 	e := entityWithFields(
 		IRField{Name: "id", IsPrimary: true, DatabaseType: "uuid"},
 		IRField{Name: "title", DatabaseType: "string"},
@@ -69,6 +74,7 @@ func TestIREntity_ReadFields(t *testing.T) {
 }
 
 func TestIREntity_CreateFields(t *testing.T) {
+	t.Parallel()
 	e := entityWithFields(
 		IRField{Name: "id", IsPrimary: true},
 		IRField{Name: "title", DatabaseType: "string"},
@@ -89,6 +95,7 @@ func TestIREntity_CreateFields(t *testing.T) {
 }
 
 func TestIREntity_UpdateFieldsIncludesVersion(t *testing.T) {
+	t.Parallel()
 	e := entityWithFields(
 		IRField{Name: "id", IsPrimary: true},
 		IRField{Name: "title", DatabaseType: "string"},
@@ -114,17 +121,18 @@ func TestIREntity_UpdateFieldsIncludesVersion(t *testing.T) {
 }
 
 func TestIREntity_PatchFields(t *testing.T) {
+	t.Parallel()
 	e := entityWithFields(
 		IRField{Name: "id", IsPrimary: true},
-		IRField{Name: "title", DatabaseType: "string"},                    // scalar -> patchable
+		IRField{Name: "title", DatabaseType: "string"},                      // scalar -> patchable
 		IRField{Name: "categoryId", DatabaseType: "uuid", IsRelation: true}, // single FK -> patchable
-		IRField{Name: "tags", DatabaseType: "array(string)"},              // array -> excluded
-		IRField{Name: "status", DatabaseType: "OrderStatus"},              // enum -> excluded
-		IRField{Name: "meta", DatabaseType: "jsonb"},                      // json -> excluded
-		IRField{Name: "password", DatabaseType: "string"},                 // sensitive -> excluded
-		IRField{Name: "balance", IsReadonly: true},                        // readonly -> excluded
-		IRField{Name: "createdAt", DatabaseType: "datetime"},              // feature -> excluded
-		IRField{Name: "version", DatabaseType: "int"},                     // concurrency token -> kept
+		IRField{Name: "tags", DatabaseType: "array(string)"},                // array -> excluded
+		IRField{Name: "status", DatabaseType: "OrderStatus"},                // enum -> excluded
+		IRField{Name: "meta", DatabaseType: "jsonb"},                        // json -> excluded
+		IRField{Name: "password", DatabaseType: "string"},                   // sensitive -> excluded
+		IRField{Name: "balance", IsReadonly: true},                          // readonly -> excluded
+		IRField{Name: "createdAt", DatabaseType: "datetime"},                // feature -> excluded
+		IRField{Name: "version", DatabaseType: "int"},                       // concurrency token -> kept
 	)
 	got := e.PatchFields()
 	want := []string{"title", "categoryId", "version"}
@@ -139,6 +147,7 @@ func TestIREntity_PatchFields(t *testing.T) {
 }
 
 func TestIREntity_PatchFieldsNoVersionWithoutLock(t *testing.T) {
+	t.Parallel()
 	e := entityWithFields(
 		IRField{Name: "id", IsPrimary: true},
 		IRField{Name: "title", DatabaseType: "string"},

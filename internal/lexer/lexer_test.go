@@ -6,6 +6,7 @@ import (
 )
 
 func TestParsePrimitiveTypes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input    string
 		wantType string
@@ -24,6 +25,7 @@ func TestParsePrimitiveTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
 			fd, err := ParseFieldString(tt.input)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ParseFieldString() error = %v, wantErr %v", err, tt.wantErr)
@@ -37,6 +39,7 @@ func TestParsePrimitiveTypes(t *testing.T) {
 }
 
 func TestParseRelationType(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input      string
 		wantType   string
@@ -50,6 +53,7 @@ func TestParseRelationType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
 			fd, err := ParseFieldString(tt.input)
 			if err != nil {
 				t.Errorf("ParseFieldString() error = %v", err)
@@ -69,13 +73,14 @@ func TestParseRelationType(t *testing.T) {
 }
 
 func TestParseModifiers(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
-		input         string
-		wantPrimary   bool
-		wantOptional  bool
-		wantUnique    bool
-		wantHidden    bool
-		wantReadonly  bool
+		input        string
+		wantPrimary  bool
+		wantOptional bool
+		wantUnique   bool
+		wantHidden   bool
+		wantReadonly bool
 	}{
 		{"string [primary]", true, false, false, false, false},
 		{"string [optional]", false, true, false, false, false},
@@ -87,6 +92,7 @@ func TestParseModifiers(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
 			fd, err := ParseFieldString(tt.input)
 			if err != nil {
 				t.Errorf("ParseFieldString() error = %v", err)
@@ -112,6 +118,7 @@ func TestParseModifiers(t *testing.T) {
 }
 
 func TestParseValidations(t *testing.T) {
+	t.Parallel()
 	fd, err := ParseFieldString("string [min:5, max:100, email]")
 	if err != nil {
 		t.Fatalf("ParseFieldString() error = %v", err)
@@ -129,6 +136,7 @@ func TestParseValidations(t *testing.T) {
 }
 
 func TestParseDefaults(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input           string
 		wantDefault     string
@@ -141,6 +149,7 @@ func TestParseDefaults(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
 			fd, err := ParseFieldString(tt.input)
 			if err != nil {
 				t.Errorf("ParseFieldString() error = %v", err)
@@ -157,10 +166,11 @@ func TestParseDefaults(t *testing.T) {
 }
 
 func TestParseArrayDefault(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
-		input          string
-		wantDefault    string
-		wantArray      bool
+		input           string
+		wantDefault     string
+		wantArray       bool
 		wantElementType string
 	}{
 		{"array(string) [optional, default:[a, b, c]]", "[a, b, c]", true, "string"},
@@ -171,6 +181,7 @@ func TestParseArrayDefault(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
 			fd, err := ParseFieldString(tt.input)
 			if err != nil {
 				t.Errorf("ParseFieldString() error = %v", err)
@@ -195,6 +206,7 @@ func TestParseArrayDefault(t *testing.T) {
 }
 
 func TestParseOnDelete(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input        string
 		wantBehavior string
@@ -209,6 +221,7 @@ func TestParseOnDelete(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
 			fd, err := ParseFieldString(tt.input)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ParseFieldString() error = %v, wantErr %v", err, tt.wantErr)
@@ -222,6 +235,7 @@ func TestParseOnDelete(t *testing.T) {
 }
 
 func TestParseOldName(t *testing.T) {
+	t.Parallel()
 	fd, err := ParseFieldString("string [required, old_name: title]")
 	if err != nil {
 		t.Fatalf("ParseFieldString() error = %v", err)
@@ -244,6 +258,7 @@ func TestParseOldName(t *testing.T) {
 }
 
 func TestParseOldNameInvalid(t *testing.T) {
+	t.Parallel()
 	tests := []string{
 		"string [old_name:]",
 		"string [old_name: not valid name]",
@@ -251,6 +266,7 @@ func TestParseOldNameInvalid(t *testing.T) {
 	}
 	for _, input := range tests {
 		t.Run(input, func(t *testing.T) {
+			t.Parallel()
 			if _, err := ParseFieldString(input); err == nil {
 				t.Errorf("ParseFieldString(%q) expected an error", input)
 			}
@@ -259,6 +275,7 @@ func TestParseOldNameInvalid(t *testing.T) {
 }
 
 func TestParseArrayType(t *testing.T) {
+	t.Parallel()
 	fd, err := ParseFieldString("array(int)")
 	if err != nil {
 		t.Fatalf("ParseFieldString() error = %v", err)
@@ -273,6 +290,7 @@ func TestParseArrayType(t *testing.T) {
 }
 
 func TestParseEnumType(t *testing.T) {
+	t.Parallel()
 	fd, err := ParseFieldString("enum(Status)")
 	if err != nil {
 		t.Fatalf("ParseFieldString() error = %v", err)
@@ -287,6 +305,7 @@ func TestParseEnumType(t *testing.T) {
 }
 
 func TestParseComplexField(t *testing.T) {
+	t.Parallel()
 	// Complex case: title: string [required, min:5, max:120]
 	fd, err := ParseFieldString("string [required, min:5, max:120]")
 	if err != nil {
@@ -308,6 +327,7 @@ func TestParseComplexField(t *testing.T) {
 }
 
 func TestParseRelationEmptyTarget(t *testing.T) {
+	t.Parallel()
 	_, err := ParseFieldString("relation()")
 	if err == nil {
 		t.Fatal("expected error for empty relation target")
@@ -318,6 +338,7 @@ func TestParseRelationEmptyTarget(t *testing.T) {
 }
 
 func TestParseArrayEmptyType(t *testing.T) {
+	t.Parallel()
 	_, err := ParseFieldString("array()")
 	if err == nil {
 		t.Fatal("expected error for empty array type")
@@ -328,6 +349,7 @@ func TestParseArrayEmptyType(t *testing.T) {
 }
 
 func TestParseEnumEmptyName(t *testing.T) {
+	t.Parallel()
 	_, err := ParseFieldString("enum()")
 	if err == nil {
 		t.Fatal("expected error for empty enum name")
@@ -338,6 +360,7 @@ func TestParseEnumEmptyName(t *testing.T) {
 }
 
 func TestParsePrimaryKeyIsRequired(t *testing.T) {
+	t.Parallel()
 	// The lexer no longer normalizes primary→required; that's the parser's job.
 	// The lexer only parses syntax; semantic normalization happens in parser.parseField.
 	fd, err := ParseFieldString("uuid [primary]")
@@ -354,6 +377,7 @@ func TestParsePrimaryKeyIsRequired(t *testing.T) {
 }
 
 func TestParsePrimaryKeyWithExplicitRequired(t *testing.T) {
+	t.Parallel()
 	fd, err := ParseFieldString("uuid [primary, required]")
 	if err != nil {
 		t.Fatalf("ParseFieldString() error = %v", err)
@@ -367,6 +391,7 @@ func TestParsePrimaryKeyWithExplicitRequired(t *testing.T) {
 }
 
 func TestParseOnDeleteOnNonRelationField(t *testing.T) {
+	t.Parallel()
 	_, err := ParseFieldString("string [on_delete:cascade]")
 	if err == nil {
 		t.Fatal("expected error for on_delete on non-relation field")
@@ -377,6 +402,7 @@ func TestParseOnDeleteOnNonRelationField(t *testing.T) {
 }
 
 func TestParseManyOnNonRelationField(t *testing.T) {
+	t.Parallel()
 	_, err := ParseFieldString("string [many]")
 	if err == nil {
 		t.Fatal("expected error for many on non-relation field")
@@ -387,6 +413,7 @@ func TestParseManyOnNonRelationField(t *testing.T) {
 }
 
 func TestParseRequiredOptionalConflict(t *testing.T) {
+	t.Parallel()
 	_, err := ParseFieldString("string [required, optional]")
 	if err == nil {
 		t.Fatal("expected error for required+optional conflict")

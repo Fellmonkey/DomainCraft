@@ -3,6 +3,7 @@ package ir
 import "testing"
 
 func TestEnumValuesWireValue(t *testing.T) {
+	t.Parallel()
 	p := &IRProject{
 		Enums: map[string][]string{
 			"OrderStatus": {"PENDING", "IN_PROGRESS", "Shipped"},
@@ -26,6 +27,7 @@ func TestEnumValuesWireValue(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.caseName, func(t *testing.T) {
+			t.Parallel()
 			if got[c.idx].Name != c.name {
 				t.Errorf("value[%d].Name = %q, want %q", c.idx, got[c.idx].Name, c.name)
 			}
@@ -47,6 +49,7 @@ func TestEnumValuesWireValue(t *testing.T) {
 }
 
 func TestEnumValuesNilProject(t *testing.T) {
+	t.Parallel()
 	var p *IRProject
 	if got := p.EnumValues("X"); got != nil {
 		t.Errorf("nil project EnumValues = %v, want nil", got)
@@ -54,6 +57,7 @@ func TestEnumValuesNilProject(t *testing.T) {
 }
 
 func TestIRIndexDatabaseName(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		want string
@@ -63,6 +67,7 @@ func TestIRIndexDatabaseName(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := (IRIndex{Name: c.name}).DatabaseName(); got != c.want {
 				t.Errorf("DatabaseName(%q) = %q, want %q", c.name, got, c.want)
 			}

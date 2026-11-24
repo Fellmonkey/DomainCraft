@@ -7,6 +7,7 @@ import (
 )
 
 func TestComputeMigrationPlanCreateAndDropTables(t *testing.T) {
+	t.Parallel()
 	old := &Snapshot{
 		Entities: map[string]EntityState{
 			"Product": {Fields: map[string]string{"id": "uuid"}},
@@ -50,6 +51,7 @@ func TestComputeMigrationPlanCreateAndDropTables(t *testing.T) {
 }
 
 func TestComputeMigrationPlanRenameTable(t *testing.T) {
+	t.Parallel()
 	old := &Snapshot{
 		Entities: map[string]EntityState{
 			"Product": {Fields: map[string]string{"id": "uuid"}},
@@ -78,6 +80,7 @@ func TestComputeMigrationPlanRenameTable(t *testing.T) {
 }
 
 func TestComputeMigrationPlanColumnOps(t *testing.T) {
+	t.Parallel()
 	old := &Snapshot{
 		Entities: map[string]EntityState{
 			"Product": {
@@ -147,6 +150,7 @@ func TestComputeMigrationPlanColumnOps(t *testing.T) {
 }
 
 func TestComputeMigrationPlanNilInputs(t *testing.T) {
+	t.Parallel()
 	if plan := ComputeMigrationPlan(nil, nil); !plan.IsEmpty() {
 		t.Error("nil inputs should produce an empty plan")
 	}
@@ -156,6 +160,7 @@ func TestComputeMigrationPlanNilInputs(t *testing.T) {
 }
 
 func TestComputeMigrationPlanRenameWithTypeChange(t *testing.T) {
+	t.Parallel()
 	// A field renamed AND retyped must emit RenameColumn + AlterColumn, not Drop+Add.
 	old := &Snapshot{
 		Entities: map[string]EntityState{

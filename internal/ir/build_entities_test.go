@@ -9,6 +9,7 @@ import (
 )
 
 func TestBuildCreatesRelations(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		Database:    "postgresql",
@@ -65,6 +66,7 @@ func TestBuildCreatesRelations(t *testing.T) {
 }
 
 func TestBuildResolvesEnumTypes(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		Database:    "postgresql",
@@ -109,6 +111,7 @@ func TestBuildResolvesEnumTypes(t *testing.T) {
 }
 
 func TestBuildResolvesPrimitiveTypes(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		Database:    "postgresql",
@@ -169,6 +172,7 @@ func mustParsedField(t *testing.T, name, input string) *parser.ParsedField {
 }
 
 func TestNavigationNameStripsIdSuffix(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		field   *parser.ParsedField
@@ -207,6 +211,7 @@ func TestNavigationNameStripsIdSuffix(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := tt.field.NavigationName()
 			if got != tt.wantNav {
 				t.Errorf("NavigationName() = %q, want %q", got, tt.wantNav)
@@ -216,6 +221,7 @@ func TestNavigationNameStripsIdSuffix(t *testing.T) {
 }
 
 func TestBuildCopiesDescription(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test", Description: "A test project"},
 		Database:    "postgresql",
@@ -243,6 +249,7 @@ func TestBuildCopiesDescription(t *testing.T) {
 }
 
 func TestBuildCopiesFeaturesMap(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		Database:    "postgresql",
@@ -290,6 +297,7 @@ func TestBuildCopiesFeaturesMap(t *testing.T) {
 }
 
 func TestBuildCircularDependency(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		Database:    "postgresql",
@@ -328,6 +336,7 @@ func TestBuildCircularDependency(t *testing.T) {
 }
 
 func TestBuildCopiesDatabaseColumnName(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		Database:    "postgresql",
@@ -368,6 +377,7 @@ func TestBuildCopiesDatabaseColumnName(t *testing.T) {
 // carried into the IR, including the derived old snake_case DB column name that
 // bridges use to emit a safe RenameColumn.
 func TestBuildCopiesFieldOldName(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		Database:    "postgresql",
@@ -409,6 +419,7 @@ func TestBuildCopiesFieldOldName(t *testing.T) {
 // pointer must still point at the correct entity (the in-place reorder used to
 // overwrite the backing array the pointers referenced, corrupting the targets).
 func TestBuildResolvesTargetEntityAfterTopoSort(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		Database:    "postgresql",
@@ -563,6 +574,7 @@ func findEntity(project *IRProject, name string) *IREntity {
 // has both a Buyer and a Seller referencing User), the pluralized inverse name
 // "EscrowContracts" would collide and produce duplicate C# navigation properties.
 func TestBuildDisambiguatesInverseNavigationNames(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		Database:    "postgresql",
@@ -643,6 +655,7 @@ func TestBuildDisambiguatesInverseNavigationNames(t *testing.T) {
 // one-to-many relationship, not a many-to-many. Without reconciliation the C#
 // bridge would emit a spurious EF join table AND a bogus inverse collection.
 func TestBuildReconcilesOneToManyDeclaredOnBothSides(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		Database:    "postgresql",
@@ -740,6 +753,7 @@ func TestBuildReconcilesOneToManyDeclaredOnBothSides(t *testing.T) {
 // OrderConfiguration.cs failed to compile with
 // "Cannot implicitly convert type 'System.Guid' to 'Order'".
 func TestBuildPairNavigationNameStripsIdSuffix(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Test"},
 		Database:    "postgresql",
@@ -797,6 +811,7 @@ func TestBuildPairNavigationNameStripsIdSuffix(t *testing.T) {
 }
 
 func TestBuildConvertsAuthAndValidations(t *testing.T) {
+	t.Parallel()
 	disabled := false
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Shop"},
@@ -878,6 +893,7 @@ func TestBuildConvertsAuthAndValidations(t *testing.T) {
 }
 
 func TestBuildWithoutAuthYieldsNilAuth(t *testing.T) {
+	t.Parallel()
 	schema := &parser.ParsedSchema{
 		Project:     parser.ProjectConfig{Name: "Plain"},
 		Database:    "postgresql",

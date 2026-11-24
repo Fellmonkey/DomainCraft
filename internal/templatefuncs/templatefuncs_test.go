@@ -8,6 +8,7 @@ import (
 )
 
 func TestContainsAndHasPrefixArgOrder(t *testing.T) {
+	t.Parallel()
 	// The reversed argument order (substr first) must be preserved.
 	if !Contains("ell", "hello") {
 		t.Error("Contains('ell', 'hello') = false, want true")
@@ -18,6 +19,7 @@ func TestContainsAndHasPrefixArgOrder(t *testing.T) {
 }
 
 func TestAdd(t *testing.T) {
+	t.Parallel()
 	got := Add(1, 2, 3)
 	if got != 6 {
 		t.Errorf("Add(1,2,3) = %d, want 6", got)
@@ -25,6 +27,7 @@ func TestAdd(t *testing.T) {
 }
 
 func TestAtoi(t *testing.T) {
+	t.Parallel()
 	if got := Atoi("42"); got != 42 {
 		t.Errorf("Atoi('42') = %d, want 42", got)
 	}
@@ -34,6 +37,7 @@ func TestAtoi(t *testing.T) {
 }
 
 func TestDefault(t *testing.T) {
+	t.Parallel()
 	if got := Default("fallback", ""); got != "fallback" {
 		t.Errorf("Default(fallback, empty) = %v, want fallback", got)
 	}
@@ -46,6 +50,7 @@ func TestDefault(t *testing.T) {
 }
 
 func TestDict(t *testing.T) {
+	t.Parallel()
 	got := Dict("a", 1, "b", "two")
 	want := map[string]any{"a": 1, "b": "two"}
 	if !reflect.DeepEqual(got, want) {
@@ -59,6 +64,7 @@ func TestDict(t *testing.T) {
 }
 
 func TestSet(t *testing.T) {
+	t.Parallel()
 	d := map[string]any{}
 	got := Set(d, "x", 7)
 	if got["x"] != 7 {
@@ -67,6 +73,7 @@ func TestSet(t *testing.T) {
 }
 
 func TestListAppend(t *testing.T) {
+	t.Parallel()
 	l := List()
 	if len(l) != 0 {
 		t.Errorf("List() = %v, want empty", l)
@@ -83,6 +90,7 @@ func TestListAppend(t *testing.T) {
 }
 
 func TestSplitList(t *testing.T) {
+	t.Parallel()
 	got := SplitList(" ", "a b c")
 	if !reflect.DeepEqual(got, []string{"a", "b", "c"}) {
 		t.Errorf("SplitList = %v, want [a b c]", got)
@@ -90,6 +98,7 @@ func TestSplitList(t *testing.T) {
 }
 
 func TestJoin(t *testing.T) {
+	t.Parallel()
 	if got := Join(",", []string{"a", "b"}); got != "a,b" {
 		t.Errorf("Join = %q, want a,b", got)
 	}
@@ -102,6 +111,7 @@ func TestJoin(t *testing.T) {
 }
 
 func TestKindOf(t *testing.T) {
+	t.Parallel()
 	if got := KindOf("x"); got != "string" {
 		t.Errorf("KindOf('x') = %q, want string", got)
 	}
@@ -111,6 +121,7 @@ func TestKindOf(t *testing.T) {
 }
 
 func TestToString(t *testing.T) {
+	t.Parallel()
 	if got := ToString("s"); got != "s" {
 		t.Errorf("ToString(string) = %q, want s", got)
 	}
@@ -120,6 +131,7 @@ func TestToString(t *testing.T) {
 }
 
 func TestAny(t *testing.T) {
+	t.Parallel()
 	if Any("", 0, false, nil) {
 		t.Error("Any(all empty) = true, want false")
 	}
@@ -129,6 +141,7 @@ func TestAny(t *testing.T) {
 }
 
 func TestFuncMapContainsAllExpected(t *testing.T) {
+	t.Parallel()
 	fm := FuncMap()
 	expected := []string{
 		"add", "any", "append", "atoi", "base", "camelcase", "contains",
@@ -145,6 +158,7 @@ func TestFuncMapContainsAllExpected(t *testing.T) {
 }
 
 func TestPascalCamelCase(t *testing.T) {
+	t.Parallel()
 	if got := PascalCase("first_name"); got != "FirstName" {
 		t.Errorf("PascalCase(first_name) = %q, want FirstName", got)
 	}
@@ -158,6 +172,7 @@ func TestPascalCamelCase(t *testing.T) {
 }
 
 func TestHumanizePluralizeFKName(t *testing.T) {
+	t.Parallel()
 	if got := Humanize("createdAt"); got != "created At" {
 		t.Errorf("Humanize(createdAt) = %q, want 'created At'", got)
 	}
@@ -173,6 +188,7 @@ func TestHumanizePluralizeFKName(t *testing.T) {
 }
 
 func TestSnakeKebabCase(t *testing.T) {
+	t.Parallel()
 	fm := FuncMap()
 	snake := fm["snakecase"].(func(string) string)
 	kebab := fm["kebabcase"].(func(string) string)

@@ -3,6 +3,7 @@ package textutil
 import "testing"
 
 func TestPluralize(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		input string
@@ -17,12 +18,13 @@ func TestPluralize(t *testing.T) {
 		{"tax", "Tax", "Taxes"},
 		{"quiz", "Quiz", "Quizzes"},
 		{"hero", "Hero", "Heroes"},
-		{"day_vowel_y", "Day", "Days"},    // y after vowel -> -s
-		{"key_vowel_y", "Key", "Keys"},    // y after vowel -> -s
+		{"day_vowel_y", "Day", "Days"},      // y after vowel -> -s
+		{"key_vowel_y", "Key", "Keys"},      // y after vowel -> -s
 		{"dish_sibilant", "Dish", "Dishes"}, // -sh -> -es
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := Pluralize(tt.input)
 			if got != tt.want {
 				t.Errorf("Pluralize(%q) = %q, want %q", tt.input, got, tt.want)
@@ -32,6 +34,7 @@ func TestPluralize(t *testing.T) {
 }
 
 func TestSingularize(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		input string
@@ -48,6 +51,7 @@ func TestSingularize(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := Singularize(tt.input)
 			if got != tt.want {
 				t.Errorf("Singularize(%q) = %q, want %q", tt.input, got, tt.want)
@@ -57,6 +61,7 @@ func TestSingularize(t *testing.T) {
 }
 
 func TestFKName(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		input string
@@ -69,6 +74,7 @@ func TestFKName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := FKName(tt.input); got != tt.want {
 				t.Errorf("FKName(%q) = %q, want %q", tt.input, got, tt.want)
 			}
@@ -77,6 +83,7 @@ func TestFKName(t *testing.T) {
 }
 
 func TestPascalCase(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		input string
@@ -92,6 +99,7 @@ func TestPascalCase(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := PascalCase(tt.input)
 			if got != tt.want {
 				t.Errorf("PascalCase(%q) = %q, want %q", tt.input, got, tt.want)
@@ -101,6 +109,7 @@ func TestPascalCase(t *testing.T) {
 }
 
 func TestCamelCase(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		input string
@@ -112,6 +121,7 @@ func TestCamelCase(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := CamelCase(tt.input)
 			if got != tt.want {
 				t.Errorf("CamelCase(%q) = %q, want %q", tt.input, got, tt.want)
@@ -121,6 +131,7 @@ func TestCamelCase(t *testing.T) {
 }
 
 func TestSplitIdentifier(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		input string
@@ -134,6 +145,7 @@ func TestSplitIdentifier(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := SplitIdentifier(tt.input)
 			if len(got) != len(tt.want) {
 				t.Errorf("SplitIdentifier(%q) = %v, want %v", tt.input, got, tt.want)

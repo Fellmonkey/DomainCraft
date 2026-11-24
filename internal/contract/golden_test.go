@@ -157,9 +157,11 @@ func manifestLines(m map[string]string) []string {
 // byte-identical output to a committed golden manifest. Regenerate changed
 // output with `go test ./internal/contract -update`.
 func TestGoldenLeafBridges(t *testing.T) {
+	t.Parallel()
 	proj := loadGoldenProject(t)
 	for _, id := range leafBridges {
 		t.Run(id, func(t *testing.T) {
+			t.Parallel()
 			got := strings.Join(manifestLines(renderChain(t, []string{bridgeDir(t, id)}, proj)), "\n")
 			goldenPath := filepath.Join("testdata", id+".golden.txt")
 			if *updateGolden {
@@ -188,6 +190,7 @@ func TestGoldenLeafBridges(t *testing.T) {
 // bridges. The chain is resolved through the same importable resolver the CLI
 // uses.
 func TestRenderDeterministic(t *testing.T) {
+	t.Parallel()
 	proj := loadGoldenProject(t)
 	for _, entry := range bridge.Default().All() {
 		if entry.Path == "" || entry.Deprecated {
@@ -195,6 +198,7 @@ func TestRenderDeterministic(t *testing.T) {
 		}
 		id := entry.ID
 		t.Run(id, func(t *testing.T) {
+			t.Parallel()
 			chain := resolveChain(t, bridgeDir(t, id))
 			a := strings.Join(manifestLines(renderChain(t, chain, proj)), "\n")
 			b := strings.Join(manifestLines(renderChain(t, chain, proj)), "\n")

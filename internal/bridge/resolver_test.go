@@ -55,12 +55,12 @@ func TestResolver_MissingPathLikeIsErrorNotClone(t *testing.T) {
 	r := NewResolver(&Registry{})
 
 	for _, input := range []string{
-		"../domaincraftcsharp",   // the regression: must NOT clone github.com/../domaincraftcsharp
-		"./no-such-bridge",       // explicit relative path
-		"/no/such/bridge",        // absolute path
-		"~/no-such-bridge",       // home-relative
-		"no\\such\\bridge",       // Windows-style relative
-		"C:/no/such/bridge",      // Windows drive
+		"../domaincraftcsharp", // the regression: must NOT clone github.com/../domaincraftcsharp
+		"./no-such-bridge",     // explicit relative path
+		"/no/such/bridge",      // absolute path
+		"~/no-such-bridge",     // home-relative
+		"no\\such\\bridge",     // Windows-style relative
+		"C:/no/such/bridge",    // Windows drive
 	} {
 		_, err := r.Resolve(input)
 		if err == nil {

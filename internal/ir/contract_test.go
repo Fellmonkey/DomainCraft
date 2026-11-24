@@ -3,6 +3,7 @@ package ir
 import "testing"
 
 func TestValidationRules(t *testing.T) {
+	t.Parallel()
 	f := IRField{
 		Name:         "email",
 		DatabaseType: "string",
@@ -33,6 +34,7 @@ func TestValidationRules(t *testing.T) {
 }
 
 func TestValidationRulesNumericBounds(t *testing.T) {
+	t.Parallel()
 	f := IRField{
 		Name:         "qty",
 		DatabaseType: "int",
@@ -51,6 +53,7 @@ func TestValidationRulesNumericBounds(t *testing.T) {
 }
 
 func TestValidationRulesCodesAndMessages(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		field    IRField
@@ -66,6 +69,7 @@ func TestValidationRulesCodesAndMessages(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			rules := c.field.ValidationRules()
 			found := false
 			for _, r := range rules {
@@ -84,6 +88,7 @@ func TestValidationRulesCodesAndMessages(t *testing.T) {
 }
 
 func TestValidationRulesNullableNotRequired(t *testing.T) {
+	t.Parallel()
 	f := IRField{Name: "nick", DatabaseType: "string", IsNullable: true}
 	for _, r := range f.ValidationRules() {
 		if r.Kind == "required" {
@@ -93,6 +98,7 @@ func TestValidationRulesNullableNotRequired(t *testing.T) {
 }
 
 func TestAllIndexesMergesUniqueFields(t *testing.T) {
+	t.Parallel()
 	e := IREntity{
 		Name:       "Order",
 		NamePlural: "Orders",
@@ -127,6 +133,7 @@ func TestAllIndexesMergesUniqueFields(t *testing.T) {
 }
 
 func TestAllIndexesDedupesDeclaredUnique(t *testing.T) {
+	t.Parallel()
 	e := IREntity{
 		Name:       "Order",
 		NamePlural: "Orders",
@@ -143,6 +150,7 @@ func TestAllIndexesDedupesDeclaredUnique(t *testing.T) {
 }
 
 func TestPermissionPlan(t *testing.T) {
+	t.Parallel()
 	p := &IRPermissions{
 		Read:   []string{"*"},
 		Create: []string{"Admin", "@Owner"},
@@ -171,6 +179,7 @@ func TestPermissionPlan(t *testing.T) {
 }
 
 func TestPermissionPlanNil(t *testing.T) {
+	t.Parallel()
 	var p *IRPermissions
 	if p.Plan("read") != nil {
 		t.Error("nil permissions should yield nil plan")
@@ -178,6 +187,7 @@ func TestPermissionPlanNil(t *testing.T) {
 }
 
 func TestEndpointsContract(t *testing.T) {
+	t.Parallel()
 	e := IREntity{Name: "Order", NamePlural: "Orders", Features: map[string]bool{"optimistic_lock": true}}
 	eps := e.Endpoints()
 	if len(eps) != 6 {
@@ -211,6 +221,7 @@ func TestEndpointsContract(t *testing.T) {
 }
 
 func TestIREntity_PrimaryKey(t *testing.T) {
+	t.Parallel()
 	e := IREntity{Fields: []IRField{{Name: "name"}, {Name: "id", IsPrimary: true}}}
 	pk := e.PrimaryKey()
 	if pk == nil || pk.Name != "id" {
@@ -222,6 +233,7 @@ func TestIREntity_PrimaryKey(t *testing.T) {
 }
 
 func TestIREntity_FieldByName(t *testing.T) {
+	t.Parallel()
 	e := IREntity{Fields: []IRField{{Name: "firstName"}, {Name: "ID"}}}
 	if f := e.FieldByName("FirstName"); f == nil || f.Name != "firstName" {
 		t.Errorf("FieldByName(FirstName) = %v, want firstName (case-insensitive)", f)
@@ -235,6 +247,7 @@ func TestIREntity_FieldByName(t *testing.T) {
 }
 
 func TestIRProject_AuthEntity(t *testing.T) {
+	t.Parallel()
 	p := &IRProject{
 		Auth:     &IRAuthConfig{Type: "jwt", Entity: "User"},
 		Entities: []IREntity{{Name: "Order"}, {Name: "User"}},
@@ -253,6 +266,7 @@ func TestIRProject_AuthEntity(t *testing.T) {
 }
 
 func TestIRPermissions_HasOwnerToken(t *testing.T) {
+	t.Parallel()
 	if (&IRPermissions{Read: []string{"Admin"}, Create: []string{"*"}}).HasOwnerToken() {
 		t.Error("no @Owner token should yield false")
 	}
@@ -266,6 +280,7 @@ func TestIRPermissions_HasOwnerToken(t *testing.T) {
 }
 
 func TestAuthEndpoints(t *testing.T) {
+	t.Parallel()
 	p := &IRProject{Auth: &IRAuthConfig{
 		Type:   "jwt",
 		Entity: "User",

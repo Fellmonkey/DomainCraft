@@ -8,11 +8,11 @@ import "github.com/DomainCraft/DomainCraft/internal/specmeta"
 // the project (dumb bridge, smart core). Explicit `seed:` rows and
 // auto-generated mock seed both use this exact shape.
 type SeedValue struct {
-	Field      string      // logical field name
-	DBType     string      // IR database type (e.g. "uuid", "decimal", "Status", "array(int)")
-	IsRelation bool        // true when the field is a relation (FK or collection)
-	IsMany     bool        // true when the relation is a collection ([many])
-	Value      any // native Go value (string, int64, float64, bool, []any, map, nil)
+	Field      string // logical field name
+	DBType     string // IR database type (e.g. "uuid", "decimal", "Status", "array(int)")
+	IsRelation bool   // true when the field is a relation (FK or collection)
+	IsMany     bool   // true when the relation is a collection ([many])
+	Value      any    // native Go value (string, int64, float64, bool, []any, map, nil)
 }
 
 // Kind returns the language-agnostic value kind for serialization, derived from

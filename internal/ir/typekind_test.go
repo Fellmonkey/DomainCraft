@@ -3,6 +3,7 @@ package ir
 import "testing"
 
 func TestIRFieldTypePredicates(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name                           string
 		dbType                         string
@@ -29,6 +30,7 @@ func TestIRFieldTypePredicates(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			f := IRField{DatabaseType: c.dbType}
 			if got := f.IsUuid(); got != c.isUuid {
 				t.Errorf("%q IsUuid() = %v, want %v", c.dbType, got, c.isUuid)
@@ -68,6 +70,7 @@ func TestIRFieldTypePredicates(t *testing.T) {
 }
 
 func TestIRFieldSpecificTypePredicates(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name                          string
 		dbType                        string
@@ -85,6 +88,7 @@ func TestIRFieldSpecificTypePredicates(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			f := IRField{DatabaseType: c.dbType}
 			if got := f.IsString(); got != c.isString {
 				t.Errorf("%q IsString() = %v, want %v", c.dbType, got, c.isString)
@@ -103,6 +107,7 @@ func TestIRFieldSpecificTypePredicates(t *testing.T) {
 }
 
 func TestIRFieldIsPatchable(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		f    IRField
@@ -121,6 +126,7 @@ func TestIRFieldIsPatchable(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := c.f.IsPatchable(); got != c.want {
 				t.Errorf("%s IsPatchable() = %v, want %v", c.name, got, c.want)
 			}
@@ -129,6 +135,7 @@ func TestIRFieldIsPatchable(t *testing.T) {
 }
 
 func TestIRFieldIsTextOnly(t *testing.T) {
+	t.Parallel()
 	if !(IRField{DatabaseType: "text"}).IsTextOnly() {
 		t.Error("text should be IsTextOnly")
 	}
@@ -138,6 +145,7 @@ func TestIRFieldIsTextOnly(t *testing.T) {
 }
 
 func TestIREntityTableNameAndForeignKeyColumnName(t *testing.T) {
+	t.Parallel()
 	e := IREntity{Name: "IPv4Rule", NamePlural: "IPv4Rules"}
 	if got := e.TableName(); got != "i_pv4rules" {
 		t.Errorf("TableName() = %q, want %q (acronyms must match ToDatabaseColumnName)", got, "i_pv4rules")
@@ -154,6 +162,7 @@ func TestIREntityTableNameAndForeignKeyColumnName(t *testing.T) {
 }
 
 func TestKindOf(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"uuid":          "uuid",
 		"string":        "text",
@@ -185,6 +194,7 @@ func TestKindOf(t *testing.T) {
 }
 
 func TestIRPermissionsIsPublic(t *testing.T) {
+	t.Parallel()
 	p := &IRPermissions{Read: []string{"*"}, Create: []string{"Admin"}, Update: nil, Delete: []string{}}
 	if !p.IsPublic("read") {
 		t.Error("IsPublic(read) = false, want true")
@@ -205,6 +215,7 @@ func TestIRPermissionsIsPublic(t *testing.T) {
 }
 
 func TestIREndpointAuthPolicy(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"list":   "Read",
 		"get":    "Read",

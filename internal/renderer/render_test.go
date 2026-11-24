@@ -11,6 +11,7 @@ import (
 )
 
 func TestRenderEntityTemplate(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	bridgeDir := filepath.Join(tmpDir, "bridge")
 	if err := os.MkdirAll(filepath.Join(bridgeDir, "templates"), 0o755); err != nil {
@@ -59,6 +60,7 @@ templates:
 }
 
 func TestComposeAttachBases(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 
 	write := func(dir, name, content string) {
@@ -129,6 +131,7 @@ templates:
 }
 
 func TestMergeTypeMappingsOverlay(t *testing.T) {
+	t.Parallel()
 	base := &typeMappings{
 		Types:       map[string]string{"string": "str", "int": "num"},
 		ArrayFormat: "%s[]",
@@ -159,6 +162,7 @@ func TestMergeTypeMappingsOverlay(t *testing.T) {
 }
 
 func TestRenderOverwriteFalseScaffoldsOnce(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	bridgeDir := filepath.Join(tmpDir, "bridge")
 	if err := os.MkdirAll(filepath.Join(bridgeDir, "templates"), 0o755); err != nil {
@@ -237,6 +241,7 @@ templates:
 }
 
 func TestRenderContext_HasFeature(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		features map[string]bool
@@ -250,6 +255,7 @@ func TestRenderContext_HasFeature(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			ctx := RenderContext{
 				Entity: &ir.IREntity{Features: tt.features},
 			}
@@ -264,6 +270,7 @@ func TestRenderContext_HasFeature(t *testing.T) {
 }
 
 func TestRenderContext_HasAudit(t *testing.T) {
+	t.Parallel()
 	ctx := RenderContext{
 		Entity: &ir.IREntity{Features: map[string]bool{"audit": true}},
 	}
@@ -278,6 +285,7 @@ func TestRenderContext_HasAudit(t *testing.T) {
 }
 
 func TestRenderContext_HasSoftDelete(t *testing.T) {
+	t.Parallel()
 	ctx := RenderContext{
 		Entity: &ir.IREntity{Features: map[string]bool{"soft_delete": true}},
 	}
@@ -287,6 +295,7 @@ func TestRenderContext_HasSoftDelete(t *testing.T) {
 }
 
 func TestRenderContext_HasOptimisticLock(t *testing.T) {
+	t.Parallel()
 	ctx := RenderContext{
 		Entity: &ir.IREntity{Features: map[string]bool{"optimistic_lock": true}},
 	}
@@ -296,6 +305,7 @@ func TestRenderContext_HasOptimisticLock(t *testing.T) {
 }
 
 func TestRenderContext_HasAuditLog(t *testing.T) {
+	t.Parallel()
 	ctx := RenderContext{
 		Entity: &ir.IREntity{Features: map[string]bool{"audit_log": true}},
 	}
@@ -305,6 +315,7 @@ func TestRenderContext_HasAuditLog(t *testing.T) {
 }
 
 func TestRenderContext_Permissions(t *testing.T) {
+	t.Parallel()
 	ctx := RenderContext{Entity: nil}
 	if ctx.Permissions() != nil {
 		t.Error("Permissions() should return nil for nil entity")
@@ -320,6 +331,7 @@ func TestRenderContext_Permissions(t *testing.T) {
 }
 
 func TestRenderContext_PrimaryKey(t *testing.T) {
+	t.Parallel()
 	ctx := RenderContext{Entity: nil}
 	if ctx.PrimaryKey() != nil {
 		t.Error("PrimaryKey() should return nil for nil entity")
@@ -340,6 +352,7 @@ func TestRenderContext_PrimaryKey(t *testing.T) {
 }
 
 func TestResolvePackagesNilLoggerDoesNotPanic(t *testing.T) {
+	t.Parallel()
 	// A nil logger is valid (silent mode). Failed package resolution must not
 	// panic when the logger is nil — Warn is a no-op on a nil Logger.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -358,6 +371,7 @@ func TestResolvePackagesNilLoggerDoesNotPanic(t *testing.T) {
 }
 
 func TestRenderHasMigrationCondition(t *testing.T) {
+	t.Parallel()
 	newRenderer := func(t *testing.T, when string) *Renderer {
 		t.Helper()
 		tmpDir := t.TempDir()
@@ -409,6 +423,7 @@ templates:
 }
 
 func TestRenderHasMockDataCondition(t *testing.T) {
+	t.Parallel()
 	newRenderer := func(t *testing.T) *Renderer {
 		t.Helper()
 		tmpDir := t.TempDir()
@@ -460,6 +475,7 @@ templates:
 }
 
 func TestRenderHasSeedCondition(t *testing.T) {
+	t.Parallel()
 	newRenderer := func(t *testing.T) *Renderer {
 		t.Helper()
 		tmpDir := t.TempDir()
@@ -511,6 +527,7 @@ templates:
 }
 
 func TestRenderContext_SeedAccessor(t *testing.T) {
+	t.Parallel()
 	ctx := RenderContext{
 		Entity:   &ir.IREntity{Name: "Order"},
 		SeedData: &ir.SeedDataset{Entities: []ir.SeedEntity{{Name: "Order", Records: []ir.SeedRecord{{Fields: []ir.SeedValue{{Field: "id", Value: "x"}}}}}}},
@@ -525,6 +542,7 @@ func TestRenderContext_SeedAccessor(t *testing.T) {
 }
 
 func TestRenderContext_DTOAccessors(t *testing.T) {
+	t.Parallel()
 	e := &ir.IREntity{Name: "User", Fields: []ir.IRField{
 		{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 		{Name: "name", DatabaseType: "string"},

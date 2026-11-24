@@ -36,6 +36,7 @@ func testMappings() *typeMappings {
 }
 
 func TestBuildBridgeFuncs_NilMappings(t *testing.T) {
+	t.Parallel()
 	funcs := buildBridgeFuncs(nil, logger.New())
 	if _, ok := funcs["languageType"]; ok {
 		t.Error("nil mappings should produce no bridge funcs")
@@ -43,6 +44,7 @@ func TestBuildBridgeFuncs_NilMappings(t *testing.T) {
 }
 
 func TestBuildBridgeFuncs_LanguageType(t *testing.T) {
+	t.Parallel()
 	fn := buildBridgeFuncs(testMappings(), logger.New())["languageType"].(func(string, bool) string)
 
 	cases := []struct {
@@ -60,6 +62,7 @@ func TestBuildBridgeFuncs_LanguageType(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := fn(c.dbType, c.nullable); got != c.want {
 				t.Errorf("languageType(%q, %v) = %q, want %q", c.dbType, c.nullable, got, c.want)
 			}
@@ -81,6 +84,7 @@ func TestBuildBridgeFuncs_LanguageType(t *testing.T) {
 }
 
 func TestBuildBridgeFuncs_DefaultArrayFormatAndOptionalFuncs(t *testing.T) {
+	t.Parallel()
 	m := &typeMappings{Types: map[string]string{"int": "int32"}}
 	funcs := buildBridgeFuncs(m, logger.New())
 
@@ -100,6 +104,7 @@ func TestBuildBridgeFuncs_DefaultArrayFormatAndOptionalFuncs(t *testing.T) {
 }
 
 func TestBuildBridgeFuncs_LiteralValue(t *testing.T) {
+	t.Parallel()
 	literalValue := buildBridgeFuncs(testMappings(), logger.New())["literalValue"].(func(string, any) string)
 
 	cases := []struct {
@@ -117,6 +122,7 @@ func TestBuildBridgeFuncs_LiteralValue(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := literalValue(c.dbType, c.value); got != c.want {
 				t.Errorf("literalValue(%q, %v) = %q, want %q", c.dbType, c.value, got, c.want)
 			}
@@ -125,6 +131,7 @@ func TestBuildBridgeFuncs_LiteralValue(t *testing.T) {
 }
 
 func TestBuildBridgeFuncs_LiteralDefault(t *testing.T) {
+	t.Parallel()
 	literalDefault := buildBridgeFuncs(testMappings(), logger.New())["literalDefault"].(func(string) string)
 
 	cases := []struct{ name, dbType, want string }{
@@ -136,6 +143,7 @@ func TestBuildBridgeFuncs_LiteralDefault(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := literalDefault(c.dbType); got != c.want {
 				t.Errorf("literalDefault(%q) = %q, want %q", c.dbType, got, c.want)
 			}
@@ -152,6 +160,7 @@ func TestBuildBridgeFuncs_LiteralDefault(t *testing.T) {
 }
 
 func TestBuildBridgeFuncs_LiteralMember(t *testing.T) {
+	t.Parallel()
 	literalMember := buildBridgeFuncs(testMappings(), logger.New())["literalMember"].(func(string, string) string)
 
 	if got := literalMember("OrderStatus", "in_transit"); got != "OrderStatus.InTransit" {
@@ -170,6 +179,7 @@ func TestBuildBridgeFuncs_LiteralMember(t *testing.T) {
 }
 
 func TestBuildBridgeFuncs_ArrayLiteralAndHelpers(t *testing.T) {
+	t.Parallel()
 	raw := buildBridgeFuncs(testMappings(), logger.New())
 
 	open := raw["arrayLiteralOpen"].(func(string) string)
@@ -217,6 +227,7 @@ func TestBuildBridgeFuncs_ArrayLiteralAndHelpers(t *testing.T) {
 }
 
 func TestMergeTypeMappings_AdapterWinsOnConflicts(t *testing.T) {
+	t.Parallel()
 	base := &typeMappings{
 		Types:          map[string]string{"uuid": "Guid", "int": "int"},
 		Literals:       map[string]LiteralSpec{"uuid": {Parse: "Base(%s)"}, "decimal": {Suffix: "m"}},

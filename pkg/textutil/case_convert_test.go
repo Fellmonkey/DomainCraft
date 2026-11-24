@@ -3,6 +3,7 @@ package textutil
 import "testing"
 
 func TestSnakeCase(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		in   string
@@ -38,6 +39,7 @@ func TestSnakeCase(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := SnakeCase(c.in); got != c.want {
 				t.Errorf("SnakeCase(%q) = %q, want %q", c.in, got, c.want)
 			}
@@ -46,6 +48,7 @@ func TestSnakeCase(t *testing.T) {
 }
 
 func TestKebabCase(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		in   string
@@ -63,6 +66,7 @@ func TestKebabCase(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := KebabCase(c.in); got != c.want {
 				t.Errorf("KebabCase(%q) = %q, want %q", c.in, got, c.want)
 			}
@@ -74,6 +78,7 @@ func TestKebabCase(t *testing.T) {
 // template `snakecase` (which diverges on acronym+digit runs, e.g.
 // "IPv4Address" -> "i_pv4_address") never silently replaces it.
 func TestToDatabaseColumnName(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		in   string
@@ -101,6 +106,7 @@ func TestToDatabaseColumnName(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := ToDatabaseColumnName(c.in); got != c.want {
 				t.Errorf("ToDatabaseColumnName(%q) = %q, want %q", c.in, got, c.want)
 			}

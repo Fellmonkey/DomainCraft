@@ -15,6 +15,7 @@ import (
 // that starts depending on a newer contract — long before it ships. The
 // byte-identical output half is a follow-up golden test.
 func TestBundledBridgesLoad(t *testing.T) {
+	t.Parallel()
 	root := filepath.Join("..", "..", "bridges")
 	if _, err := os.Stat(root); err != nil {
 		t.Skipf("no bundled bridges tree at %s: %v", root, err)

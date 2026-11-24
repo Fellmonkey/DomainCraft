@@ -40,6 +40,7 @@ func testEntity() IREntity {
 }
 
 func TestSearchableSortableFilterableFields(t *testing.T) {
+	t.Parallel()
 	e := testEntity()
 
 	names := func(fields []IRField) []string {
@@ -63,6 +64,7 @@ func TestSearchableSortableFilterableFields(t *testing.T) {
 }
 
 func TestFilterOperators(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		dbType string
@@ -78,6 +80,7 @@ func TestFilterOperators(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			f := IRField{DatabaseType: c.dbType}
 			got := f.FilterOperators()
 			if len(got) == 0 && len(c.want) == 0 {
@@ -91,6 +94,7 @@ func TestFilterOperators(t *testing.T) {
 }
 
 func TestAllFilterOperators(t *testing.T) {
+	t.Parallel()
 	got := (IRProject{}).AllFilterOperators()
 	want := []FilterOp{OpEq, OpNe, OpGt, OpGte, OpLt, OpLte, OpIn, OpContains, OpStartsWith, OpEndsWith}
 	if !reflect.DeepEqual(got, want) {
@@ -99,6 +103,7 @@ func TestAllFilterOperators(t *testing.T) {
 }
 
 func TestFilterablePaths(t *testing.T) {
+	t.Parallel()
 	e := testEntity()
 	paths := e.FilterablePaths()
 
@@ -129,6 +134,7 @@ func TestFilterablePaths(t *testing.T) {
 }
 
 func TestQuerySchema(t *testing.T) {
+	t.Parallel()
 	e := testEntity()
 	q := e.QuerySchema()
 
@@ -149,6 +155,7 @@ func TestQuerySchema(t *testing.T) {
 }
 
 func TestCursorField(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		pkType string
@@ -162,6 +169,7 @@ func TestCursorField(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			e := IREntity{Fields: []IRField{{Name: "id", DatabaseType: c.pkType, IsPrimary: true}}}
 			got := e.CursorField()
 			if (got != nil) != c.want {

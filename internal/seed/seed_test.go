@@ -8,6 +8,7 @@ import (
 )
 
 func TestGenerateBasicTypes(t *testing.T) {
+	t.Parallel()
 	project := &ir.IRProject{
 		Enums: map[string][]string{"Status": {"pending", "active"}},
 		Entities: []ir.IREntity{
@@ -65,6 +66,7 @@ func TestGenerateBasicTypes(t *testing.T) {
 }
 
 func TestGenerateReferencesParentPK(t *testing.T) {
+	t.Parallel()
 	project := &ir.IRProject{
 		Entities: []ir.IREntity{
 			{
@@ -106,6 +108,7 @@ func TestGenerateReferencesParentPK(t *testing.T) {
 }
 
 func TestNormalizeCoercesTypes(t *testing.T) {
+	t.Parallel()
 	project := &ir.IRProject{
 		Entities: []ir.IREntity{
 			{
@@ -155,6 +158,7 @@ func TestNormalizeCoercesTypes(t *testing.T) {
 }
 
 func TestNormalizeSkipsEntitiesWithoutSeed(t *testing.T) {
+	t.Parallel()
 	project := &ir.IRProject{
 		Entities: []ir.IREntity{
 			{Name: "Empty", Fields: []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}}},
@@ -168,6 +172,7 @@ func TestNormalizeSkipsEntitiesWithoutSeed(t *testing.T) {
 }
 
 func TestNormalizeIncludesRelationFlags(t *testing.T) {
+	t.Parallel()
 	project := &ir.IRProject{
 		Entities: []ir.IREntity{
 			{
@@ -191,6 +196,7 @@ func TestNormalizeIncludesRelationFlags(t *testing.T) {
 }
 
 func TestGenerateHonorsNumericBounds(t *testing.T) {
+	t.Parallel()
 	project := &ir.IRProject{
 		Entities: []ir.IREntity{
 			{
@@ -237,6 +243,7 @@ func TestGenerateHonorsNumericBounds(t *testing.T) {
 }
 
 func TestGenerateHonorsStringValidations(t *testing.T) {
+	t.Parallel()
 	project := &ir.IRProject{
 		Entities: []ir.IREntity{
 			{
@@ -272,6 +279,7 @@ func TestGenerateHonorsStringValidations(t *testing.T) {
 }
 
 func TestNormalizeCoerceEdgeCases(t *testing.T) {
+	t.Parallel()
 	project := &ir.IRProject{
 		Enums: map[string][]string{"Status": {"draft", "live"}},
 		Entities: []ir.IREntity{
@@ -338,6 +346,7 @@ func TestNormalizeCoerceEdgeCases(t *testing.T) {
 }
 
 func TestGenerateUsesDeclaredDefaultOverMock(t *testing.T) {
+	t.Parallel()
 	project := &ir.IRProject{
 		Entities: []ir.IREntity{
 			{

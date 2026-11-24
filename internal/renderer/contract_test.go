@@ -23,6 +23,7 @@ func writeBridgeConfig(t *testing.T, yamlContent string) string {
 }
 
 func TestLoadSourceRejectsNewerContract(t *testing.T) {
+	t.Parallel()
 	dir := writeBridgeConfig(t, "name: b\ncontract_version: 99\n")
 	_, err := loadSource(dir)
 	if err == nil {
@@ -31,6 +32,7 @@ func TestLoadSourceRejectsNewerContract(t *testing.T) {
 }
 
 func TestLoadSourceDefaultsAbsentContractTo1(t *testing.T) {
+	t.Parallel()
 	dir := writeBridgeConfig(t, "name: b\n")
 	src, err := loadSource(dir)
 	if err != nil {
@@ -45,6 +47,7 @@ func TestLoadSourceDefaultsAbsentContractTo1(t *testing.T) {
 }
 
 func TestLoadSourceAcceptsMatchingContract(t *testing.T) {
+	t.Parallel()
 	dir := writeBridgeConfig(t, "name: b\ncontract_version: 1\n")
 	src, err := loadSource(dir)
 	if err != nil {
@@ -59,6 +62,7 @@ func TestLoadSourceAcceptsMatchingContract(t *testing.T) {
 }
 
 func TestNewWarnsWhenContractAbsent(t *testing.T) {
+	t.Parallel()
 	dir := writeBridgeConfig(t, "name: b\n")
 	var buf bytes.Buffer
 	log := logger.New()

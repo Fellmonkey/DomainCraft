@@ -7,6 +7,7 @@ import (
 )
 
 func TestParseStrictRejectsUnknownKeys(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		yaml    string
@@ -74,6 +75,7 @@ entities: {}
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			_, err := ParseRawSchema([]byte(tt.yaml))
 			if err == nil {
 				t.Fatalf("ParseRawSchema() expected error containing %q, got nil", tt.wantErr)
@@ -86,6 +88,7 @@ entities: {}
 }
 
 func TestParseRawSchema(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test Project
@@ -117,6 +120,7 @@ entities:
 }
 
 func TestParseDefaults(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -140,6 +144,7 @@ entities: {}
 }
 
 func TestParseEntity(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -190,6 +195,7 @@ entities:
 }
 
 func TestParseFeatures(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -225,6 +231,7 @@ entities:
 }
 
 func TestParseRelations(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -269,6 +276,7 @@ entities:
 }
 
 func TestParseIndexes(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -307,6 +315,7 @@ entities:
 }
 
 func TestPluralizeNames(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		singular string
 		plural   string
@@ -320,6 +329,7 @@ func TestPluralizeNames(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
 			// Test via ParseYAML since pluralize is an internal function
 			yamlData := []byte("project:\n  name: Test\nentities:\n  " + tt.singular + ":\n    fields:\n      id: uuid [primary]")
 			parsed, _ := ParseYAML(yamlData)
@@ -332,6 +342,7 @@ func TestPluralizeNames(t *testing.T) {
 }
 
 func TestDatabaseColumnNames(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -363,6 +374,7 @@ entities:
 
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
 			if field, ok := user.Fields[tt.fieldName]; ok {
 				if field.DatabaseColumnName != tt.wantDbName {
 					t.Errorf("field %s: got db name %v, want %v", tt.fieldName, field.DatabaseColumnName, tt.wantDbName)
@@ -373,6 +385,7 @@ entities:
 }
 
 func TestParsePermissions(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -403,6 +416,7 @@ entities:
 }
 
 func TestParsePrimaryImpliesRequired(t *testing.T) {
+	t.Parallel()
 	// Parser normalizes primary→required (lexer no longer does this).
 	yamlData := []byte(`
 project:
@@ -427,6 +441,7 @@ entities:
 }
 
 func TestParseOptionalImpliesNotRequired(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -451,6 +466,7 @@ entities:
 }
 
 func TestParseRelationTypeInference(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -487,6 +503,7 @@ entities:
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
 			f := order.Fields[tt.field]
 			if f.RelationType != tt.wantType {
 				t.Errorf("field %s: RelationType = %q, want %q", tt.field, f.RelationType, tt.wantType)
@@ -496,6 +513,7 @@ entities:
 }
 
 func TestParseDeployDefaults(t *testing.T) {
+	t.Parallel()
 	// Parser should set deploy defaults (port=8080, domain=localhost).
 	yamlData := []byte(`
 project:
@@ -521,6 +539,7 @@ entities:
 }
 
 func TestParseDeployExplicitValues(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -545,6 +564,7 @@ entities:
 }
 
 func TestParseVersioningRateLimitPaginationDefaults(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -590,6 +610,7 @@ entities:
 }
 
 func TestParseVersioningRateLimitExplicit(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -628,6 +649,7 @@ entities:
 }
 
 func TestParseUnknownEntityKey(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -646,6 +668,7 @@ entities:
 }
 
 func TestParseOldName(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -669,6 +692,7 @@ entities:
 }
 
 func TestParseDuplicateField(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -700,6 +724,7 @@ entities:
 // RawSchema decoding cannot silently reintroduce the overwrite-on-duplicate
 // behaviour.
 func TestParseDuplicateEntity(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test

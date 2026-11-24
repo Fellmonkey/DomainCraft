@@ -11,13 +11,13 @@ internal/validator/validator_test.go::TestExampleDomainHasNoWarnings	#3	shipped 
 internal/packages/registry_test.go::TestResolveVersionForFrameworkRespectsTargetFramework	#3	NuGet resolver picked a version above the generated net10.0 target
 cmd/domaincraft/regression_csharp_role_test.go::TestGeneratedCSharpTestsHandleStringRole	#3	string role rendered as string.Admin in generated tests
 cmd/domaincraft/regression_ts_package_test.go::TestGeneratedTSPackageNameIsKebabCase	#3	raw project name with spaces landed in package.json
-internal/bridge/id_test.go::TestValidateCacheIDRejectsEscapes	#5	owner/repo id escaped the bridge cache and could delete an arbitrary path
+internal/bridge/clone_id_test.go::TestValidateCacheIDRejectsEscapes	#5	owner/repo id escaped the bridge cache and could delete an arbitrary path
 internal/snapshot/paths_test.go::TestSafeRelPathKeepsPathsInsideOutputDir	#5	snapshot file path could escape outputDir under --prune
 internal/snapshot/paths_test.go::TestDeleteFileRejectsSnapshotEscape	#5	poisoned snapshot path deleted a file outside the output dir
 internal/snapshot/paths_test.go::TestRewriteFileRejectsSnapshotEscape	#5	poisoned snapshot path rewrote a file outside the output dir
 internal/packages/registry_test.go::TestValidateRegistryURLRejectsInternalTargets	#5	bridge.yaml registry_url allowed requests to internal addresses
-cmd/domaincraft/notify_test.go::TestCachedLatestCoreVersionCachesFailedCheck	#5	offline update check repeated the full HTTP timeout on every command
+cmd/domaincraft/commands_notify_test.go::TestCachedLatestCoreVersionCachesFailedCheck	#5	offline update check repeated the full HTTP timeout on every command
 internal/snapshot/rewrite_test.go::TestRenameTransformsIncludesFieldRenames	#5	field rename was dropped from the compound transform for custom files
-internal/bridge/policy_test.go::TestMaybeUpdatePolicies	#5	bridge update policy decisions had no regression coverage
-internal/bridge/policy_test.go::TestApplyUpdateRejectsUnsupportedContract	#5	apply path could hard-reset a bridge with an unsupported contract version
+internal/bridge/clone_policy_test.go::TestMaybeUpdatePolicies	#5	bridge update policy decisions had no regression coverage
+internal/bridge/clone_policy_test.go::TestApplyUpdateRejectsUnsupportedContract	#5	apply path could hard-reset a bridge with an unsupported contract version
 internal/snapshot/rewrite_test.go::TestRewriteEntityContent	#5	inner identifiers such as myProduct were not protected from rename rewrite

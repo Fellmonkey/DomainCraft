@@ -128,13 +128,13 @@ type MultiTenancyConfig struct {
 
 // RawEntity represents an unprocessed entity from YAML
 type RawEntity struct {
-	OldName     string                   `yaml:"old_name" json:"old_name,omitempty"` // hint for the migration engine: previous entity name (rename detection)
-	Features    []string                 `yaml:"features" json:"features,omitempty"`
-	Fields      map[string]string        `yaml:"fields" json:"fields"`
-	FieldOrder  []string                 `yaml:"-" json:"fieldOrder"` // preserved from YAML — not a yaml tag
-	Indexes     []RawIndex               `yaml:"indexes" json:"indexes,omitempty"`
-	Permissions *RawPermissions          `yaml:"permissions" json:"permissions,omitempty"`
-	Seed        []map[string]any `yaml:"seed" json:"seed,omitempty"`
+	OldName     string            `yaml:"old_name" json:"old_name,omitempty"` // hint for the migration engine: previous entity name (rename detection)
+	Features    []string          `yaml:"features" json:"features,omitempty"`
+	Fields      map[string]string `yaml:"fields" json:"fields"`
+	FieldOrder  []string          `yaml:"-" json:"fieldOrder"` // preserved from YAML — not a yaml tag
+	Indexes     []RawIndex        `yaml:"indexes" json:"indexes,omitempty"`
+	Permissions *RawPermissions   `yaml:"permissions" json:"permissions,omitempty"`
+	Seed        []map[string]any  `yaml:"seed" json:"seed,omitempty"`
 }
 
 // RawPermissions represents entity permissions before parsing.

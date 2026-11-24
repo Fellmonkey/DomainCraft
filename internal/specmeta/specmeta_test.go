@@ -5,6 +5,7 @@ import "fmt"
 import "testing"
 
 func TestIsPrimitive(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -31,6 +32,7 @@ func TestIsPrimitive(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
 			got := IsPrimitive(tt.input)
 			if got != tt.want {
 				t.Errorf("IsPrimitive(%q) = %v, want %v", tt.input, got, tt.want)
@@ -40,6 +42,7 @@ func TestIsPrimitive(t *testing.T) {
 }
 
 func TestFieldTypesDerivedCorrectly(t *testing.T) {
+	t.Parallel()
 	expected := len(PrimitiveFieldTypes) + len(MetaFieldTypes)
 	if len(FieldTypes) != expected {
 		t.Errorf("len(FieldTypes) = %d, want %d (= PrimitiveFieldTypes + MetaFieldTypes)", len(FieldTypes), expected)
@@ -54,6 +57,7 @@ func TestFieldTypesDerivedCorrectly(t *testing.T) {
 }
 
 func TestIsNumeric(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -70,6 +74,7 @@ func TestIsNumeric(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
 			if got := IsNumeric(tt.input); got != tt.want {
 				t.Errorf("IsNumeric(%q) = %v, want %v", tt.input, got, tt.want)
 			}
@@ -78,6 +83,7 @@ func TestIsNumeric(t *testing.T) {
 }
 
 func TestIsStringType(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -90,6 +96,7 @@ func TestIsStringType(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
 			if got := IsStringType(tt.input); got != tt.want {
 				t.Errorf("IsStringType(%q) = %v, want %v", tt.input, got, tt.want)
 			}
@@ -98,6 +105,7 @@ func TestIsStringType(t *testing.T) {
 }
 
 func TestIsBooleanType(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -110,6 +118,7 @@ func TestIsBooleanType(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
 			if got := IsBooleanType(tt.input); got != tt.want {
 				t.Errorf("IsBooleanType(%q) = %v, want %v", tt.input, got, tt.want)
 			}
@@ -118,6 +127,7 @@ func TestIsBooleanType(t *testing.T) {
 }
 
 func TestIsIndexType(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -132,6 +142,7 @@ func TestIsIndexType(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
 			if got := IsIndexType(tt.input); got != tt.want {
 				t.Errorf("IsIndexType(%q) = %v, want %v", tt.input, got, tt.want)
 			}
@@ -140,6 +151,7 @@ func TestIsIndexType(t *testing.T) {
 }
 
 func TestIsCacheProvider(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -152,6 +164,7 @@ func TestIsCacheProvider(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
 			if got := IsCacheProvider(tt.input); got != tt.want {
 				t.Errorf("IsCacheProvider(%q) = %v, want %v", tt.input, got, tt.want)
 			}
@@ -160,6 +173,7 @@ func TestIsCacheProvider(t *testing.T) {
 }
 
 func TestIsMultiTenancyMode(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -172,6 +186,7 @@ func TestIsMultiTenancyMode(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
 			if got := IsMultiTenancyMode(tt.input); got != tt.want {
 				t.Errorf("IsMultiTenancyMode(%q) = %v, want %v", tt.input, got, tt.want)
 			}
@@ -180,6 +195,7 @@ func TestIsMultiTenancyMode(t *testing.T) {
 }
 
 func TestIsPermissionKey(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -193,6 +209,7 @@ func TestIsPermissionKey(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
 			if got := IsPermissionKey(tt.input); got != tt.want {
 				t.Errorf("IsPermissionKey(%q) = %v, want %v", tt.input, got, tt.want)
 			}
@@ -201,6 +218,7 @@ func TestIsPermissionKey(t *testing.T) {
 }
 
 func TestIsStringValidationModifier(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -217,6 +235,7 @@ func TestIsStringValidationModifier(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
 			if got := IsStringValidationModifier(tt.input); got != tt.want {
 				t.Errorf("IsStringValidationModifier(%q) = %v, want %v", tt.input, got, tt.want)
 			}
@@ -225,6 +244,7 @@ func TestIsStringValidationModifier(t *testing.T) {
 }
 
 func TestIsNumericValidationModifier(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -239,6 +259,7 @@ func TestIsNumericValidationModifier(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
 			if got := IsNumericValidationModifier(tt.input); got != tt.want {
 				t.Errorf("IsNumericValidationModifier(%q) = %v, want %v", tt.input, got, tt.want)
 			}
@@ -247,6 +268,7 @@ func TestIsNumericValidationModifier(t *testing.T) {
 }
 
 func TestFindAuthEntity(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		entityOrder  []string
@@ -286,6 +308,7 @@ func TestFindAuthEntity(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := FindAuthEntity(tt.entityOrder, tt.entityFields)
 			if got != tt.want {
 				t.Errorf("FindAuthEntity() = %q, want %q", got, tt.want)
@@ -295,6 +318,7 @@ func TestFindAuthEntity(t *testing.T) {
 }
 
 func TestIsSortDirection(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -307,6 +331,7 @@ func TestIsSortDirection(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
 			if got := IsSortDirection(tt.input); got != tt.want {
 				t.Errorf("IsSortDirection(%q) = %v, want %v", tt.input, got, tt.want)
 			}
@@ -315,6 +340,7 @@ func TestIsSortDirection(t *testing.T) {
 }
 
 func TestHasEmailAndPassword(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		fieldNames []string
@@ -329,6 +355,7 @@ func TestHasEmailAndPassword(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := HasEmailAndPassword(tt.fieldNames); got != tt.want {
 				t.Errorf("HasEmailAndPassword(%v) = %v, want %v", tt.fieldNames, got, tt.want)
 			}
@@ -337,6 +364,7 @@ func TestHasEmailAndPassword(t *testing.T) {
 }
 
 func TestFuncDefaultsContainsExpectedEntries(t *testing.T) {
+	t.Parallel()
 	if _, ok := FuncDefaults["now"]; !ok {
 		t.Error("FuncDefaults missing 'now'")
 	}
@@ -352,6 +380,7 @@ func TestFuncDefaultsContainsExpectedEntries(t *testing.T) {
 }
 
 func TestIsDatabase(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -368,6 +397,7 @@ func TestIsDatabase(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
 			if got := IsDatabase(tt.input); got != tt.want {
 				t.Errorf("IsDatabase(%q) = %v, want %v", tt.input, got, tt.want)
 			}
@@ -376,6 +406,7 @@ func TestIsDatabase(t *testing.T) {
 }
 
 func TestIsAPIStyle(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -389,6 +420,7 @@ func TestIsAPIStyle(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
 			if got := IsAPIStyle(tt.input); got != tt.want {
 				t.Errorf("IsAPIStyle(%q) = %v, want %v", tt.input, got, tt.want)
 			}
@@ -397,6 +429,7 @@ func TestIsAPIStyle(t *testing.T) {
 }
 
 func TestIsAuthType(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -409,6 +442,7 @@ func TestIsAuthType(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
 			if got := IsAuthType(tt.input); got != tt.want {
 				t.Errorf("IsAuthType(%q) = %v, want %v", tt.input, got, tt.want)
 			}
@@ -417,6 +451,7 @@ func TestIsAuthType(t *testing.T) {
 }
 
 func TestBuildEntityFields(t *testing.T) {
+	t.Parallel()
 	entityOrder := []string{"User", "Product"}
 	getFields := func(name string) []string {
 		switch name {
@@ -443,6 +478,7 @@ func TestBuildEntityFields(t *testing.T) {
 }
 
 func TestBuildEntityFieldsEmptyOrder(t *testing.T) {
+	t.Parallel()
 	result := BuildEntityFields(nil, func(name string) []string { return nil })
 	if len(result) != 0 {
 		t.Errorf("BuildEntityFields(nil) returned %d entries, want 0", len(result))

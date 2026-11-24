@@ -7,6 +7,7 @@ import (
 )
 
 func TestRewriteEntityContent(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ name, in, want string }{
 		{"pascal standalone", "using AcmeShop.Domain.Entities; var p = new Product();", "using AcmeShop.Domain.Entities; var p = new Item();"},
 		{"compound service", "class ProductService : IProductService", "class ItemService : IItemService"},
@@ -23,6 +24,7 @@ func TestRewriteEntityContent(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got := string(RewriteEntityContent([]byte(tc.in), "Product", "Item"))
 			if got != tc.want {
 				t.Errorf("RewriteEntityContent mismatch\n got: %q\nwant: %q", got, tc.want)
@@ -35,6 +37,7 @@ func TestRewriteEntityContent(t *testing.T) {
 // compound transform, leaving stale Title/title/TITLE identifiers in custom
 // files after an entity rename.
 func TestRenameTransformsIncludesFieldRenames(t *testing.T) {
+	t.Parallel()
 	d := &Diff{FieldRenames: []FieldRename{{Entity: "Item", OldField: "title", NewField: "name"}}}
 	content := []byte("class ItemService { public string Title; var title = 1; }")
 	for _, transform := range RenameTransforms("Product", "Item", d) {
@@ -47,6 +50,7 @@ func TestRenameTransformsIncludesFieldRenames(t *testing.T) {
 }
 
 func TestRewriteFieldContent(t *testing.T) {
+	t.Parallel()
 	in := "entity.Title == prev.Title; var title = Title; TITLE;"
 	want := "entity.Name == prev.Name; var name = Name; NAME;"
 	if got := string(RewriteFieldContent([]byte(in), "title", "name")); got != want {
@@ -55,6 +59,7 @@ func TestRewriteFieldContent(t *testing.T) {
 }
 
 func TestRewriteNamespaceContent(t *testing.T) {
+	t.Parallel()
 	in := "namespace AcmeShop.Application.Services;\nusing AcmeShop.Domain.Entities;"
 	want := "namespace AcmeStore.Application.Services;\nusing AcmeStore.Domain.Entities;"
 	got := string(RewriteNamespaceContent([]byte(in), "AcmeShop", "AcmeStore"))
@@ -64,6 +69,7 @@ func TestRewriteNamespaceContent(t *testing.T) {
 }
 
 func TestRewriteFileRoundTrip(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	rel := "src/Services/ItemService.cs"
 	original := "public partial class ProductService { Task<Product> GetAsync(); }"
@@ -90,6 +96,7 @@ func TestRewriteFileRoundTrip(t *testing.T) {
 }
 
 func TestRewriteFileNoop(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	rel := "a.cs"
 	content := "var unrelated = 1;"
@@ -110,6 +117,7 @@ func TestRewriteFileNoop(t *testing.T) {
 }
 
 func TestRewriteFileMissing(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	rewrote, err := RewriteFile(dir, "does/not/exist.cs", EntityTransform("Product", "Item"))
 	if err != nil {
