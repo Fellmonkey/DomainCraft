@@ -9,3 +9,5 @@
 internal/validator/validator_test.go::TestValidateReconciledWarningKeepsFKName	#3	FK field ending in Id got a second Id in the reconciliation warning
 internal/validator/validator_test.go::TestExampleDomainHasNoWarnings	#3	shipped example emitted a reconciliation warning
 internal/packages/registry_test.go::TestResolveVersionForFrameworkRespectsTargetFramework	#3	NuGet resolver picked a version above the generated net10.0 target
+cmd/domaincraft/regression_csharp_role_test.go::TestGeneratedCSharpTestsHandleStringRole	#3	string role rendered as string.Admin in generated tests
+cmd/domaincraft/regression_ts_package_test.go::TestGeneratedTSPackageNameIsKebabCase	#3	raw project name with spaces landed in package.json

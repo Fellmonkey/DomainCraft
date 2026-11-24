@@ -43,7 +43,7 @@ import {
   useProducts,        // list (offset) — replace with your entity's plural name
   useCreateProduct,   // create
   useCan,             // role guard (auth only)
-} from "{{ lower .Project.Name }}-frontend";
+} from "{{ kebabcase .Project.Name }}-frontend";
 
 const { data } = useProducts({
   filter: { price: { gte: 100 } },          // typed: the operator must fit the field

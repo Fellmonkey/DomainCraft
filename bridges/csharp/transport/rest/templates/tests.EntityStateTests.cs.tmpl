@@ -11,6 +11,7 @@
 {{- $authPk := "Id" }}
 {{- $authRoleProp := "" }}
 {{- $authRoleType := "" }}
+{{- $authRoleIsEnum := false }}
 {{- $authRoleDefault := "" }}
 {{- $authEntity := "" }}
 {{- $hasAuth := .Project.HasAuth }}
@@ -26,12 +27,17 @@
 {{- if and (not .IsPrimary) (not .IsRelation) (eq (.Name | lower) "role") }}
 {{- $authRoleProp = .Name | pascalcase }}
 {{- $authRoleType = .EnumTypeName }}
+{{- $authRoleIsEnum = .IsEnum }}
 {{- $authRoleDefault = .DefaultValue }}
 {{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
+{{- /* A role stored as a string takes a string literal; an enum takes a member reference. */ -}}
+{{- define "authRoleLiteral" -}}
+{{- if .IsEnum }}{{ .Type }}.{{ .Value }}{{ else }}"{{ .Value }}"{{ end -}}
+{{- end -}}
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -209,7 +215,7 @@ public partial class ApiTests
     [Fact]
     public async Task {{ .NamePlural }}_RoleBased_DefaultUserForbidden_AdminAllowed()
     {
-        var adminToken = await CreateUserWithRoleAndLoginAsync({{ $authRoleType }}.{{ $rbRole }});
+        var adminToken = await CreateUserWithRoleAndLoginAsync({{ template "authRoleLiteral" (dict "IsEnum" $authRoleIsEnum "Type" $authRoleType "Value" $rbRole) }});
         var defaultUserToken = await RegisterAndLoginAsync();
 
         var request = new
@@ -238,7 +244,7 @@ public partial class ApiTests
     [Fact]
     public async Task {{ .NamePlural }}_AuthenticatedCrud_ReturnsExpectedCodes()
     {
-        var adminToken = await CreateUserWithRoleAndLoginAsync({{ $authRoleType }}.{{ $crudRole }});
+        var adminToken = await CreateUserWithRoleAndLoginAsync({{ template "authRoleLiteral" (dict "IsEnum" $authRoleIsEnum "Type" $authRoleType "Value" $crudRole) }});
 
         var createBody = new
         {
@@ -272,11 +278,11 @@ public partial class ApiTests
     [Fact]
     public async Task {{ .NamePlural }}_OptimisticLock_ConcurrentUpdate_OneConflicts()
     {
-        var adminToken = await CreateUserWithRoleAndLoginAsync({{ $authRoleType }}.{{ $concRole }});
+        var adminToken = await CreateUserWithRoleAndLoginAsync({{ template "authRoleLiteral" (dict "IsEnum" $authRoleIsEnum "Type" $authRoleType "Value" $concRole) }});
 
         // A fresh owner so the created {{ .Name }} doesn't collide with the seeded row
         // (the seeded owner already owns one {{ .Name }}).
-        var ownerUser = await CreateDbUserAsync({{ $authRoleType }}.{{ $authRoleDefault }});
+        var ownerUser = await CreateDbUserAsync({{ template "authRoleLiteral" (dict "IsEnum" $authRoleIsEnum "Type" $authRoleType "Value" $authRoleDefault) }});
         var createBody = new
         {
 {{- template "testConcurrencyBody" (dict "Entity" . "AuthName" $authType "AuthPk" $authPk) }}
