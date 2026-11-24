@@ -12,9 +12,10 @@ import (
 // every non-comment line must have exactly three tab-separated fields
 // (check name, issue/PR reference, a line on what broke), the check name
 // must be non-empty and unique. A `file::TestX` name must still point at
-// an existing test file that defines TestX, so a removed or renamed check
-// cannot silently pass. This is the enforcement for the rule
-// "every bug fix adds its check here; a removed name is an error".
+// an existing test file that defines TestX with at least one assertion, so a
+// removed, renamed or emptied check cannot silently pass. This is the
+// enforcement for the rule "every bug fix adds its check here; a removed name
+// is an error".
 func TestRegressionsTable(t *testing.T) {
 	data, err := os.ReadFile("regressions.tsv")
 	if err != nil {
@@ -78,8 +79,88 @@ func TestRegressionsTable(t *testing.T) {
 		if src == "" {
 			continue // Read already reported as an error.
 		}
-		if !strings.Contains(src, "func "+testName+"(") {
+		defined, hasAssert := regressionFuncHasAssert(src, testName)
+		if !defined {
 			t.Errorf("line %d: %s does not define func %s(", i+1, path, testName)
+			continue
+		}
+		if !hasAssert {
+			t.Errorf("line %d: %s defines func %s( without an assertion: a check with no assert proves nothing", i+1, path, testName)
+		}
+	}
+}
+
+// regressionFuncHasAssert reports whether src defines func testName(...) and,
+// if so, whether that function's body contains at least one assertion. A body
+// with no assertion would let an empty stub satisfy the table. The body ends
+// at the first line starting with "}" in column zero, which in gofmt'd Go is
+// the function's closing brace.
+func regressionFuncHasAssert(src, testName string) (defined, hasAssert bool) {
+	sig := "func " + testName + "("
+	idx := strings.Index(src, sig)
+	if idx < 0 {
+		return false, false
+	}
+	open := strings.IndexByte(src[idx:], '{')
+	if open < 0 {
+		return false, false
+	}
+	body := src[idx+open+1:]
+	if end := strings.Index(body, "\n}"); end >= 0 {
+		body = body[:end]
+	}
+	for _, assert := range []string{"t.Fatal", "t.Error", "assert.", "require."} {
+		if strings.Contains(body, assert) {
+			return true, true
+		}
+	}
+	return true, false
+}
+
+// TestRegressionsTableRejectsEmptyBody guards the guard: a listed function
+// whose body is empty, or only computes values without asserting them, must
+// be rejected by regressionFuncHasAssert. The source is written to a real
+// temp file so the check sees exactly the bytes it sees for table entries.
+func TestRegressionsTableRejectsEmptyBody(t *testing.T) {
+	src := `package sample
+
+import "testing"
+
+func TestEmptyBody(t *testing.T) {
+}
+
+func TestNoAssert(t *testing.T) {
+	got := 1 + 1
+	_ = got
+}
+
+func TestWithAssert(t *testing.T) {
+	if 1+1 != 2 {
+		t.Fatal("bad math")
+	}
+}
+`
+	path := filepath.Join(t.TempDir(), "sample_test.go")
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read temp file: %v", err)
+	}
+	for _, tc := range []struct {
+		name      string
+		defined   bool
+		hasAssert bool
+	}{
+		{"TestEmptyBody", true, false},
+		{"TestNoAssert", true, false},
+		{"TestWithAssert", true, true},
+		{"TestMissing", false, false},
+	} {
+		defined, hasAssert := regressionFuncHasAssert(string(data), tc.name)
+		if defined != tc.defined || hasAssert != tc.hasAssert {
+			t.Errorf("regressionFuncHasAssert(%q) = (%v, %v), want (%v, %v)", tc.name, defined, hasAssert, tc.defined, tc.hasAssert)
 		}
 	}
 }

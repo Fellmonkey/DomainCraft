@@ -104,3 +104,19 @@ internal/renderer/load_test.go::TestLoadSourceFailsClosedOnMissingBridgeYaml	#5	
 internal/fsutil/fsutil_test.go::TestRefuseSymlinksCachedRejectsSymlinkAtFinalComponent	#5	cached containment check skipped the final symlink component
 internal/fsutil/fsutil_test.go::TestRefuseSymlinksCachedRechecksNewlyCreatedComponent	#5	newly created directory was served from the containment cache
 internal/bridge/embed_test.go::TestEmbeddedBridgesMatchTree	#5	embedded bridge tree omitted underscore-prefixed helper templates
+internal/ir/build_entities_test.go::TestBuildResolvesTargetEntityAfterTopoSort	#5	in-place topological sort overwrote the backing array and corrupted relation TargetEntity pointers
+internal/ir/build_entities_test.go::TestBuildPairNavigationNameStripsIdSuffix	#5	paired FK with an Id suffix made WithOne reference the field name instead of the navigation property and broke generated C#
+internal/ir/build_entities_test.go::TestBuildDisambiguatesInverseNavigationNames	#5	two relations from one entity to the same target produced colliding inverse names and duplicate C# navigation properties
+internal/ir/build_entities_test.go::TestBuildReconcilesOneToManyDeclaredOnBothSides	#5	a [many] relation paired with a target FK was treated as many-to-many and emitted a spurious join table
+internal/bridge/resolver_test.go::TestResolver_MissingPathLikeIsErrorNotClone	#5	missing path-like bridge input fell through to cloning github.com/../domaincraftcsharp
+internal/validator/validator_test.go::TestValidateRejectsInvalidNumericDefault	#5	int default accepted an unparseable string and broke generated code
+internal/lexer/lexer_test.go::TestLexerRejectsUnclosedTypeDeclaration	#5	unclosed relation( and enum( declarations were silently normalized into valid types
+internal/lexer/lexer_test.go::TestLexerAcceptsSpecmetaStringModifier	#5	lexer hard-coded validation modifiers and ignored the specmeta source of truth
+internal/ir/build_relations_test.go::TestReconciliationRuleAgreesAcrossValidatorAndIR	#5	validator and IR applied different one-to-many reconciliation rules
+internal/ir/seed_kind_test.go::TestKindOfFollowsSpecmetaClassification	#5	KindOf duplicated type classification and could drift from specmeta
+internal/parser/parser_test.go::TestUnmarshalYAMLHelpersRejectUnknownKeysForAllConfigs	#5	strict config-key decoding could be lost when presence-aware helpers were unified
+internal/ir/contract_test.go::TestValidationRulesSemanticOrder	#5	validation rules came out in alphabetical order instead of required, format, length, numeric
+internal/ir/toposort_test.go::TestTopoSortInsertReadyKeepsNameOrder	#5	ready queue could lose name order when entities became ready during topological sort
+internal/seed/seed_test.go::TestGenerateRespectsExclusiveBounds	#5	int and float seed bounds were clamped by two duplicated loops and could drift apart
+internal/seed/seed_test.go::TestStringValueMaxLengthClamp	#5	oversized max_length clamp was hand-rolled with no direct coverage at zero or above length
+internal/snapshot/snapshot_test.go::TestLoadRejectsIncompatibleFormatVersion	#5	Load accepted snapshots with any format_version, so stale snapshots could trigger destructive prune
