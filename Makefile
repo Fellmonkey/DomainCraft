@@ -28,7 +28,7 @@ endif
 export GOCACHE := $(GO_CACHE_DIR)
 export GOTMPDIR := $(GO_TMP_DIR)
 
-.PHONY: help build install run test test-verbose test-coverage lint fmt clean install-deps check-tidy cli-validate cli-generate cli-bridges regenerate-spec generate-gui-types copy-spec-skills build-wasm build-wasm-gui
+.PHONY: help build install run test test-verbose test-coverage lint vet fmt clean install-deps check-tidy cli-validate cli-generate cli-bridges regenerate-spec generate-gui-types copy-spec-skills build-wasm build-wasm-gui
 
 help:
 	@echo "DomainCraft CLI - Available Commands"
@@ -47,16 +47,16 @@ help:
 	@echo "  make test            - Run all tests"
 	@echo "  make test-verbose    - Run tests with verbose output"
 	@echo "  make test-coverage   - Run tests and generate coverage report"
-	@echo "  make lint            - Run linter (go vet)"
+	@echo "  make lint            - Run golangci-lint v2.15.0 via go run (same gate as CI)"
+	@echo "  make vet             - Run go vet ./..."
 	@echo "  make fmt             - Format code (gofmt)"
 	@echo "  make clean           - Clean build artifacts"
-	@echo "  make install-deps    - Install dependencies"
+	@echo "  make install-deps    - Download dependencies (go mod download)"
 	@echo "  make check-tidy      - Fail if go mod tidy would change go.mod/go.sum"
 
 install-deps:
-	@echo "Installing dependencies..."
+	@echo "Downloading dependencies..."
 	@go mod download
-	@go mod tidy
 
 # Check only: go mod tidy must not mutate go.mod/go.sum in CI.
 check-tidy:
@@ -145,7 +145,11 @@ test-coverage:
 	@echo "Coverage report generated: coverage.html"
 
 lint:
-	@echo "Running linter..."
+	@echo "Running golangci-lint v2.15.0..."
+	@go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
+
+vet:
+	@echo "Running go vet..."
 	@go vet ./...
 
 fmt:

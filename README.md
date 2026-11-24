@@ -84,10 +84,11 @@ The same model compiles to a typed web client:
 domaincraft generate --bridge react-rest --output ./frontend
 ```
 
-Swap a persistence layer without forking templates:
+Swap a persistence layer without forking templates. The bundled Dapper bridge is an experimental stub; pass its local path from the repository root:
 
 ```bash
-domaincraft generate --bridge csharp-rest --replace persistence=csharp-dapper
+domaincraft generate --bridge csharp-rest --replace persistence=bridges/csharp/persistence/dapper-stub
+# → core → domain → dapper-stub → rest
 ```
 
 ---
@@ -136,7 +137,7 @@ matrix and query grammar — so the agent builds UI instead of guessing. See
 | **Features** | `audit` (`createdAt`/`updatedAt`), `audit_log` (`createdBy`/`updatedBy`), `soft_delete` (`deletedAt`), `optimistic_lock` (`version` → `409 Conflict`), `event_sourced`, `cacheable` |
 | **Permissions** | `read`/`create`/`update`/`delete` with `*` (public), roles (RBAC) and `@Owner` (ABAC) |
 | **Bridges** | C# (domain → EF Core → REST), TypeScript (core → React), Appwrite, admin panel via `--admin` |
-| **Migrations** | `old_name` renames become `RenameTable`/`RenameColumn` (data kept); `--prune` applies schema cleanup and runs bridge migrations best-effort |
+| **Migrations** | `old_name` renames produce a core plan; C#/EF Core renders data-preserving `RenameTable`/`RenameColumn`. Other targets get the plan, no bridge artifact yet; `--prune` applies file cleanup and runs bridge migrations best-effort |
 
 Full language: [domain.yaml reference](https://fellmonkey.github.io/domaincraft-site/docs/reference/language/)
 
@@ -156,19 +157,19 @@ The **IR** is the contract. It is language-agnostic — the core never contains 
 One bridge = one layer in one axis. All bridges live in this repository (`bridges/`) and are embedded into the binary:
 
 ```
-backend (C#):  domain (core) → persistence (efcore/dapper) → transport (rest/grpc)
-web:           core (ts-core) → framework (react/vue)
-mobile:        core (dart-core) → framework (flutter) → offline (drift)
+backend (C#):  core → domain → persistence (efcore; dapper-stub experimental) → transport (rest; grpc planned)
+web:           core (ts-core) → client (ts-client) → framework (react; vue planned)
+mobile:        core (dart-core) → framework (flutter) → offline (drift) — planned
 ```
 
-`extends:` composes a chain; `--replace` swaps one edge without forking:
+`extends:` composes a chain; `--replace` swaps one edge without forking. The shipped C# chain is `rest → efcore → domain → core`:
 
-```
---replace persistence=dapper   → core+dapper+rest
---replace transport=grpc       → core+efcore+grpc
+```bash
+# from the repository root; dapper-stub is a local path, not a registry ID
+domaincraft generate --bridge csharp-rest --replace persistence=bridges/csharp/persistence/dapper-stub
 ```
 
-A new persistence or transport layer is one more bridge in `bridges/` — not a fork of the templates, and not a new repository.
+`--replace transport=grpc` and a Vue adapter are planned; no such bridges exist yet. A new persistence or transport layer is one more bridge in `bridges/` — not a fork of the templates, and not a new repository.
 
 ---
 
@@ -176,8 +177,10 @@ A new persistence or transport layer is one more bridge in `bridges/` — not a 
 
 | ID | Layer | Targets |
 |-----|-------|--------|
-| `csharp-core` | `domain` | Domain + Application |
-| `csharp-efcore` | `persistence` — `extends: csharp-core` | EF Core + PostgreSQL + `migrations:` |
+| `csharp-core` | `core` | C# language core |
+| `csharp-domain` | `domain` — `extends: csharp-core` | Domain + Application |
+| `csharp-efcore` | `persistence` — `extends: csharp-domain` | EF Core + PostgreSQL + `migrations:` |
+| `csharp-dapper-stub` | `persistence` — `extends: csharp-domain` | Experimental stub, local path only |
 | `csharp-rest` | `transport` — `extends: csharp-efcore` | ASP.NET REST + JWT + k8s/tests |
 | `csharp-restful` | — | *Archived* monolith — use `csharp-rest` |
 | `ts-core` | `core` | TypeScript data layer (types, Zod, query DSL, permissions) |
@@ -198,19 +201,19 @@ domaincraft bridges --check-updates
 domaincraft update --check
 ```
 
-Flags: `--domain`/`-d`, `--bridge`/`-b`, `--output`/`-o`, `--admin`, `--replace left=right` (repeatable), `--prune`/`--migrate`, `--addons dapr`, `--non-interactive`. See [CLI reference](https://fellmonkey.github.io/domaincraft-site/docs/reference/cli/).
+Flags: `--domain`/`-d`, `--bridge`/`-b`, `--output`/`-o`, `--admin`, `--replace left=right` (repeatable), `--prune`/`--migrate`, `--allow-bridge-commands`, `--addons dapr`, `--non-interactive`, `--update-bridges` (refresh cached bridges before generating). Community bridges need explicit consent for shell-declared database migrations: `--migrate` fails without `--allow-bridge-commands`. Command lines are printed before execution. See [CLI reference](https://fellmonkey.github.io/domaincraft-site/docs/reference/cli/).
 
 ---
 
 ## Migration
 
-The IR and manifest are saved to `.domaincraft/snapshot.json`. On the next run, renames (`old_name: Product`) become `RenameTable`/`RenameColumn` (data kept), deletions prompt, type changes print a report. `--prune` applies cleanup and rewrites identifiers in `overwrite: false` files. See [Migrations](https://fellmonkey.github.io/domaincraft-site/docs/guides/migrations/).
+The IR and manifest are saved to `.domaincraft/snapshot.json`. On the next run, renames (`old_name: Product`) produce a core plan; C#/EF Core renders `RenameTable`/`RenameColumn` (data kept). Other targets get the plan, no bridge artifact yet. Deletions prompt, type changes print a report. `--prune` applies cleanup and rewrites identifiers in `overwrite: false` files. See [Migrations](https://fellmonkey.github.io/domaincraft-site/docs/guides/migrations/).
 
 ---
 
 ## Certification
 
-The compliance suite (`compliance-suite/`) is a hand-written oracle: `kitchen-sink.yaml` (a maximal domain) + `suite.js` (k6 over HTTP). TypeScript ships its own TCK in `ts-core/tck/`. See [Certification](https://fellmonkey.github.io/domaincraft-site/docs/guides/certification/).
+The compliance suite (`compliance-suite/`) is a hand-written oracle: `kitchen-sink.yaml` (a maximal domain) + `suite.js` (k6 over HTTP). TypeScript ships TCKs in `ts-core/tck/` and `ts-client/tck/`. CI runs their hermetic halves: `tsc --noEmit` and `vitest run` against locally generated artifacts. k6/Docker and dotnet TCKs stay manual — they need a running backend or SDK. See [Certification](https://fellmonkey.github.io/domaincraft-site/docs/guides/certification/).
 
 ---
 

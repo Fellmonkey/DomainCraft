@@ -5,8 +5,9 @@ name: bridges
 # a stale copy invites edits that never take effect.
 #
 # This workflow is scoped to bridge and core-internal changes. The path filters
-# are native GitHub `paths:` triggers — no custom scope binary is needed, which
-# keeps the toolchain single-language (Go only).
+# are native GitHub `paths:` triggers — no custom scope binary is needed.
+# The TypeScript job adds Node; Go, npm cache and local bridge paths keep it
+# hermetic (no bridge clones).
 
 on:
   # PR checks cover feature branches; push runs once after a merge to main.
@@ -15,10 +16,14 @@ on:
     paths:
       - 'bridges/**'
       - 'internal/**'
+      - 'cmd/**'
+      - 'compliance-suite/**'
   pull_request:
     paths:
       - 'bridges/**'
       - 'internal/**'
+      - 'cmd/**'
+      - 'compliance-suite/**'
 
 permissions:
   contents: read
@@ -59,3 +64,63 @@ jobs:
             exit 1
           fi
           go test ./internal/renderer/ -run TestBundledBridgesLoad -v
+
+  typescript-tck:
+    name: TypeScript TCK (hermetic halves)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.4'
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            bridges/typescript/core/tck/package-lock.json
+            bridges/typescript/client/tck/package-lock.json
+
+      - name: Generate kitchen-sink artifacts from local bridges
+        # Explicit local paths (and the bundled `ts-core` extends target) —
+        # no registry clones or network bridge lookups. npm ci below only
+        # installs the TCK's pinned dev dependencies.
+        run: |
+          go run ./cmd/domaincraft generate \
+            --domain compliance-suite/kitchen-sink.yaml \
+            --bridge bridges/typescript/core \
+            --output bridges/typescript/core/tck/generated \
+            --non-interactive
+          go run ./cmd/domaincraft generate \
+            --domain compliance-suite/kitchen-sink.yaml \
+            --bridge bridges/typescript/client \
+            --output bridges/typescript/client/tck/generated \
+            --non-interactive
+
+      - name: Install ts-core TCK dependencies
+        working-directory: bridges/typescript/core/tck
+        run: npm ci
+
+      - name: Certify ts-core (tsc --noEmit + vitest)
+        working-directory: bridges/typescript/core/tck
+        # API_URL stays unset: the live-backend interop test is skipped.
+        run: npm run certify
+
+      - name: Install ts-client TCK dependencies
+        working-directory: bridges/typescript/client/tck
+        run: npm ci
+
+      - name: Certify ts-client (tsc --noEmit + vitest)
+        working-directory: bridges/typescript/client/tck
+        run: npm run certify
+
+# k6/Docker and dotnet TCKs stay manual: they need a running backend or SDK
+# and are too slow/flaky for PR gates. See the bridge TCK READMEs.
