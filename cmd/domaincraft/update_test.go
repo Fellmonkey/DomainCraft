@@ -144,7 +144,7 @@ func TestDownloadAndReplace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("downloadBinary: %v", err)
 	}
-	defer os.Remove(tmp)
+	defer func() { _ = os.Remove(tmp) }()
 
 	// Replace a non-running target so the rename path is exercised directly.
 	target := filepath.Join(t.TempDir(), "domaincraft.exe")

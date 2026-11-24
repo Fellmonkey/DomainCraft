@@ -5,12 +5,51 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
 
-var registryClient = &http.Client{Timeout: 5 * time.Second}
+var registryClient = &http.Client{
+	Timeout: 5 * time.Second,
+	CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+		if err := validateRegistryURL(req.URL.String()); err != nil {
+			return err
+		}
+		return nil
+	},
+}
+
+// allowLocalRegistryForTests is set only by tests using httptest TLS servers.
+var allowLocalRegistryForTests bool
+
+// validateRegistryURL keeps registry requests on https and away from loopback,
+// private and link-local addresses. registry_url comes from bridge.yaml, which
+// may be cloned from an untrusted repository.
+func validateRegistryURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid registry URL %q: %w", raw, err)
+	}
+	if u.Scheme != "https" || u.Host == "" {
+		return fmt.Errorf("registry URL must be an absolute https URL: %q", raw)
+	}
+	host := strings.ToLower(u.Hostname())
+	if allowLocalRegistryForTests {
+		return nil
+	}
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return fmt.Errorf("registry host %q is not allowed", host)
+	}
+	if ip := net.ParseIP(host); ip != nil &&
+		(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()) {
+		return fmt.Errorf("registry host %q is not allowed", host)
+	}
+	return nil
+}
 
 // ResolveVersion queries a package registry (e.g. NuGet) for the latest stable version
 // of a package. The registryURL template must contain {id} which is replaced with the package ID.
@@ -58,16 +97,23 @@ func MaxMajorForFramework(framework string) int {
 	if i := strings.IndexAny(major, ".-+ "); i >= 0 {
 		major = major[:i]
 	}
-	var n int
-	if _, err := fmt.Sscanf(major, "%d", &n); err != nil || n <= 0 {
+	n, err := strconv.Atoi(major)
+	if err != nil || n <= 0 {
 		return 0
 	}
 	return n
 }
 
 func versionMajor(version string) int {
-	var n int
-	if _, err := fmt.Sscanf(version, "%d", &n); err != nil {
+	i := 0
+	for i < len(version) && version[i] >= '0' && version[i] <= '9' {
+		i++
+	}
+	if i == 0 {
+		return 0
+	}
+	n, err := strconv.Atoi(version[:i])
+	if err != nil {
 		return 0
 	}
 	return n
@@ -93,9 +139,12 @@ func latestStable(versions []string, maxMajor int) string {
 
 // fetchVersions reads the flat-container version index from the registry.
 func fetchVersions(registryURL string, packageID string) ([]string, error) {
-	url := strings.ReplaceAll(registryURL, "{id}", strings.ToLower(packageID))
+	registryEndpoint := strings.ReplaceAll(registryURL, "{id}", strings.ToLower(packageID))
+	if err := validateRegistryURL(registryEndpoint); err != nil {
+		return nil, err
+	}
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", registryEndpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +153,7 @@ func fetchVersions(registryURL string, packageID string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("registry returned %d for %s", resp.StatusCode, packageID)
@@ -132,10 +181,10 @@ func VersionGreater(a, b string) bool {
 	for i := range maxLen {
 		var ai, bi int
 		if i < len(aParts) {
-			fmt.Sscanf(aParts[i], "%d", &ai)
+			ai, _ = strconv.Atoi(aParts[i])
 		}
 		if i < len(bParts) {
-			fmt.Sscanf(bParts[i], "%d", &bi)
+			bi, _ = strconv.Atoi(bParts[i])
 		}
 		if ai > bi {
 			return true

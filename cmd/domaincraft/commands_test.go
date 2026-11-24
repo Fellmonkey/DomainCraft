@@ -92,3 +92,7 @@ func mustExist(t *testing.T, path string) {
 		t.Fatalf("expected %s to exist: %v", path, err)
 	}
 }
+
+func TestMustExist(t *testing.T) {
+	mustExist(t, os.Args[0])
+}

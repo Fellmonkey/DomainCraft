@@ -10,6 +10,7 @@ import (
 // TestStatusLocalFacts covers embedded/cached without any network access.
 func TestStatusLocalFacts(t *testing.T) {
 	appdir.SetBaseForTesting(t.TempDir())
+	t.Cleanup(func() { appdir.SetBaseForTesting("") })
 
 	entry := *Default().ByID("csharp-core")
 	st := entry.Status(false)
@@ -37,6 +38,7 @@ func TestStatusLocalFacts(t *testing.T) {
 // and reports outdated only for a supported (not newer-contract) bridge.
 func TestStatusRemoteOnlyWhenRequested(t *testing.T) {
 	appdir.SetBaseForTesting(t.TempDir())
+	t.Cleanup(func() { appdir.SetBaseForTesting("") })
 
 	orig := httpGetBodyFn
 	defer func() { httpGetBodyFn = orig }()

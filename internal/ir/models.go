@@ -1,6 +1,8 @@
+// Package ir builds the resolved intermediate representation consumed by bridges.
 package ir
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/DomainCraft/DomainCraft/internal/specmeta"
@@ -206,7 +208,7 @@ func (e IREntity) RelationFields() []IRField {
 // iterate this instead of re-deriving the Include set, and call
 // EagerLoadNavigation() on each relation for the property to Include.
 func (e IREntity) EagerLoadRelations() []IRRelation {
-	return e.RelationsOut
+	return slices.Clone(e.RelationsOut)
 }
 
 // EagerLoadNavigation returns the navigation property name used to Include a

@@ -1,4 +1,7 @@
+// Package bridge resolves, caches and updates bridge directories.
 package bridge
+
+import "slices"
 
 // RegistryEntry describes a known bridge in the registry.
 type RegistryEntry struct {
@@ -122,7 +125,7 @@ type Registry struct {
 
 // NewRegistry creates a registry from the given entries.
 func NewRegistry(entries []RegistryEntry) *Registry {
-	return &Registry{entries: entries}
+	return &Registry{entries: slices.Clone(entries)}
 }
 
 // Default returns a registry backed by the built-in bridge list.
@@ -132,14 +135,15 @@ func Default() *Registry {
 
 // All returns every registered bridge.
 func (r *Registry) All() []RegistryEntry {
-	return r.entries
+	return slices.Clone(r.entries)
 }
 
 // ByID finds a bridge by its unique ID. Returns nil if not found.
 func (r *Registry) ByID(id string) *RegistryEntry {
 	for i := range r.entries {
 		if r.entries[i].ID == id {
-			return &r.entries[i]
+			cp := r.entries[i]
+			return &cp
 		}
 	}
 	return nil

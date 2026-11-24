@@ -1,3 +1,4 @@
+// Package specmeta is the single source of truth for specification constants.
 package specmeta
 
 import "strings"
@@ -138,30 +139,76 @@ func init() {
 	infraStoreSet = SliceToSet(InfraStores)
 }
 
-func IsPrimitive(typeName string) bool            { return primitiveSet[typeName] }
-func IsNumeric(typeName string) bool              { return numericSet[typeName] }
-func IsStringType(typeName string) bool           { return stringSet[typeName] }
-func IsBooleanType(typeName string) bool          { return booleanSet[typeName] }
-func IsSortDirection(value string) bool           { return sortDirectionSet[value] }
-func IsFieldType(typeName string) bool            { return fieldTypeSet[typeName] }
-func IsOnDeleteValue(value string) bool           { return onDeleteSet[value] }
-func IsFeature(name string) bool                  { return featureSet[name] }
-func IsIndexType(value string) bool               { return indexTypeSet[value] }
-func IsCacheProvider(value string) bool           { return cacheProviderSet[value] }
-func IsMultiTenancyMode(value string) bool        { return multiTenancyModeSet[value] }
-func IsRateLimitPolicy(value string) bool         { return rateLimitPolicySet[value] }
-func IsPermissionKey(value string) bool           { return permissionKeySet[value] }
-func IsDatabase(value string) bool                { return databaseSet[value] }
-func IsAPIStyle(value string) bool                { return apiStyleSet[value] }
-func IsAuthType(value string) bool                { return authTypeSet[value] }
-func IsAddon(value string) bool                   { return addonSet[value] }
-func IsInfraQueue(value string) bool              { return infraQueueSet[value] }
-func IsInfraCacheStore(value string) bool         { return infraCacheStoreSet[value] }
-func IsInfraSecretStore(value string) bool        { return infraSecretStoreSet[value] }
-func IsInfraStore(value string) bool              { return infraStoreSet[value] }
-func IsStringValidationModifier(mod string) bool  { return stringValidationModSet[mod] }
+// IsPrimitive reports whether typeName is a built-in field type.
+func IsPrimitive(typeName string) bool { return primitiveSet[typeName] }
+
+// IsNumeric reports whether typeName is a numeric field type.
+func IsNumeric(typeName string) bool { return numericSet[typeName] }
+
+// IsStringType reports whether typeName is a string or text field type.
+func IsStringType(typeName string) bool { return stringSet[typeName] }
+
+// IsBooleanType reports whether typeName is a boolean field type.
+func IsBooleanType(typeName string) bool { return booleanSet[typeName] }
+
+// IsSortDirection reports whether value is a supported sort direction.
+func IsSortDirection(value string) bool { return sortDirectionSet[value] }
+
+// IsFieldType reports whether typeName is any allowed field type.
+func IsFieldType(typeName string) bool { return fieldTypeSet[typeName] }
+
+// IsOnDeleteValue reports whether value is an allowed on_delete behavior.
+func IsOnDeleteValue(value string) bool { return onDeleteSet[value] }
+
+// IsFeature reports whether name is an allowed entity feature.
+func IsFeature(name string) bool { return featureSet[name] }
+
+// IsIndexType reports whether value is an allowed index type.
+func IsIndexType(value string) bool { return indexTypeSet[value] }
+
+// IsCacheProvider reports whether value is an allowed cache provider.
+func IsCacheProvider(value string) bool { return cacheProviderSet[value] }
+
+// IsMultiTenancyMode reports whether value is an allowed multi-tenancy mode.
+func IsMultiTenancyMode(value string) bool { return multiTenancyModeSet[value] }
+
+// IsRateLimitPolicy reports whether value is an allowed rate-limit policy.
+func IsRateLimitPolicy(value string) bool { return rateLimitPolicySet[value] }
+
+// IsPermissionKey reports whether value is an allowed permission operation.
+func IsPermissionKey(value string) bool { return permissionKeySet[value] }
+
+// IsDatabase reports whether value is a supported database.
+func IsDatabase(value string) bool { return databaseSet[value] }
+
+// IsAPIStyle reports whether value is a supported API style.
+func IsAPIStyle(value string) bool { return apiStyleSet[value] }
+
+// IsAuthType reports whether value is a supported auth type.
+func IsAuthType(value string) bool { return authTypeSet[value] }
+
+// IsAddon reports whether value is a known infrastructure addon.
+func IsAddon(value string) bool { return addonSet[value] }
+
+// IsInfraQueue reports whether value is a supported queue backend.
+func IsInfraQueue(value string) bool { return infraQueueSet[value] }
+
+// IsInfraCacheStore reports whether value is a supported cache store.
+func IsInfraCacheStore(value string) bool { return infraCacheStoreSet[value] }
+
+// IsInfraSecretStore reports whether value is a supported secret store.
+func IsInfraSecretStore(value string) bool { return infraSecretStoreSet[value] }
+
+// IsInfraStore reports whether value is a supported object store.
+func IsInfraStore(value string) bool { return infraStoreSet[value] }
+
+// IsStringValidationModifier reports whether mod applies to string fields.
+func IsStringValidationModifier(mod string) bool { return stringValidationModSet[mod] }
+
+// IsNumericValidationModifier reports whether mod applies to numeric fields.
 func IsNumericValidationModifier(mod string) bool { return numericValidationModSet[mod] }
 
+// SliceToSet converts a slice to a set for constant-time membership checks.
 func SliceToSet(items []string) map[string]bool {
 	set := make(map[string]bool, len(items))
 	for _, item := range items {
@@ -170,10 +217,12 @@ func SliceToSet(items []string) map[string]bool {
 	return set
 }
 
+// IsArrayType reports whether dbType is an array declaration.
 func IsArrayType(dbType string) bool {
 	return strings.HasPrefix(dbType, "array(")
 }
 
+// ParseArrayInner returns the element type of an array declaration, or dbType unchanged.
 func ParseArrayInner(dbType string) string {
 	if !IsArrayType(dbType) {
 		return dbType
@@ -181,6 +230,7 @@ func ParseArrayInner(dbType string) string {
 	return strings.TrimSuffix(strings.TrimPrefix(dbType, "array("), ")")
 }
 
+// FindAuthEntity returns the first entity with email and password fields.
 func FindAuthEntity(entityOrder []string, entityFields map[string][]string) string {
 	for _, name := range entityOrder {
 		if HasEmailAndPassword(entityFields[name]) {
@@ -190,6 +240,7 @@ func FindAuthEntity(entityOrder []string, entityFields map[string][]string) stri
 	return ""
 }
 
+// HasEmailAndPassword reports whether the field list contains both auth fields.
 func HasEmailAndPassword(fieldNames []string) bool {
 	hasEmail, hasPassword := AuthFieldState(fieldNames)
 	return hasEmail && hasPassword
@@ -209,6 +260,7 @@ func AuthFieldState(fieldNames []string) (hasEmail, hasPassword bool) {
 	return hasEmail, hasPassword
 }
 
+// BuildEntityFields maps each entity name to its field names in declaration order.
 func BuildEntityFields(entityOrder []string, getFields func(name string) []string) map[string][]string {
 	result := make(map[string][]string, len(entityOrder))
 	for _, name := range entityOrder {

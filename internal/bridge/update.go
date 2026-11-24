@@ -134,6 +134,9 @@ func CheckForUpdate(entry RegistryEntry, interval time.Duration) (*Update, error
 // preserving the checkout via a shallow fetch + hard reset (a full re-clone is
 // used as a fallback if the in-place update fails). It returns the new version.
 func ApplyUpdate(entry RegistryEntry, u *Update) (string, error) {
+	if err := validateCacheID(entry.ID); err != nil {
+		return "", err
+	}
 	cacheDir := CachePath(entry)
 
 	branch := "main"
@@ -222,7 +225,7 @@ func httpGetBody(url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("http %d for %s", resp.StatusCode, url)
 	}

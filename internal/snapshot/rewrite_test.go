@@ -14,6 +14,8 @@ func TestRewriteEntityContent(t *testing.T) {
 		{"plural pascal", "List<Product> Products = null;", "List<Item> Items = null;"},
 		{"plural camel", "var products = new list;", "var items = new list;"},
 		{"does not touch longer word", "Productivity", "Productivity"},
+		{"inner identifier survives", "var myProduct = 1;", "var myProduct = 1;"},
+		{"single uppercase prefix", "XProductService", "XItemService"},
 		{"snake token", "product_name", "item_name"},
 		{"upper", "PRODUCTS", "ITEMS"},
 		{"namespace untouched by entity rewrite", "namespace AcmeShop.App;", "namespace AcmeShop.App;"},
@@ -26,6 +28,21 @@ func TestRewriteEntityContent(t *testing.T) {
 				t.Errorf("RewriteEntityContent mismatch\n got: %q\nwant: %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// Regression: a field rename declared in the diff was dropped from the
+// compound transform, leaving stale Title/title/TITLE identifiers in custom
+// files after an entity rename.
+func TestRenameTransformsIncludesFieldRenames(t *testing.T) {
+	d := &Diff{FieldRenames: []FieldRename{{Entity: "Item", OldField: "title", NewField: "name"}}}
+	content := []byte("class ItemService { public string Title; var title = 1; }")
+	for _, transform := range RenameTransforms("Product", "Item", d) {
+		content = transform(content)
+	}
+	want := "class ItemService { public string Name; var name = 1; }"
+	if string(content) != want {
+		t.Errorf("field rename dropped\n got: %q\nwant: %q", content, want)
 	}
 }
 

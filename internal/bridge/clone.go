@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/DomainCraft/DomainCraft/internal/appdir"
@@ -23,6 +24,17 @@ func BridgeCacheDir() string {
 // CachePath returns the local cache directory for a bridge entry.
 func CachePath(entry RegistryEntry) string {
 	return filepath.Join(BridgeCacheDir(), entry.ID)
+}
+
+// validateCacheID rejects bridge IDs that could resolve outside the cache
+// directory. IDs come from registry entries and from `owner/repo` refs, so a
+// separator or a dot segment would otherwise let CloneBridge and ApplyUpdate
+// write to or delete an arbitrary path under the user's account.
+func validateCacheID(id string) error {
+	if id == "" || id == "." || id == ".." || !filepath.IsLocal(id) || filepath.Base(id) != id || strings.ContainsAny(id, "/\\") {
+		return fmt.Errorf("unsafe bridge id %q", id)
+	}
+	return nil
 }
 
 // IsCached checks whether a bridge is already cloned and contains bridge.yaml.
@@ -62,6 +74,9 @@ type EnsureOptions struct {
 // the cached copy fresh by checking the upstream repo for newer versions.
 // Returns the local path to the bridge directory.
 func EnsureBridge(entry RegistryEntry, opts *EnsureOptions) (string, error) {
+	if err := validateCacheID(entry.ID); err != nil {
+		return "", err
+	}
 	if entry.GitHub == "" {
 		return "", fmt.Errorf("bridge %q has no GitHub repository configured", entry.ID)
 	}
@@ -69,9 +84,11 @@ func EnsureBridge(entry RegistryEntry, opts *EnsureOptions) (string, error) {
 	cacheDir := CachePath(entry)
 	if !IsCached(entry) {
 		// Offline fallback: materialize the embedded copy before cloning.
-		if ok, err := TryMaterializeEmbedded(entry, opts); err != nil {
+		ok, err := TryMaterializeEmbedded(entry, opts)
+		if err != nil {
 			return "", err
-		} else if ok {
+		}
+		if ok {
 			return cacheDir, nil
 		}
 		if err := CloneBridge(entry); err != nil {
@@ -80,7 +97,7 @@ func EnsureBridge(entry RegistryEntry, opts *EnsureOptions) (string, error) {
 
 		// Verify the cloned repo contains bridge.yaml.
 		if !IsCached(entry) {
-			os.RemoveAll(cacheDir)
+			_ = os.RemoveAll(cacheDir)
 			return "", fmt.Errorf("cloned bridge %q does not contain bridge.yaml", entry.ID)
 		}
 
@@ -170,6 +187,9 @@ func warnOpts(opts *EnsureOptions, format string, args ...any) {
 
 // CloneBridge performs a shallow git clone of the bridge repository.
 func CloneBridge(entry RegistryEntry) error {
+	if err := validateCacheID(entry.ID); err != nil {
+		return err
+	}
 	if _, err := exec.LookPath("git"); err != nil {
 		return fmt.Errorf("git is required to download bridges but was not found in PATH")
 	}
@@ -183,7 +203,7 @@ func CloneBridge(entry RegistryEntry) error {
 	url := fmt.Sprintf("https://github.com/%s.git", entry.GitHub)
 	cmd := exec.Command("git", "clone", "--depth", "1", url, cacheDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		os.RemoveAll(cacheDir)
+		_ = os.RemoveAll(cacheDir)
 		return fmt.Errorf("clone %s: %w: %s", url, err, out)
 	}
 	return nil

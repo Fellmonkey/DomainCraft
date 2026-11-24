@@ -17,6 +17,7 @@ import (
 // materialized into the cache directory (the offline fallback path).
 func TestTryMaterializeEmbedded(t *testing.T) {
 	appdir.SetBaseForTesting(t.TempDir())
+	t.Cleanup(func() { appdir.SetBaseForTesting("") })
 	entry := Default().ByID("csharp-core")
 	if entry == nil {
 		t.Fatal("csharp-core not in registry")

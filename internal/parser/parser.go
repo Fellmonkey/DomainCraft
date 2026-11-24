@@ -1,3 +1,4 @@
+// Package parser decodes domain.yaml into the parsed schema used by the validator and IR builder.
 package parser
 
 import (
@@ -92,8 +93,8 @@ type ParsedPermissions struct {
 	Delete []string
 }
 
-// NewParser creates a new Parser
-func NewParser(raw *RawSchema) *Parser {
+// New creates a new Parser.
+func New(raw *RawSchema) *Parser {
 	return &Parser{raw: raw}
 }
 
@@ -111,7 +112,8 @@ func (p *Parser) Parse() (*ParsedSchema, error) {
 	}
 
 	// Parse all entities
-	for entityName, rawEntity := range p.raw.Entities {
+	for _, entityName := range slices.Sorted(maps.Keys(p.raw.Entities)) {
+		rawEntity := p.raw.Entities[entityName]
 		entity, err := p.parseEntity(entityName, rawEntity)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing entity '%s': %w", entityName, err)
@@ -287,6 +289,6 @@ func ParseYAML(data []byte) (*ParsedSchema, error) {
 		return nil, fmt.Errorf("error parsing YAML: %w", err)
 	}
 
-	parser := NewParser(raw)
+	parser := New(raw)
 	return parser.Parse()
 }

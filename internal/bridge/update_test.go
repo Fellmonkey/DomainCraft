@@ -112,7 +112,7 @@ func TestCheckAndApplyUpdate(t *testing.T) {
 
 	// Working repo that we push to the remote.
 	src := filepath.Join(root, "src")
-	os.MkdirAll(src, 0o755)
+	_ = os.MkdirAll(src, 0o755)
 	makeBridgeRepo(t, src, "main")
 	testGit(t, src, "remote", "add", "origin", remote)
 	testGit(t, src, "push", "-q", "-u", "origin", "main")
@@ -206,7 +206,7 @@ func TestEnsureMetaSynthesizesForLegacyCache(t *testing.T) {
 
 	entry := RegistryEntry{ID: "legacy-bridge", GitHub: "owner/legacy-bridge"}
 	cacheDir := CachePath(entry)
-	os.MkdirAll(cacheDir, 0o755)
+	_ = os.MkdirAll(cacheDir, 0o755)
 	makeBridgeRepo(t, cacheDir, "main")
 
 	// No metadata file exists (legacy cache), but the checkout is usable.
@@ -235,7 +235,7 @@ func TestCheckForUpdateViaGitHubAPI(t *testing.T) {
 
 	entry := RegistryEntry{ID: "github-bridge", GitHub: "owner/github-bridge"}
 	cacheDir := CachePath(entry)
-	os.MkdirAll(cacheDir, 0o755)
+	_ = os.MkdirAll(cacheDir, 0o755)
 	writeBridgeYAML(t, cacheDir, "1.0.0")
 
 	// No .git in the checkout, but metadata records the local commit.

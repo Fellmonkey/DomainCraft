@@ -13,7 +13,6 @@ import (
 	"bytes"
 	"cmp"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -208,7 +207,10 @@ func RewriteFile(outputDir, relPath string, transforms ...func([]byte) []byte) (
 	if len(transforms) == 0 {
 		return false, nil
 	}
-	abs := filepath.Join(outputDir, filepath.FromSlash(relPath))
+	abs, err := safeRelPath(outputDir, relPath)
+	if err != nil {
+		return false, err
+	}
 	data, err := os.ReadFile(abs)
 	if err != nil {
 		if os.IsNotExist(err) {

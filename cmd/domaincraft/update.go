@@ -77,22 +77,32 @@ func cachedLatestCoreVersion() (string, error) {
 	cachePath := filepath.Join(cacheDir, "core-update.json")
 	if data, rerr := os.ReadFile(cachePath); rerr == nil {
 		var c updateCheckCache
-		if json.Unmarshal(data, &c) == nil && !c.CheckedAt.IsZero() && time.Since(c.CheckedAt) < updateNoticeTTL && c.Latest != "" {
+		if json.Unmarshal(data, &c) == nil && !c.CheckedAt.IsZero() && time.Since(c.CheckedAt) < updateNoticeTTL {
 			return c.Latest, nil
 		}
 	}
 
 	rel, err := latestRelease()
 	if err != nil {
+		// Record the attempt as well: an offline or blackholed network must not
+		// make every later invocation wait for the full HTTP timeout again.
+		writeUpdateCheckCache(cacheDir, cachePath, updateCheckCache{CheckedAt: time.Now()})
 		return "", err
 	}
 	latest := strings.TrimPrefix(rel.TagName, "v")
-	if werr := os.MkdirAll(cacheDir, 0o755); werr == nil {
-		if body, jerr := json.Marshal(updateCheckCache{CheckedAt: time.Now(), Latest: latest}); jerr == nil {
-			_ = fsutil.AtomicWrite(cachePath, body)
-		}
-	}
+	writeUpdateCheckCache(cacheDir, cachePath, updateCheckCache{CheckedAt: time.Now(), Latest: latest})
 	return latest, nil
+}
+
+func writeUpdateCheckCache(cacheDir, cachePath string, c updateCheckCache) {
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return
+	}
+	body, err := json.Marshal(c)
+	if err != nil {
+		return
+	}
+	_ = fsutil.AtomicWrite(cachePath, body)
 }
 
 // newUpdateCmd checks for and installs a newer version of the domaincraft core.
@@ -147,7 +157,7 @@ func runCoreUpdate(log *logger.Logger, checkOnly bool) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp)
+	defer func() { _ = os.Remove(tmp) }()
 
 	exe, err := os.Executable()
 	if err != nil {
@@ -205,7 +215,7 @@ func httpGetBody(url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("http %d for %s", resp.StatusCode, url)
 	}
@@ -223,10 +233,10 @@ func downloadBinary(url string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer tmp.Close()
+	defer func() { _ = tmp.Close() }()
 
 	if _, err := tmp.Write(data); err != nil {
-		os.Remove(tmp.Name())
+		_ = os.Remove(tmp.Name())
 		return "", err
 	}
 	if runtime.GOOS != "windows" {

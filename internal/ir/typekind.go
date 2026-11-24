@@ -22,8 +22,13 @@ func (f IRField) EnumTypeName() string {
 // are false for array fields (whose element type is inspected separately via
 // EnumTypeName/ArrayElementType).
 
+// IsUUID reports whether the field holds a UUID.
+func (f IRField) IsUUID() bool { return f.DatabaseType == "uuid" }
+
 // IsUuid reports whether the field holds a UUID.
-func (f IRField) IsUuid() bool { return f.DatabaseType == "uuid" }
+//
+// Deprecated: use IsUUID. Kept as an alias for bridges using the old casing.
+func (f IRField) IsUuid() bool { return f.IsUUID() }
 
 // IsText reports whether the field holds a string/text value.
 func (f IRField) IsText() bool {
@@ -52,15 +57,25 @@ func (f IRField) IsDate() bool { return f.DatabaseType == "date" }
 // IsDateTime reports whether the field holds a datetime.
 func (f IRField) IsDateTime() bool { return f.DatabaseType == "datetime" }
 
-// IsJson reports whether the field holds a JSON document (json or jsonb).
-func (f IRField) IsJson() bool {
+// IsJSON reports whether the field holds a JSON document (json or jsonb).
+func (f IRField) IsJSON() bool {
 	return f.DatabaseType == "json" || f.DatabaseType == "jsonb"
 }
 
-// IsJsonB reports whether the field holds a jsonb document specifically
+// IsJson reports whether the field holds a JSON document.
+//
+// Deprecated: use IsJSON.
+func (f IRField) IsJson() bool { return f.IsJSON() }
+
+// IsJSONB reports whether the field holds a jsonb document specifically
 // (as opposed to a plain json column). Bridges use this to choose between
 // ordered (numeric) and text-only JSON path operators.
-func (f IRField) IsJsonB() bool { return f.DatabaseType == "jsonb" }
+func (f IRField) IsJSONB() bool { return f.DatabaseType == "jsonb" }
+
+// IsJsonB reports whether the field holds a jsonb document.
+//
+// Deprecated: use IsJSONB.
+func (f IRField) IsJsonB() bool { return f.IsJSONB() }
 
 // IsString reports whether the field holds a bounded string column
 // (as opposed to an unbounded text column, which also satisfies IsText).

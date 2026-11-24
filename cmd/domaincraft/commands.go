@@ -1,11 +1,12 @@
 // Command domaincraft compiles domain.yaml into code through pluggable bridges.
 //
 // Commands:
-//   init     — write a starter domain.yaml from a scenario, then generate
-//   generate — parse and validate the model, build IR, render code via a bridge
-//   validate — validate domain.yaml without generating
-//   bridges  — list known bridges with cache and update status
-//   update   — update the core to the latest GitHub release
+//
+//	init     — write a starter domain.yaml from a scenario, then generate
+//	generate — parse and validate the model, build IR, render code via a bridge
+//	validate — validate domain.yaml without generating
+//	bridges  — list known bridges with cache and update status
+//	update   — update the core to the latest GitHub release
 //
 // Global flags: --domain/-d, --bridge/-b, --output/-o, --non-interactive,
 // --addons, --update-bridges, --version. Command flags live with their
@@ -280,7 +281,10 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	if adminBridge == "" && !cmd.Flags().Changed("admin") && nonInteractive {
 		// In non-interactive mode, skip admin prompt — admin not requested.
 	} else if adminBridge == "" && !cmd.Flags().Changed("admin") && interactive.IsTerminal() {
-		generate, _ := interactive.PromptGenerateAdmin()
+		generate, err := interactive.PromptGenerateAdmin()
+		if err != nil {
+			return fmt.Errorf("prompt for admin panel: %w", err)
+		}
 		if generate {
 			adminBridge = "admin-alpine"
 		}
@@ -335,19 +339,19 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	// --- Smart warning for type changes (manual refactoring report) ---
 	if report := migrationDiff.TypeChangeReport(); report != "" {
 		log.Warn("ACTION REQUIRED — manual refactoring may be needed")
-		fmt.Fprint(cmd.OutOrStdout(), report)
+		_, _ = fmt.Fprint(cmd.OutOrStdout(), report)
 	}
 
 	// --- Smart warning for field renames (data-preserving column rename) ---
 	if report := migrationDiff.FieldRenameReport(); report != "" {
 		log.Warn("ACTION REQUIRED — fields were renamed; apply a safe column rename to avoid data loss")
-		fmt.Fprint(cmd.OutOrStdout(), report)
+		_, _ = fmt.Fprint(cmd.OutOrStdout(), report)
 	}
 
 	// --- Project-rename warning: custom files with a stale root namespace ---
 	if report := migrationDiff.NamespaceRenameReport(); report != "" {
 		log.Warn("ACTION REQUIRED — project was renamed; custom files reference the old namespace")
-		fmt.Fprint(cmd.OutOrStdout(), report)
+		_, _ = fmt.Fprint(cmd.OutOrStdout(), report)
 	}
 
 	// --- Persist the new snapshot ---
@@ -387,12 +391,12 @@ func newBridgesCmd() *cobra.Command {
 
 			entries := registry.All()
 			if len(entries) == 0 {
-				fmt.Fprintln(out, "No bridges registered.")
+				_, _ = fmt.Fprintln(out, "No bridges registered.")
 				return nil
 			}
 
-			fmt.Fprintf(out, "%-20s %-10s %-18s %-16s %s\n", "ID", "Language", "Source", "Status", "Description")
-			fmt.Fprintf(out, "%-20s %-10s %-18s %-16s %s\n",
+			_, _ = fmt.Fprintf(out, "%-20s %-10s %-18s %-16s %s\n", "ID", "Language", "Source", "Status", "Description")
+			_, _ = fmt.Fprintf(out, "%-20s %-10s %-18s %-16s %s\n",
 				strings.Repeat("-", 20),
 				strings.Repeat("-", 10),
 				strings.Repeat("-", 18),
@@ -429,11 +433,11 @@ func newBridgesCmd() *cobra.Command {
 				if e.Deprecated {
 					status += "+deprecated"
 				}
-				fmt.Fprintf(out, "%-20s %-10s %-18s %-16s %s\n", e.ID, e.Language, source, status, e.Description)
+				_, _ = fmt.Fprintf(out, "%-20s %-10s %-18s %-16s %s\n", e.ID, e.Language, source, status, e.Description)
 			}
 
-			fmt.Fprintln(out, "\nLegend: embedded = inside this binary; cache = local copy; remote = fetched on demand.")
-			fmt.Fprintln(out, "Run `domaincraft generate --update-bridges` to refresh cached bridges to the latest supported version.")
+			_, _ = fmt.Fprintln(out, "\nLegend: embedded = inside this binary; cache = local copy; remote = fetched on demand.")
+			_, _ = fmt.Fprintln(out, "Run `domaincraft generate --update-bridges` to refresh cached bridges to the latest supported version.")
 			return nil
 		},
 	}
@@ -633,7 +637,10 @@ func resolveChainWithReplacements(entryDir string, reps []replaceEntry, log *log
 				return "", nil, fmt.Errorf("bridge `extends` cycle detected at %q", d)
 			}
 			seenPath[abs] = true
-			layer, _, _ := bridgeLayerAndName(d, log)
+			layer, _, err := bridgeLayerAndName(d, log)
+			if err != nil {
+				return "", nil, fmt.Errorf("read layer of %s: %w", d, err)
+			}
 			if layer != "" {
 				if prev, ok := seenLayer[layer]; ok {
 					return "", nil, fmt.Errorf("duplicate layer %q: %q and %q", layer, prev, d)
@@ -813,9 +820,9 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 	out := cmd.OutOrStdout()
 	// The resolved command lines are printed before they run, so the developer
 	// always sees exactly what will be executed (Phase 3.5 safety).
-	fmt.Fprintf(out, "  Applying %d database migration command(s):\n", len(cfg.Commands))
+	_, _ = fmt.Fprintf(out, "  Applying %d database migration command(s):\n", len(cfg.Commands))
 	for i, command := range cfg.Commands {
-		fmt.Fprintf(out, "    %d) %s\n", i+1, command)
+		_, _ = fmt.Fprintf(out, "    %d) %s\n", i+1, command)
 	}
 	for i, command := range cfg.Commands {
 		log.Info("Migration %d/%d: %s", i+1, len(cfg.Commands), command)
@@ -833,7 +840,6 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 		c.Stdout = out
 		c.Stderr = out
 		if err := c.Run(); err != nil {
-			log.Error("Migration failed: %s", err)
 			return fmt.Errorf("database migration %d failed: %w", i+1, err)
 		}
 	}
@@ -875,7 +881,7 @@ func applyMigrationActions(diff *snapshot.Diff, fresh map[string]bool, log *logg
 					continue
 				}
 				if rewrote {
-					fmt.Fprintf(out, "  ▸ updated namespace %s -> %s in %s\n", diff.NamespaceRename.OldNamespace, diff.NamespaceRename.NewNamespace, rel)
+					_, _ = fmt.Fprintf(out, "  ▸ updated namespace %s -> %s in %s\n", diff.NamespaceRename.OldNamespace, diff.NamespaceRename.NewNamespace, rel)
 				}
 			}
 		}
@@ -890,7 +896,7 @@ func applyMigrationActions(diff *snapshot.Diff, fresh map[string]bool, log *logg
 					continue
 				}
 				if rewrote {
-					fmt.Fprintf(out, "  ▸ updated field %s -> %s in %s\n", fr.OldField, fr.NewField, rel)
+					_, _ = fmt.Fprintf(out, "  ▸ updated field %s -> %s in %s\n", fr.OldField, fr.NewField, rel)
 				}
 			}
 		}
@@ -953,7 +959,7 @@ func handleDeletedEntity(del snapshot.DeletedEntity, fresh map[string]bool, log 
 	if !prune && !interactive.IsTerminal() {
 		log.Warn("Entity %q was removed from domain.yaml — orphaned files kept (re-run with --prune to delete):", del.Name)
 		for _, f := range del.Files {
-			fmt.Fprintf(out, "    - %s%s\n", f.Path, customMark(f))
+			_, _ = fmt.Fprintf(out, "    - %s%s\n", f.Path, customMark(f))
 		}
 		return false, nil
 	}
@@ -972,7 +978,7 @@ func handleDeletedEntity(del snapshot.DeletedEntity, fresh map[string]bool, log 
 			log.Warn("could not delete %s: %v", f.Path, err)
 			continue
 		}
-		fmt.Fprintf(out, "  ▸ deleted %s\n", f.Path)
+		_, _ = fmt.Fprintf(out, "  ▸ deleted %s\n", f.Path)
 	}
 	return true, nil
 }
@@ -986,7 +992,7 @@ func handleRename(ren snapshot.Rename, d *snapshot.Diff, fresh map[string]bool, 
 	if !prune && !interactive.IsTerminal() {
 		log.Warn("Entity %q was renamed to %q — files kept (re-run with --prune to rename):", ren.OldName, ren.NewName)
 		for _, f := range ren.Files {
-			fmt.Fprintf(out, "    - %s -> %s\n", f.Path, snapshot.RenameRelPath(f.Path, ren.OldName, ren.NewName))
+			_, _ = fmt.Fprintf(out, "    - %s -> %s\n", f.Path, snapshot.RenameRelPath(f.Path, ren.OldName, ren.NewName))
 		}
 		return false, nil
 	}
@@ -1021,10 +1027,10 @@ func handleRename(ren snapshot.Rename, d *snapshot.Diff, fresh map[string]bool, 
 				if rewrote, rerr := snapshot.RewriteFile(outputDir, newRel, snapshot.RenameTransforms(ren.OldName, ren.NewName, d)...); rerr != nil {
 					log.Warn("could not rewrite content of %s: %v", newRel, rerr)
 				} else if rewrote {
-					fmt.Fprintf(out, "  ▸ renamed %s -> %s (content updated)\n", f.Path, newRel)
+					_, _ = fmt.Fprintf(out, "  ▸ renamed %s -> %s (content updated)\n", f.Path, newRel)
 					continue
 				}
-				fmt.Fprintf(out, "  ▸ renamed %s -> %s\n", f.Path, newRel)
+				_, _ = fmt.Fprintf(out, "  ▸ renamed %s -> %s\n", f.Path, newRel)
 			}
 			continue
 		}
@@ -1033,7 +1039,7 @@ func handleRename(ren snapshot.Rename, d *snapshot.Diff, fresh map[string]bool, 
 			log.Warn("could not delete stale generated file %s: %v", f.Path, err)
 			continue
 		}
-		fmt.Fprintf(out, "  ▸ removed stale generated file %s\n", f.Path)
+		_, _ = fmt.Fprintf(out, "  ▸ removed stale generated file %s\n", f.Path)
 	}
 	return true, nil
 }
@@ -1086,10 +1092,10 @@ func loadAndValidate(out io.Writer) (*parser.ParsedSchema, error) {
 	var hardErrors []validator.ValidationError
 	for _, e := range allErrors {
 		if e.Warning {
-			fmt.Fprintf(out, "⚠ %s\n", e.Error())
+			_, _ = fmt.Fprintf(out, "⚠ %s\n", e.Error())
 		} else {
 			hardErrors = append(hardErrors, e)
-			fmt.Fprintln(out, e.Error())
+			_, _ = fmt.Fprintln(out, e.Error())
 		}
 	}
 

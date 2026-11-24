@@ -1,3 +1,4 @@
+// Package logger provides the CLI's four-level console logger.
 package logger
 
 import (
@@ -33,9 +34,9 @@ func (l *Logger) Info(format string, args ...interface{}) {
 	}
 	msg := fmt.Sprintf(format, args...)
 	if l.useColors {
-		fmt.Fprintf(l.writer, "  \033[36m▸\033[0m %s\n", msg)
+		_, _ = fmt.Fprintf(l.writer, "  \033[36m▸\033[0m %s\n", msg)
 	} else {
-		fmt.Fprintf(l.writer, "  ▸ %s\n", msg)
+		_, _ = fmt.Fprintf(l.writer, "  ▸ %s\n", msg)
 	}
 }
 
@@ -47,9 +48,9 @@ func (l *Logger) Success(format string, args ...interface{}) {
 	}
 	msg := fmt.Sprintf(format, args...)
 	if l.useColors {
-		fmt.Fprintf(l.writer, "  \033[32m✓\033[0m %s\n", msg)
+		_, _ = fmt.Fprintf(l.writer, "  \033[32m✓\033[0m %s\n", msg)
 	} else {
-		fmt.Fprintf(l.writer, "  ✓ %s\n", msg)
+		_, _ = fmt.Fprintf(l.writer, "  ✓ %s\n", msg)
 	}
 }
 
@@ -61,9 +62,9 @@ func (l *Logger) Warn(format string, args ...interface{}) {
 	}
 	msg := fmt.Sprintf(format, args...)
 	if l.useColors {
-		fmt.Fprintf(l.writer, "  \033[33m⚠\033[0m %s\n", msg)
+		_, _ = fmt.Fprintf(l.writer, "  \033[33m⚠\033[0m %s\n", msg)
 	} else {
-		fmt.Fprintf(l.writer, "  ⚠ %s\n", msg)
+		_, _ = fmt.Fprintf(l.writer, "  ⚠ %s\n", msg)
 	}
 }
 
@@ -75,8 +76,8 @@ func (l *Logger) Error(format string, args ...interface{}) {
 	}
 	msg := fmt.Sprintf(format, args...)
 	if l.useColors {
-		fmt.Fprintf(l.writer, "  \033[31m✗\033[0m %s\n", msg)
+		_, _ = fmt.Fprintf(l.writer, "  \033[31m✗\033[0m %s\n", msg)
 	} else {
-		fmt.Fprintf(l.writer, "  ✗ %s\n", msg)
+		_, _ = fmt.Fprintf(l.writer, "  ✗ %s\n", msg)
 	}
 }

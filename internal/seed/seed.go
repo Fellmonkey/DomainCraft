@@ -31,6 +31,9 @@ type Options struct {
 
 // Generate builds deterministic mock seed for every entity in the project.
 func Generate(project *ir.IRProject, opts Options) *ir.SeedDataset {
+	if project == nil {
+		return &ir.SeedDataset{}
+	}
 	if opts.CountPerEntity <= 0 {
 		opts.CountPerEntity = 2
 	}

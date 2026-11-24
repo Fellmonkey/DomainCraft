@@ -32,12 +32,17 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.27'
+          go-version: '1.27.4'
           cache: true
           cache-dependency-path: go.sum
 
       - name: Download dependencies
         run: go mod download
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.15.0
 
       - name: Build
         run: go build ./cmd/domaincraft
@@ -59,7 +64,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.27'
+          go-version: '1.27.4'
           cache: true
           cache-dependency-path: go.sum
 

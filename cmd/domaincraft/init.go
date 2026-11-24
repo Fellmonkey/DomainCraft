@@ -116,10 +116,12 @@ func newInitCmd() *cobra.Command {
 				return err
 			}
 
-			if _, err := os.Stat(domainFile); err == nil && !force {
+			_, statErr := os.Stat(domainFile)
+			if statErr == nil && !force {
 				return fmt.Errorf("%s already exists; use --force to overwrite", domainFile)
-			} else if err != nil && !os.IsNotExist(err) {
-				return fmt.Errorf("check %s: %w", domainFile, err)
+			}
+			if statErr != nil && !os.IsNotExist(statErr) {
+				return fmt.Errorf("check %s: %w", domainFile, statErr)
 			}
 			if err := fsutil.AtomicWrite(domainFile, []byte(content)); err != nil {
 				return fmt.Errorf("write %s: %w", domainFile, err)
@@ -137,7 +139,7 @@ func newInitCmd() *cobra.Command {
 				}
 			}
 			if !generate {
-				fmt.Fprintf(cmd.OutOrStdout(), "Next: domaincraft validate --domain %s\nthen: domaincraft generate --domain %s --bridge <id>\n", domainFile, domainFile)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Next: domaincraft validate --domain %s\nthen: domaincraft generate --domain %s --bridge <id>\n", domainFile, domainFile)
 				return nil
 			}
 

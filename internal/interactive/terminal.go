@@ -1,3 +1,4 @@
+// Package interactive provides the dependency-free ANSI terminal prompts.
 package interactive
 
 import (
@@ -89,7 +90,11 @@ func rawMode(fn func() error) error {
 	if err != nil {
 		return err
 	}
-	defer term.Restore(int(os.Stdin.Fd()), state)
+	defer func() {
+		// Best effort: a failed restore leaves the terminal in raw mode, but the
+		// prompt's own result must not be replaced by a cleanup error.
+		_ = term.Restore(int(os.Stdin.Fd()), state)
+	}()
 	return fn()
 }
 
@@ -268,24 +273,24 @@ func (f *field) draw(lines []string) {
 		// are printed over the old ones in place. Skipping the final "move
 		// back up" would shift the block down by n-1 lines on every redraw
 		// and make the terminal scroll ("run away").
-		fmt.Fprintf(promptOutput, "\x1b[%dA", n)
+		_, _ = fmt.Fprintf(promptOutput, "\x1b[%dA", n)
 		for i := range n {
 			if i > 0 {
-				fmt.Fprint(promptOutput, "\n")
+				_, _ = fmt.Fprint(promptOutput, "\n")
 			}
-			fmt.Fprint(promptOutput, "\x1b[2K")
+			_, _ = fmt.Fprint(promptOutput, "\x1b[2K")
 		}
-		fmt.Fprintf(promptOutput, "\r\x1b[%dA", n-1)
+		_, _ = fmt.Fprintf(promptOutput, "\r\x1b[%dA", n-1)
 	}
 	for _, l := range fitted {
-		fmt.Fprintln(promptOutput, l)
+		_, _ = fmt.Fprintln(promptOutput, l)
 	}
 	// Clear the leftover lines below when the new block is shorter.
 	if old := len(f.lines); old > len(fitted) {
 		for range old - len(fitted) {
-			fmt.Fprint(promptOutput, "\x1b[1B\x1b[2K")
+			_, _ = fmt.Fprint(promptOutput, "\x1b[1B\x1b[2K")
 		}
-		fmt.Fprintf(promptOutput, "\x1b[%dA", old-len(fitted))
+		_, _ = fmt.Fprintf(promptOutput, "\x1b[%dA", old-len(fitted))
 	}
 	f.lines = fitted
 }

@@ -1,3 +1,4 @@
+// Package validator checks the parsed schema for logical consistency.
 package validator
 
 import (
@@ -25,9 +26,9 @@ type ValidationError struct {
 
 func (e ValidationError) Error() string {
 	if e.Field != "" {
-		return fmt.Sprintf("Error in entity '%s', field '%s': %s", e.Entity, e.Field, e.Message)
+		return fmt.Sprintf("entity %q field %q: %s", e.Entity, e.Field, e.Message)
 	}
-	return fmt.Sprintf("Error in entity '%s': %s", e.Entity, e.Message)
+	return fmt.Sprintf("entity %q: %s", e.Entity, e.Message)
 }
 
 // Validator checks ParsedSchema for logical consistency.
@@ -998,11 +999,11 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 			})
 		}
 	case "boolean":
-		switch seedValue.(type) {
+		switch v := seedValue.(type) {
 		case bool:
 			// OK
 		case string:
-			s := strings.ToLower(seedValue.(string))
+			s := strings.ToLower(v)
 			if s != "true" && s != "false" {
 				errs = append(errs, ValidationError{
 					Entity: entityName, Field: fieldName,
@@ -1038,7 +1039,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 		} else if !isValidUUID(s) {
 			errs = append(errs, ValidationError{
 				Entity: entityName, Field: fieldName,
-				Message: fmt.Sprintf("seed entry %d: value %q is not a valid UUID (expectedxxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)", entryIdx, s),
+				Message: fmt.Sprintf("seed entry %d: value %q is not a valid UUID (expected xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)", entryIdx, s),
 			})
 		}
 	case "datetime":

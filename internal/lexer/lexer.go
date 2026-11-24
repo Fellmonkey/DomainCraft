@@ -1,3 +1,4 @@
+// Package lexer parses field definition strings into structured definitions.
 package lexer
 
 import (
@@ -44,8 +45,8 @@ type Lexer struct {
 	input string
 }
 
-// NewLexer creates a new Lexer
-func NewLexer(input string) *Lexer {
+// New creates a new Lexer.
+func New(input string) *Lexer {
 	return &Lexer{input: strings.TrimSpace(input)}
 }
 
@@ -128,7 +129,7 @@ func (l *Lexer) parseType(typeStr string, fd *FieldDefinition) error {
 
 	// Built-in types
 	if !specmeta.IsFieldType(typeStr) {
-		return fmt.Errorf("unknown type: %s. valid types: string, int, uuid, relation, array, enum, json, text, etc.", typeStr)
+		return fmt.Errorf("unknown type %q; valid types: string, int, uuid, relation, array, enum, json, text", typeStr)
 	}
 
 	fd.Type = typeStr
@@ -154,33 +155,33 @@ func (l *Lexer) parseModifiers(modStr string, fd *FieldDefinition) error {
 			// Strip quotes if present
 			value = strings.Trim(value, `"'`)
 
-		switch key {
-		case "min", "max", "gte", "gt", "lte", "lt", "regex":
-			fd.Validations[key] = value
-		case "default":
-			// Check for function-style defaults like now(), uuid()
-			if strings.HasSuffix(value, "()") {
-				fd.DefaultIsFunc = true
-				fd.DefaultValue = value[:len(value)-2] // strip ()
-			} else {
-				fd.DefaultValue = value
+			switch key {
+			case "min", "max", "gte", "gt", "lte", "lt", "regex":
+				fd.Validations[key] = value
+			case "default":
+				// Check for function-style defaults like now(), uuid()
+				if strings.HasSuffix(value, "()") {
+					fd.DefaultIsFunc = true
+					fd.DefaultValue = value[:len(value)-2] // strip ()
+				} else {
+					fd.DefaultValue = value
+				}
+			case "on_delete":
+				if !specmeta.IsOnDeleteValue(value) {
+					return fmt.Errorf("unknown on_delete value: %s. valid: cascade, set_null, restrict, no_action", value)
+				}
+				fd.OnDelete = value
+			case "old_name":
+				// Rename hint: `name: string [required, old_name: title]`. The value is
+				// the field's previous name; the migration engine + bridges turn it into
+				// a safe column rename instead of a destructive drop + add.
+				if value == "" {
+					return fmt.Errorf("old_name requires a previous field name")
+				}
+				fd.OldName = value
+			default:
+				return fmt.Errorf("unknown modifier: %s", key)
 			}
-		case "on_delete":
-			if !specmeta.IsOnDeleteValue(value) {
-				return fmt.Errorf("unknown on_delete value: %s. valid: cascade, set_null, restrict, no_action", value)
-			}
-			fd.OnDelete = value
-		case "old_name":
-			// Rename hint: `name: string [required, old_name: title]`. The value is
-			// the field's previous name; the migration engine + bridges turn it into
-			// a safe column rename instead of a destructive drop + add.
-			if value == "" {
-				return fmt.Errorf("old_name requires a previous field name")
-			}
-			fd.OldName = value
-		default:
-			return fmt.Errorf("unknown modifier: %s", key)
-		}
 			continue
 		}
 
@@ -289,7 +290,7 @@ func (fd *FieldDefinition) Validate() error {
 	// Validate regex if present
 	if regex, ok := fd.Validations["regex"]; ok {
 		if _, err := regexp.Compile(regex); err != nil {
-			return fmt.Errorf("invalid regex '%s': %v", regex, err)
+			return fmt.Errorf("invalid regex %q: %w", regex, err)
 		}
 	}
 
@@ -308,12 +309,12 @@ func isValidIdentifier(s string) bool {
 	}
 	for i, r := range s {
 		if i == 0 {
-			if r != '_' && !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') {
+			if r != '_' && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') {
 				return false
 			}
 			continue
 		}
-		if r != '_' && !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') {
+		if r != '_' && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
 			return false
 		}
 	}
@@ -322,6 +323,6 @@ func isValidIdentifier(s string) bool {
 
 // ParseFieldString is a convenience function for parsing a field string
 func ParseFieldString(fieldString string) (*FieldDefinition, error) {
-	lexer := NewLexer(fieldString)
+	lexer := New(fieldString)
 	return lexer.Parse()
 }

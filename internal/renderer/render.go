@@ -1,9 +1,13 @@
+// Package renderer renders the IR through bridge templates.
 package renderer
 
 import (
+	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/template"
 
@@ -11,9 +15,11 @@ import (
 	"github.com/DomainCraft/DomainCraft/internal/packages"
 )
 
+// Render renders the IR through every bridge in the chain and returns the
+// written paths and the file manifest.
 func (r *Renderer) Render(project *ir.IRProject, outputDir string) ([]string, []RenderedFile, error) {
 	if project == nil {
-		return nil, nil, fmt.Errorf("IR project is nil")
+		return nil, nil, errors.New("IR project is nil")
 	}
 	if outputDir == "" {
 		outputDir = r.config().OutputDir
@@ -118,6 +124,20 @@ func (r *Renderer) Render(project *ir.IRProject, outputDir string) ([]string, []
 						return nil, nil, fmt.Errorf("template target path escapes output directory: %s", renderedTarget)
 					}
 
+					// The lexical check does not catch a symlink planted inside the
+					// output tree. Resolve the parent before creating the file.
+					parent := filepath.Dir(absoluteTarget)
+					if realParent, err := filepath.EvalSymlinks(parent); err == nil {
+						realOutput, err := filepath.EvalSymlinks(absOutput)
+						if err != nil {
+							return nil, nil, fmt.Errorf("resolve output directory symlinks: %w", err)
+						}
+						realTarget := filepath.Join(realParent, filepath.Base(absoluteTarget))
+						if realTarget != realOutput && !strings.HasPrefix(realTarget, realOutput+string(filepath.Separator)) {
+							return nil, nil, fmt.Errorf("template target path escapes output directory through a symlink: %s", renderedTarget)
+						}
+					}
+
 					relPath := filepath.ToSlash(renderedTarget)
 					record := RenderedFile{
 						Path:    relPath,
@@ -152,7 +172,7 @@ func (r *Renderer) Render(project *ir.IRProject, outputDir string) ([]string, []
 					}
 					if err := file.Close(); err != nil {
 						_ = os.Remove(absoluteTarget)
-						return nil, nil, err
+						return nil, nil, fmt.Errorf("close output file %s: %w", absoluteTarget, err)
 					}
 					writtenFiles = append(writtenFiles, absoluteTarget)
 					manifest = append(manifest, record)
@@ -276,7 +296,8 @@ func (r *Renderer) resolvePackages(project *ir.IRProject) map[string]string {
 	}
 
 	result := make(map[string]string, len(merged))
-	for key, packageID := range merged {
+	for _, key := range slices.Sorted(maps.Keys(merged)) {
+		packageID := merged[key]
 		version, err := packages.ResolveVersionCachedForFramework(r.cacheNamespace(), registryURL, packageID, framework)
 		if err != nil {
 			r.log.Warn("failed to resolve package %s: %v", packageID, err)

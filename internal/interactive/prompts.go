@@ -200,18 +200,18 @@ func confirm(title, description string) (bool, error) {
 			if err != nil {
 				return err
 			}
-			switch {
-			case k.kind == keyEnter:
+			switch k.kind {
+			case keyEnter:
 				result = cursor == 0
 				return nil
-			case k.kind == keyEsc:
+			case keyEsc:
 				return errAborted
-			case k.kind == keyLeft:
+			case keyLeft:
 				if cursor != 0 {
 					cursor = 0
 					f.draw(build())
 				}
-			case k.kind == keyRight:
+			case keyRight:
 				if cursor != 1 {
 					cursor = 1
 					f.draw(build())

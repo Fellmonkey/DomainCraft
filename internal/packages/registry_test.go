@@ -7,6 +7,46 @@ import (
 	"testing"
 )
 
+// newTestRegistryServer switches the registry client to the TLS test server so
+// the https-only guard can stay enabled in production.
+func newTestRegistryServer(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewTLSServer(handler)
+	previous := registryClient
+	registryClient = srv.Client()
+	allowLocalRegistryForTests = true
+	t.Cleanup(func() {
+		registryClient = previous
+		allowLocalRegistryForTests = false
+		srv.Close()
+	})
+	return srv
+}
+
+func TestValidateRegistryURLRejectsInternalTargets(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{name: "public https", url: "https://api.nuget.org/v3-flatcontainer/{id}/index.json"},
+		{name: "plaintext", url: "http://api.nuget.org/v3/{id}", wantErr: true},
+		{name: "loopback ip", url: "https://127.0.0.1:8080/admin/{id}", wantErr: true},
+		{name: "localhost", url: "https://localhost/{id}", wantErr: true},
+		{name: "link local", url: "https://169.254.169.254/latest/{id}", wantErr: true},
+		{name: "private ip", url: "https://10.0.0.5/{id}", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateRegistryURL(tt.url)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateRegistryURL(%q) error = %v, wantErr %v", tt.url, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestVersionGreater(t *testing.T) {
 	tests := []struct {
 		name string
@@ -35,7 +75,7 @@ func TestVersionGreater(t *testing.T) {
 }
 
 func TestResolveVersionPicksHighestStable(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newTestRegistryServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/newtonsoft.json/index.json" {
 			t.Errorf("unexpected path %q", r.URL.Path)
 		}
@@ -68,7 +108,7 @@ func TestMaxMajorForFramework(t *testing.T) {
 // Regression: the NuGet resolver used to return the newest stable version even
 // when the generated csproj targets an older runtime (efcore 11.x vs net10.0).
 func TestResolveVersionForFrameworkRespectsTargetFramework(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newTestRegistryServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"versions":["9.0.9","11.0.0","10.0.0","12.0.0-rc1"]}`))
 	}))
@@ -94,7 +134,7 @@ func TestResolveVersionForFrameworkRespectsTargetFramework(t *testing.T) {
 }
 
 func TestResolveVersionForFrameworkFallsBackWhenNoCompatibleVersion(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newTestRegistryServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"versions":["11.0.0"]}`))
 	}))
 	defer srv.Close()
@@ -117,7 +157,7 @@ func TestResolveVersionErrors(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			srv := newTestRegistryServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(c.status)
 				_, _ = w.Write([]byte(c.body))
 			}))
@@ -135,7 +175,7 @@ func TestResolveVersionErrors(t *testing.T) {
 }
 
 func TestResolveVersionUnreachableRegistry(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	srv := newTestRegistryServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	url := srv.URL
 	srv.Close() // nothing is listening anymore
 

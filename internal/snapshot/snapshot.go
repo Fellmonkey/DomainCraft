@@ -451,7 +451,10 @@ func RenameRelPath(relPath, oldName, newName string) string {
 
 // DeleteFile removes an entity-scoped file (path relative to outputDir).
 func DeleteFile(outputDir, relPath string) error {
-	abs := filepath.Join(outputDir, filepath.FromSlash(relPath))
+	abs, err := safeRelPath(outputDir, relPath)
+	if err != nil {
+		return err
+	}
 	if err := os.Remove(abs); err != nil {
 		return fmt.Errorf("remove %s: %w", relPath, err)
 	}
@@ -467,8 +470,14 @@ func RenameEntityFile(outputDir, relPath, oldName, newName string) (newRel strin
 	if newRel == relPath {
 		return newRel, false, nil
 	}
-	abs := filepath.Join(outputDir, filepath.FromSlash(relPath))
-	newAbs := filepath.Join(outputDir, filepath.FromSlash(newRel))
+	abs, err := safeRelPath(outputDir, relPath)
+	if err != nil {
+		return newRel, false, err
+	}
+	newAbs, err := safeRelPath(outputDir, newRel)
+	if err != nil {
+		return newRel, false, err
+	}
 	if _, err := os.Stat(newAbs); err == nil {
 		return newRel, false, nil
 	}
