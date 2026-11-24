@@ -61,18 +61,64 @@ func FindMonorepoBridge(dir, relPath string) string {
 	}
 }
 
-// MonorepoRelPath reports whether dir is the monorepo location for an official
-// bridge (i.e. it ends with `bridges/<entryPath>`) and returns that relative
-// path, or "" when the bridge was resolved from elsewhere.
-func MonorepoRelPath(dir, entryPath string) string {
-	if entryPath == "" {
+// monorepoRoot walks up from dir looking for the root of the DomainCraft
+// monorepo: a directory with a bridges/ tree and a go.mod declaring this module.
+// It returns "" when dir is not inside such a tree.
+func monorepoRoot(dir string) string {
+	cur, err := filepath.Abs(dir)
+	if err != nil {
 		return ""
 	}
-	suffix := filepath.Join("bridges", filepath.FromSlash(entryPath))
-	if strings.HasSuffix(filepath.Clean(dir), suffix) {
-		return filepath.ToSlash(suffix)
+	for {
+		if info, err := os.Stat(filepath.Join(cur, "bridges")); err == nil && info.IsDir() {
+			if data, err := os.ReadFile(filepath.Join(cur, "go.mod")); err == nil && //nolint:gosec // path walked upward from the validated bridge dir
+				strings.Contains(string(data), "module github.com/DomainCraft/DomainCraft") {
+				return cur
+			}
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return ""
+		}
+		cur = parent
 	}
-	return ""
+}
+
+// samePath compares two absolute paths using the filesystem's case rules.
+func samePath(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if os.PathSeparator == '\\' {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+// MonorepoRelPath reports whether dir is the monorepo location of a bundled
+// official bridge and returns its `bridges/<entryPath>` relative path, or "".
+//
+// Three independent checks are required: the path component before the bridge
+// must be exactly `bridges` (not `mybridges`), the bridge must exist in the
+// embedded tree shipped by this binary, and dir must be inside the actual
+// monorepo root. A suffix match alone is not enough — a lookalike local path
+// must stay a community bridge so the migration consent gate still applies.
+func MonorepoRelPath(dir, entryPath string) string {
+	if entryPath == "" || !filepath.IsLocal(filepath.FromSlash(entryPath)) {
+		return ""
+	}
+	embedded := "bridges/" + filepath.ToSlash(entryPath)
+	if _, err := domaincraft.Bridges.ReadDir(embedded); err != nil {
+		return "" // not a bundled bridge in this binary
+	}
+	rel := filepath.Join("bridges", filepath.FromSlash(entryPath))
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+	root := monorepoRoot(abs)
+	if root == "" || !samePath(abs, filepath.Join(root, rel)) {
+		return ""
+	}
+	return filepath.ToSlash(rel)
 }
 
 // IsOfficialBundled reports whether dir is a bundled monorepo bridge, i.e. it
@@ -122,14 +168,18 @@ func (e RegistryEntry) Status(checkRemote bool) BridgeStatus {
 	if !checkRemote {
 		return s
 	}
+	// A pinned bridge is fixed at one ref; there is no update to offer.
+	if meta, err := ReadMeta(e); err == nil && meta != nil && meta.Pin != "" {
+		return s
+	}
 	u, err := CheckForUpdate(e, 0)
 	if err == nil && u != nil {
-		// Only flag an update if the remote contract is supported, so an
-		// unsupported (neverer-contract) bridge is never offered.
+		s.RemoteReachable = true
+		// Only flag an update when the remote contract can be read and is
+		// supported. A failed probe is "cannot offer update".
 		if c, rerr := remoteContractVersion(e, u.RemoteBranch); rerr == nil {
 			if cerr := shouldApplyContract(c); cerr == nil {
 				s.Outdated = true
-				s.RemoteReachable = true
 			}
 		}
 	}

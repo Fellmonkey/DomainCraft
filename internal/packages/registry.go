@@ -2,7 +2,9 @@
 package packages
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -11,31 +13,67 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/DomainCraft/DomainCraft/internal/bridge"
 )
 
-var registryClient = &http.Client{
-	Timeout: 5 * time.Second,
-	CheckRedirect: func(req *http.Request, _ []*http.Request) error {
-		if err := validateRegistryURL(req.URL.String()); err != nil {
-			return err
-		}
-		return nil
-	},
+// maxRegistryResponseBytes caps a version index read from a registry.
+const maxRegistryResponseBytes = 1 << 20
+
+var registryClient = newRegistryClient()
+
+// newRegistryClient installs a dialer that resolves and checks every address at
+// connect time, including addresses reached through a redirect. Checking only
+// the literal host in bridge.yaml is not enough: a hostname can resolve to
+// loopback, a private network or the cloud metadata address.
+func newRegistryClient() *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.DialContext = restrictedRegistryDialer
+	return &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: tr,
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			if err := validateRegistryURL(req.URL.String()); err != nil {
+				return err
+			}
+			return validateRegistryTarget(req.Context(), req.URL)
+		},
+	}
 }
 
 // allowLocalRegistryForTests is set only by tests using httptest TLS servers.
 var allowLocalRegistryForTests bool
 
-// validateRegistryURL keeps registry requests on https and away from loopback,
-// private and link-local addresses. registry_url comes from bridge.yaml, which
-// may be cloned from an untrusted repository.
+// lookupRegistryIPs is a seam so the SSRF guards can be tested without DNS.
+var lookupRegistryIPs = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+	return net.DefaultResolver.LookupIPAddr(ctx, host)
+}
+
+// allowedRegistryIP rejects addresses that could reach a local service or the
+// cloud metadata endpoint (loopback, private, link-local and unspecified).
+func allowedRegistryIP(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	return !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsLinkLocalUnicast() &&
+		!ip.IsLinkLocalMulticast() && !ip.IsUnspecified()
+}
+
+// validateRegistryURL performs the syntactic checks on a registry URL. The
+// address checks happen at dial time so DNS rebinding cannot bypass them.
 func validateRegistryURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("invalid registry URL %q: %w", raw, err)
+		// url.Error repeats the raw URL (including userinfo/query); keep only
+		// its reason and wrap that instead.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) && urlErr.Err != nil {
+			err = urlErr.Err
+		}
+		return fmt.Errorf("invalid registry URL %q: %w", redactedRegistryURL(raw), err)
 	}
 	if u.Scheme != "https" || u.Host == "" {
-		return fmt.Errorf("registry URL must be an absolute https URL: %q", raw)
+		return fmt.Errorf("registry URL must be an absolute https URL: %q", redactedRegistryURL(raw))
 	}
 	host := strings.ToLower(u.Hostname())
 	if allowLocalRegistryForTests {
@@ -44,11 +82,74 @@ func validateRegistryURL(raw string) error {
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
 		return fmt.Errorf("registry host %q is not allowed", host)
 	}
-	if ip := net.ParseIP(host); ip != nil &&
-		(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()) {
+	if ip := net.ParseIP(host); ip != nil && !allowedRegistryIP(ip) {
 		return fmt.Errorf("registry host %q is not allowed", host)
 	}
 	return nil
+}
+
+// validateRegistryTarget resolves the host and rejects a disallowed address.
+func validateRegistryTarget(ctx context.Context, u *url.URL) error {
+	if allowLocalRegistryForTests {
+		return nil
+	}
+	host := strings.ToLower(u.Hostname())
+	ips, err := lookupRegistryIPs(ctx, host)
+	if err != nil {
+		return fmt.Errorf("resolve registry host %q: %w", host, err)
+	}
+	if len(ips) == 0 {
+		return fmt.Errorf("registry host %q has no addresses", host)
+	}
+	for _, addr := range ips {
+		if !allowedRegistryIP(addr.IP) {
+			return fmt.Errorf("registry host %q resolves to disallowed address %s", host, addr.IP)
+		}
+	}
+	return nil
+}
+
+// restrictedRegistryDialer is the http.Transport dial hook. It uses the same
+// address rule as validateRegistryTarget and connects to the checked IP, so a
+// second DNS answer cannot rebind the connection to a private address.
+func restrictedRegistryDialer(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid registry address: %w", err)
+	}
+	dialer := &net.Dialer{}
+	if allowLocalRegistryForTests {
+		return dialer.DialContext(ctx, network, addr)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if !allowedRegistryIP(ip) {
+			return nil, fmt.Errorf("registry address %s is not allowed", redactedRegistryURL("https://"+addr))
+		}
+		return dialer.DialContext(ctx, network, addr)
+	}
+	ips, err := lookupRegistryIPs(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("resolve registry host: %w", err)
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("registry host %q has no addresses", host)
+	}
+	for _, candidate := range ips {
+		if !allowedRegistryIP(candidate.IP) {
+			return nil, fmt.Errorf("registry host %q resolves to disallowed address %s", host, candidate.IP)
+		}
+	}
+	return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+}
+
+// redactedRegistryURL keeps only scheme and host for error messages, so
+// credentials and query strings from a bridge's config never reach the log.
+func redactedRegistryURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Hostname() == "" {
+		return "<invalid url>"
+	}
+	return u.Scheme + "://" + u.Hostname()
 }
 
 // ResolveVersion queries a package registry (e.g. NuGet) for the latest stable version
@@ -144,7 +245,7 @@ func fetchVersions(registryURL string, packageID string) ([]string, error) {
 		return nil, err
 	}
 
-	req, err := http.NewRequest("GET", registryEndpoint, nil)
+	req, err := http.NewRequestWithContext(bridge.CommandContext(), http.MethodGet, registryEndpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -162,8 +263,8 @@ func fetchVersions(registryURL string, packageID string) ([]string, error) {
 	var result struct {
 		Versions []string `json:"versions"`
 	}
-	// Limit response body to 1MB to prevent OOM from malicious/misconfigured registries.
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
+	// Limit response body to prevent OOM from malicious/misconfigured registries.
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxRegistryResponseBytes)).Decode(&result); err != nil {
 		return nil, err
 	}
 
@@ -174,10 +275,7 @@ func fetchVersions(registryURL string, packageID string) ([]string, error) {
 func VersionGreater(a, b string) bool {
 	aParts := strings.Split(a, ".")
 	bParts := strings.Split(b, ".")
-	maxLen := len(aParts)
-	if len(bParts) > maxLen {
-		maxLen = len(bParts)
-	}
+	maxLen := max(len(aParts), len(bParts))
 	for i := range maxLen {
 		var ai, bi int
 		if i < len(aParts) {

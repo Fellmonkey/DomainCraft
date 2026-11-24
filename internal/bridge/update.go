@@ -2,9 +2,11 @@ package bridge
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -32,18 +34,32 @@ const DefaultUpdateInterval = 24 * time.Hour
 const CoreContractVersion = 1
 
 // parseBridgeContractVersion reads `contract_version` from bridge.yaml bytes.
-// An absent field means contract v1.
-func parseBridgeContractVersion(data []byte) int {
+// An absent field means contract v1. Any other unreadable value is an error:
+// a malformed manifest must never be silently downgraded to "supported".
+func parseBridgeContractVersion(data []byte) (int, error) {
+	// A truncated body may still be valid YAML (e.g. a scalar or a list), so
+	// require the document to be a mapping before reading the version.
+	var probe any
+	if err := yaml.Unmarshal(data, &probe); err != nil {
+		return 0, fmt.Errorf("parse bridge contract version: %w", err)
+	}
+	if _, ok := probe.(map[string]any); !ok {
+		return 0, fmt.Errorf("parse bridge contract version: manifest must be a YAML mapping")
+	}
 	var cfg struct {
 		ContractVersion int `yaml:"contract_version"`
 	}
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return 1
+		return 0, fmt.Errorf("parse bridge contract version: %w", err)
 	}
-	if cfg.ContractVersion == 0 {
-		return 1
+	switch {
+	case cfg.ContractVersion == 0:
+		return 1, nil
+	case cfg.ContractVersion < 0:
+		return 0, fmt.Errorf("invalid contract_version %d", cfg.ContractVersion)
+	default:
+		return cfg.ContractVersion, nil
 	}
-	return cfg.ContractVersion
 }
 
 // shouldApplyContract verifies that a bridge declaring contractVersion is
@@ -57,8 +73,9 @@ func shouldApplyContract(contractVersion int) error {
 }
 
 // remoteContractVersion fetches a bridge's declared contract version at a ref
-// without cloning, via the GitHub raw-content endpoint. Best-effort: a missing
-// or unreadable bridge.yaml is treated as contract v1 (the lowest).
+// without cloning, via the GitHub raw-content endpoint. An unreadable manifest
+// is an error: callers treat it as "cannot offer update" rather than guessing
+// a supported version.
 func remoteContractVersion(entry RegistryEntry, ref string) (int, error) {
 	if ref == "" {
 		ref = "main"
@@ -67,7 +84,7 @@ func remoteContractVersion(entry RegistryEntry, ref string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return parseBridgeContractVersion(body), nil
+	return parseBridgeContractVersion(body)
 }
 
 // Update describes a detected newer version of a cached bridge. Callers hand it
@@ -139,6 +156,13 @@ func ApplyUpdate(entry RegistryEntry, u *Update) (string, error) {
 	}
 	cacheDir := CachePath(entry)
 
+	// A pinned checkout has an explicit ref. Remember it so a direct ApplyUpdate
+	// never leaves the cache on the default branch.
+	pin := ""
+	if meta, err := ReadMeta(entry); err == nil && meta != nil {
+		pin = meta.Pin
+	}
+
 	branch := "main"
 	if u != nil && u.RemoteBranch != "" {
 		branch = u.RemoteBranch
@@ -149,14 +173,20 @@ func ApplyUpdate(entry RegistryEntry, u *Update) (string, error) {
 	// Fast path: update the existing checkout in place.
 	if _, err := runGit(cacheDir, "fetch", "--depth", "1", "origin", branch); err == nil {
 		// Contract gate: never apply an upstream bridge this core cannot support.
-		// Check the fetched tree's bridge.yaml before touching the checkout.
-		if out, serr := runGit(cacheDir, "show", "FETCH_HEAD:bridge.yaml"); serr == nil {
-			if cerr := shouldApplyContract(parseBridgeContractVersion([]byte(out))); cerr != nil {
-				return "", cerr
-			}
+		// The manifest must be readable — fail closed when it is not.
+		out, serr := runGit(cacheDir, "show", "FETCH_HEAD:bridge.yaml")
+		if serr != nil {
+			return "", fmt.Errorf("read fetched bridge manifest: %w", serr)
+		}
+		contract, perr := parseBridgeContractVersion([]byte(out))
+		if perr != nil {
+			return "", perr
+		}
+		if cerr := shouldApplyContract(contract); cerr != nil {
+			return "", cerr
 		}
 		if _, err := runGit(cacheDir, "reset", "--hard", "FETCH_HEAD"); err == nil {
-			return syncMetaAfterUpdate(entry, branch)
+			return finishUpdate(entry, branch, pin)
 		}
 		// reset failed — fall through to a clean re-clone
 	}
@@ -168,7 +198,34 @@ func ApplyUpdate(entry RegistryEntry, u *Update) (string, error) {
 	if err := CloneBridge(entry); err != nil {
 		return "", err
 	}
-	return syncMetaAfterUpdate(entry, branch)
+	return finishUpdate(entry, branch, pin)
+}
+
+// finishUpdate re-applies a pin (if any) before recording metadata, so an
+// updated cache never drifts from the ref the user asked for.
+func finishUpdate(entry RegistryEntry, branch, pin string) (string, error) {
+	if pin != "" {
+		if err := checkoutPinnedRef(CachePath(entry), pin); err != nil {
+			return "", fmt.Errorf("restore pinned ref %q after update: %w", pin, err)
+		}
+	}
+	version, err := syncMetaAfterUpdate(entry, branch)
+	if err != nil || pin == "" {
+		return version, err
+	}
+	meta, err := ReadMeta(entry)
+	if err != nil {
+		return version, err
+	}
+	if meta == nil {
+		meta = &CacheMeta{ID: entry.ID, Source: entry.GitHub}
+	}
+	meta.Pin = pin
+	meta.Commit = gitHead(entry)
+	if err := WriteMeta(entry, meta); err != nil {
+		return version, err
+	}
+	return version, nil
 }
 
 // syncMetaAfterUpdate refreshes the cached checkout's metadata after a
@@ -218,18 +275,54 @@ func githubAPIHead(entry RegistryEntry) (branch, commit string, err error) {
 	return repo.DefaultBranch, c.SHA, nil
 }
 
-// httpGetBody performs a GET and returns the response body, limiting its size
-// to 1 MiB to avoid unbounded reads from a misbehaving endpoint.
-func httpGetBody(url string) ([]byte, error) {
-	resp, err := httpClient.Get(url)
+// maxProbeBodyBytes caps remote probe responses (bridge.yaml, GitHub JSON).
+const maxProbeBodyBytes = 1 << 20
+
+// httpGetBody performs a GET bound to the CLI's command context and returns the
+// response body. It reads one byte past the limit so an oversized body fails
+// instead of being silently truncated into a plausible-looking manifest.
+func httpGetBody(rawURL string) ([]byte, error) {
+	scope := redactedURLScope(rawURL)
+	req, err := http.NewRequestWithContext(CommandContext(), http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("build probe request for %s: %w", scope, redactURLError(err))
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("probe request to %s failed: %w", scope, redactURLError(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("http %d for %s", resp.StatusCode, url)
+		return nil, fmt.Errorf("http %d for %s", resp.StatusCode, scope)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxProbeBodyBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read response from %s: %w", scope, err)
+	}
+	if len(body) > maxProbeBodyBytes {
+		return nil, fmt.Errorf("response from %s exceeds %d bytes", scope, maxProbeBodyBytes)
+	}
+	return body, nil
+}
+
+// redactURLError drops the raw URL carried by *url.Error (userinfo and query
+// could be secrets) while keeping the underlying reason for %w wrapping.
+func redactURLError(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Err != nil {
+		return urlErr.Err
+	}
+	return err
+}
+
+// redactedURLScope reduces a URL to scheme and host for error messages, so
+// credentials and query strings from a bridge's config never reach the log.
+func redactedURLScope(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Hostname() == "" {
+		return "<invalid url>"
+	}
+	return u.Scheme + "://" + u.Hostname()
 }
 
 // runGit runs a git command in dir and returns its trimmed stdout.
@@ -239,7 +332,7 @@ func httpGetBody(url string) ([]byte, error) {
 // can never redirect a bridge-cache operation onto the wrong repository — the
 // command always acts on the repo in dir.
 func runGit(dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(commandCtx, "git", args...)
+	cmd := exec.CommandContext(commandCtx, "git", args...) //nolint:gosec // args passed separately; no shell interpretation
 	cmd.Dir = dir
 	cmd.Env = gitScrubbedEnv()
 	out, err := cmd.Output()
@@ -249,16 +342,28 @@ func runGit(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// gitScrubbedEnv returns the process environment without git-location variables.
+// gitEnvironmentNames is an allowlist for git children. Git reads a large
+// family of GIT_CONFIG_*/GIT_SSH_COMMAND/proxy variables that can redirect a
+// cache operation onto another repository or another transport; none of them
+// are needed to fetch a bridge. Only process basics survive.
+var gitEnvironmentNames = map[string]bool{
+	"HOME": true, "USERPROFILE": true, "HOMEDRIVE": true, "HOMEPATH": true,
+	"PATH": true, "PATHEXT": true, "SYSTEMROOT": true, "COMSPEC": true,
+	"TEMP": true, "TMP": true, "TMPDIR": true, "APPDATA": true,
+	"LOCALAPPDATA": true, "PROGRAMDATA": true, "LANG": true, "LC_ALL": true,
+	"LANGUAGE": true, "TZ": true, "SSL_CERT_FILE": true, "SSL_CERT_DIR": true,
+}
+
+// gitScrubbedEnv returns a minimal environment for git children. It keeps the
+// variables git needs to find its binary, HOME and the temp dir on Windows/CI,
+// and drops everything else (notably all GIT_* overrides and proxies).
 func gitScrubbedEnv() []string {
 	var env []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
-		switch name {
-		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY":
-			continue
+		if gitEnvironmentNames[strings.ToUpper(name)] {
+			env = append(env, kv)
 		}
-		env = append(env, kv)
 	}
 	return env
 }

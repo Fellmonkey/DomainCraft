@@ -25,6 +25,10 @@ type CacheMeta struct {
 	Version string `json:"version"` // bridge.yaml version at download/update time
 	Commit  string `json:"commit"`  // git HEAD of the local checkout
 	Branch  string `json:"branch"`  // upstream default branch
+	// Pin is the exact ref requested by `owner/repo@ref`. It is empty for
+	// registry IDs and unpinned shorthands. Old metadata has no field, which
+	// decodes to "" and keeps those caches backwards compatible.
+	Pin string `json:"pin,omitempty"`
 	// ClonedAt marks when the bridge was first downloaded.
 	ClonedAt time.Time `json:"cloned_at"`
 	// LastCheckedAt is updated every time the remote is actually contacted, so

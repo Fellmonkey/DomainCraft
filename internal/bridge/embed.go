@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -28,7 +29,12 @@ func TryMaterializeEmbedded(entry RegistryEntry, opts *EnsureOptions) (bool, err
 	}
 
 	dst := CachePath(entry)
-	if err := os.MkdirAll(dst, 0o755); err != nil {
+	// The cache may be attacker-controlled (a planted symlink would redirect
+	// writes outside it), so check the whole path before creating anything.
+	if err := refuseSymlinks(BridgeCacheDir(), dst); err != nil {
+		return false, fmt.Errorf("materialize embedded bridge %q: %w", entry.ID, err)
+	}
+	if err := os.MkdirAll(dst, 0o755); err != nil { //nolint:gosec // bridge cache dirs must stay readable across CLI runs
 		return false, fmt.Errorf("create cache dir for embedded bridge %q: %w", entry.ID, err)
 	}
 	if err := writeFSDir(domaincraft.Bridges, rel, dst); err != nil {
@@ -43,7 +49,8 @@ func TryMaterializeEmbedded(entry RegistryEntry, opts *EnsureOptions) (bool, err
 }
 
 // writeFSDir copies every file in the embedded filesystem subtree rooted at
-// root into the destination directory, preserving relative paths.
+// root into the destination directory, preserving relative paths. Every target
+// component is checked for symlinks before it is written.
 func writeFSDir(fsys fs.FS, root, dst string) error {
 	return fs.WalkDir(fsys, root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -52,16 +59,72 @@ func writeFSDir(fsys fs.FS, root, dst string) error {
 		rel := strings.TrimPrefix(path, root)
 		rel = strings.TrimPrefix(rel, "/")
 		target := filepath.Join(dst, filepath.FromSlash(rel))
+		if err := refuseSymlinks(dst, target); err != nil {
+			return err
+		}
 		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
+			return os.MkdirAll(target, 0o755) //nolint:gosec // bridge cache dirs must stay readable across CLI runs
 		}
 		data, err := fs.ReadFile(fsys, path)
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil { //nolint:gosec // bridge cache dirs must stay readable across CLI runs
 			return err
 		}
-		return os.WriteFile(target, data, 0o644)
+		return os.WriteFile(target, data, 0o644) //nolint:gosec // bridge templates are source files read by other users/tools
 	})
+}
+
+// refuseSymlinks lstats base and each existing component of target below it.
+// A symlink at any level would let os.WriteFile/MkdirAll escape the cache, so
+// the materialization refuses it before touching the filesystem.
+func refuseSymlinks(base, target string) error {
+	baseAbs, err := filepath.Abs(base)
+	if err != nil {
+		return err
+	}
+	targetAbs, err := filepath.Abs(target)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(baseAbs, targetAbs)
+	if err != nil {
+		return fmt.Errorf("resolve cache path %q: %w", target, err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("target %q escapes cache directory", target)
+	}
+	if err := lstatNoSymlink(baseAbs); err != nil {
+		return err
+	}
+	if rel == "." {
+		return nil
+	}
+	cur := baseAbs
+	for part := range strings.SplitSeq(rel, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		if err := lstatNoSymlink(cur); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// lstatNoSymlink fails on an existing symlink and ignores missing paths.
+func lstatNoSymlink(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect %q: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refuse to write through symlink %q", path)
+	}
+	return nil
 }

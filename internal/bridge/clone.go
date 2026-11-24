@@ -132,6 +132,12 @@ func maybeUpdate(entry RegistryEntry, opts *EnsureOptions) error {
 		interval = 0 // check now, regardless of when we last looked
 	}
 
+	// A pinned bridge is deliberately fixed at one ref; refreshing it would
+	// silently replace the version the user selected.
+	if meta, err := ReadMeta(entry); err == nil && meta != nil && meta.Pin != "" {
+		return nil
+	}
+
 	update, err := CheckForUpdate(entry, interval)
 	if err != nil {
 		return err
@@ -142,12 +148,16 @@ func maybeUpdate(entry RegistryEntry, opts *EnsureOptions) error {
 
 	// Contract gate: never offer (and thus never download) an upstream bridge
 	// this core cannot support. The hard check is re-done in ApplyUpdate; this
-	// only avoids prompting for an update that would be rejected anyway.
-	if c, rerr := remoteContractVersion(entry, update.RemoteBranch); rerr == nil {
-		if cerr := shouldApplyContract(c); cerr != nil {
-			warnOpts(opts, "skipping update of %q: %v", entry.ID, cerr)
-			return nil
-		}
+	// only avoids prompting for an update that would be rejected anyway. A
+	// failed probe is "cannot offer update", never "assume supported".
+	c, rerr := remoteContractVersion(entry, update.RemoteBranch)
+	if rerr != nil {
+		warnOpts(opts, "skipping update of %q: cannot read remote contract: %v", entry.ID, rerr)
+		return nil
+	}
+	if cerr := shouldApplyContract(c); cerr != nil {
+		warnOpts(opts, "skipping update of %q: %v", entry.ID, cerr)
+		return nil
 	}
 
 	// No policy set: keep the cached version and surface the availability.
@@ -196,12 +206,13 @@ func CloneBridge(entry RegistryEntry) error {
 
 	cacheDir := CachePath(entry)
 	parent := filepath.Dir(cacheDir)
-	if err := os.MkdirAll(parent, 0o755); err != nil {
+	if err := os.MkdirAll(parent, 0o755); err != nil { //nolint:gosec // bridge cache dirs must stay readable across CLI runs
 		return fmt.Errorf("create cache directory: %w", err)
 	}
 
 	url := fmt.Sprintf("https://github.com/%s.git", entry.GitHub)
-	cmd := exec.CommandContext(commandCtx, "git", "clone", "--depth", "1", url, cacheDir)
+	cmd := exec.CommandContext(commandCtx, "git", "clone", "--depth", "1", url, cacheDir) //nolint:gosec // args passed separately; no shell interpretation
+	cmd.Env = gitScrubbedEnv()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		_ = os.RemoveAll(cacheDir)
 		return fmt.Errorf("clone %s: %w: %s", url, err, out)

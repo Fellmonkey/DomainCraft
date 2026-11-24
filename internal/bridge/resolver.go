@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Resolver maps a bridge identifier to a local filesystem path.
@@ -72,6 +73,11 @@ func (r *Resolver) Resolve(input string) (string, error) {
 			return "", fmt.Errorf("bridge %q not found: invalid repository name", input)
 		}
 		repo, ref := splitPinRef(input)
+		if ref != "" {
+			if err := validatePinRef(ref); err != nil {
+				return "", err
+			}
+		}
 		entry := RegistryEntry{
 			ID:     parts[1],
 			GitHub: repo,
@@ -82,6 +88,11 @@ func (r *Resolver) Resolve(input string) (string, error) {
 		}
 		if ref != "" {
 			if err := checkoutPinnedRef(path, ref); err != nil {
+				return "", err
+			}
+			// Persist the pin: a later cache refresh must not silently move a
+			// pinned bridge onto the default branch.
+			if err := recordPin(entry, ref); err != nil {
 				return "", err
 			}
 		}
@@ -100,15 +111,66 @@ func splitPinRef(s string) (repo, ref string) {
 	return s, ""
 }
 
+// validatePinRef enforces a strict git-ref grammar before a user-supplied ref
+// is handed to rev-parse/checkout. A leading '-' would become a git option and
+// revision expressions ("..", "~", "^", "@{") would escape the "one ref"
+// contract, so they are rejected before any command runs.
+func validatePinRef(ref string) error {
+	if ref == "" {
+		return fmt.Errorf("invalid pinned ref: empty")
+	}
+	if strings.HasPrefix(ref, "-") {
+		return fmt.Errorf("invalid pinned ref %q: leading '-' would be parsed as a git option", ref)
+	}
+	if strings.HasPrefix(ref, "/") || strings.HasSuffix(ref, "/") {
+		return fmt.Errorf("invalid pinned ref %q: leading or trailing '/'", ref)
+	}
+	if strings.Contains(ref, "..") || strings.Contains(ref, "//") || strings.Contains(ref, "@{") {
+		return fmt.Errorf("invalid pinned ref %q: traversal or revision expression", ref)
+	}
+	if strings.HasSuffix(ref, ".lock") {
+		return fmt.Errorf("invalid pinned ref %q: '.lock' suffix", ref)
+	}
+	for _, r := range ref {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-' || r == '_' || r == '.' || r == '/' || r == '+':
+		default:
+			return fmt.Errorf("invalid pinned ref %q: character %q is not allowed", ref, r)
+		}
+	}
+	return nil
+}
+
 // checkoutPinnedRef checks that the pinned ref exists in the checkout and
 // switches the cached bridge to it, so community-bridge resolution is pinned to
 // a specific commit/tag rather than "whatever main is today".
 func checkoutPinnedRef(dir, ref string) error {
+	if err := validatePinRef(ref); err != nil {
+		return err
+	}
 	if _, err := runGit(dir, "rev-parse", "--verify", ref+"^{commit}"); err != nil {
 		return fmt.Errorf("pinned ref %q not found in %s: %w", ref, dir, err)
 	}
 	_, err := runGit(dir, "checkout", "-q", ref)
 	return err
+}
+
+// recordPin stores the pin in cache metadata so a later update cannot move the
+// checkout off the requested ref. Legacy metadata without the field decodes to
+// an empty pin and is left untouched.
+func recordPin(entry RegistryEntry, ref string) error {
+	meta, err := ensureMeta(entry)
+	if err != nil {
+		return err
+	}
+	if meta == nil {
+		meta = newMetaFromCache(entry)
+	}
+	meta.Pin = ref
+	meta.Commit = gitHead(entry)
+	meta.LastCheckedAt = time.Now()
+	return WriteMeta(entry, meta)
 }
 
 // looksLikePath reports whether input is path-like — relative ("../x", "./x"),

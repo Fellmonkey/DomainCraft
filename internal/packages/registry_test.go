@@ -108,7 +108,7 @@ func TestMaxMajorForFramework(t *testing.T) {
 // Regression: the NuGet resolver used to return the newest stable version even
 // when the generated csproj targets an older runtime (efcore 11.x vs net10.0).
 func TestResolveVersionForFrameworkRespectsTargetFramework(t *testing.T) {
-	srv := newTestRegistryServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newTestRegistryServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"versions":["9.0.9","11.0.0","10.0.0","12.0.0-rc1"]}`))
 	}))
@@ -134,7 +134,7 @@ func TestResolveVersionForFrameworkRespectsTargetFramework(t *testing.T) {
 }
 
 func TestResolveVersionForFrameworkFallsBackWhenNoCompatibleVersion(t *testing.T) {
-	srv := newTestRegistryServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newTestRegistryServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"versions":["11.0.0"]}`))
 	}))
 	defer srv.Close()

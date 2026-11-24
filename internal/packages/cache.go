@@ -1,8 +1,10 @@
 package packages
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/DomainCraft/DomainCraft/internal/appdir"
@@ -37,6 +39,15 @@ var resolveVersionFn = ResolveVersion
 // a separate seam so the version-filtering logic can be tested offline.
 var resolveVersionForFrameworkFn = ResolveVersionForFramework
 
+// persistVersionCacheFn is the cache write used by both resolve paths. It is a
+// seam for testing write failures without manipulating filesystem permissions.
+var persistVersionCacheFn = persistVersionCache
+
+// cacheMu serializes the read-modify-write cycle on a cache file. Two bridge
+// layers resolving packages concurrently must not overwrite each other's
+// entries or lose a freshly resolved version.
+var cacheMu sync.Mutex
+
 // versionStore loads (or initializes) the package-version cache file for a
 // single bridge. Every bridge keeps its own file
 // (~/.domaincraft/cache/<bridge>/packages.json), so with many bridges the
@@ -60,14 +71,21 @@ func versionStore(bridgeID string) (map[string]versionEntry, error) {
 	return data.Entries, nil
 }
 
-// persistVersionCache writes the cache file atomically. Best-effort: a failed
-// write must not fail generation (only cache warmth is lost).
-func persistVersionCache(bridgeID string, entries map[string]versionEntry) {
-	if dir, err := appdir.CacheDir(bridgeID); err == nil {
-		_ = fsutil.WriteJSON(filepath.Join(dir, CacheFileName), struct {
-			Entries map[string]versionEntry `json:"entries"`
-		}{Entries: entries})
+// persistVersionCache writes the cache file atomically and reports failures.
+// A failed write is surfaced to the caller (the renderer logs it as a warning);
+// silently discarding it made a broken cache path indistinguishable from a
+// successful resolution.
+func persistVersionCache(bridgeID string, entries map[string]versionEntry) error {
+	dir, err := appdir.CacheDir(bridgeID)
+	if err != nil {
+		return fmt.Errorf("resolve package cache dir for %q: %w", bridgeID, err)
 	}
+	if err := fsutil.WriteJSON(filepath.Join(dir, CacheFileName), struct {
+		Entries map[string]versionEntry `json:"entries"`
+	}{Entries: entries}); err != nil {
+		return fmt.Errorf("write package version cache for %q: %w", bridgeID, err)
+	}
+	return nil
 }
 
 // ResolveVersionCached resolves the latest stable version of a package from its
@@ -76,6 +94,9 @@ func persistVersionCache(bridgeID string, entries map[string]versionEntry) {
 // refresh. A corrupt or missing cache is ignored and simply re-resolved.
 func ResolveVersionCached(bridgeID, registryURL, packageID string) (string, error) {
 	key := cacheKey(registryURL, packageID)
+
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
 
 	entries, err := versionStore(bridgeID)
 	if err != nil {
@@ -96,7 +117,9 @@ func ResolveVersionCached(bridgeID, registryURL, packageID string) (string, erro
 	}
 
 	entries[key] = versionEntry{Value: version, StoredAt: time.Now()}
-	persistVersionCache(bridgeID, entries)
+	if err := persistVersionCacheFn(bridgeID, entries); err != nil {
+		return "", err
+	}
 	return version, nil
 }
 
@@ -105,6 +128,9 @@ func ResolveVersionCached(bridgeID, registryURL, packageID string) (string, erro
 // regenerated for net10.0 and net11.0 must not reuse an incompatible version.
 func ResolveVersionCachedForFramework(bridgeID, registryURL, packageID, targetFramework string) (string, error) {
 	key := cacheKey(registryURL, packageID) + "\x00" + targetFramework
+
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
 
 	entries, err := versionStore(bridgeID)
 	if err != nil {
@@ -122,6 +148,8 @@ func ResolveVersionCachedForFramework(bridgeID, registryURL, packageID, targetFr
 		return "", nil
 	}
 	entries[key] = versionEntry{Value: version, StoredAt: time.Now()}
-	persistVersionCache(bridgeID, entries)
+	if err := persistVersionCacheFn(bridgeID, entries); err != nil {
+		return "", err
+	}
 	return version, nil
 }

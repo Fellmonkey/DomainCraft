@@ -38,6 +38,7 @@ func TestMaybeUpdatePolicies(t *testing.T) {
 		name        string
 		interval    time.Duration
 		remoteYAML  string
+		pin         string
 		confirm     func(RegistryEntry, *Update) (bool, error)
 		wantWarn    string
 		wantConfirm bool
@@ -76,6 +77,16 @@ func TestMaybeUpdatePolicies(t *testing.T) {
 			remoteYAML: "name: test\ncontract_version: 2\n",
 			wantWarn:   "skipping update",
 		},
+		{
+			name:       "unreadable remote contract skips the prompt",
+			remoteYAML: "contract_version: [1, 2\n",
+			wantWarn:   "skipping update",
+		},
+		{
+			name:       "pinned checkout skips the remote",
+			remoteYAML: "name: test\ncontract_version: 1\n",
+			pin:        "v1.2.3",
+		},
 	}
 
 	for _, tt := range tests {
@@ -102,6 +113,7 @@ func TestMaybeUpdatePolicies(t *testing.T) {
 				Version:       "1.0.0",
 				Commit:        "cached-head",
 				Branch:        "main",
+				Pin:           tt.pin,
 				LastCheckedAt: lastChecked,
 			}); err != nil {
 				t.Fatal(err)
@@ -122,7 +134,7 @@ func TestMaybeUpdatePolicies(t *testing.T) {
 			opts := &EnsureOptions{
 				Interval:      tt.interval,
 				ConfirmUpdate: confirm,
-				Warn:          func(format string, args ...any) { warnings = append(warnings, format) },
+				Warn:          func(format string, _ ...any) { warnings = append(warnings, format) },
 			}
 
 			err := maybeUpdate(entry, opts)
