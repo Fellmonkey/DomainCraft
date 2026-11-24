@@ -162,13 +162,13 @@ func PromptGenerateAdmin() (bool, error) {
 
 // PromptBridgeUpdate asks whether to update a cached bridge to the newer
 // upstream version. Returns true to download the update, false to keep the
-// cached copy.
-func PromptBridgeUpdate(entry bridge.RegistryEntry, update *bridge.Update) (bool, error) {
-	description := "A newer version is available for the cached bridge."
-	if update.LocalVersion != "" {
-		description = fmt.Sprintf("A newer version is available for the cached bridge (v%s). Update the cached copy?", update.LocalVersion)
-	}
-	return confirm(fmt.Sprintf("Update bridge %q?", entry.ID), description)
+// cached copy. The version is intentionally omitted: bridge.Update carries
+// the cached (old) version, not the available upstream one.
+func PromptBridgeUpdate(entry bridge.RegistryEntry, _ *bridge.Update) (bool, error) {
+	return confirm(
+		fmt.Sprintf("Update bridge %q?", entry.ID),
+		"A newer version is available for the cached bridge. Update the cached copy?",
+	)
 }
 
 // PromptYesNo asks a yes/no question with the default focus on "No".

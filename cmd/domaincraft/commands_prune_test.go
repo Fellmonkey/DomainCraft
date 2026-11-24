@@ -18,11 +18,7 @@ import (
 // previously untested, so a dropped field rename could leave stale names.
 func TestApplyMigrationActionsRewritesFieldRenames(t *testing.T) {
 	root := t.TempDir()
-	oldOutput, oldPrune := outputDir, prune
-	outputDir, prune = root, true
-	t.Cleanup(func() {
-		outputDir, prune = oldOutput, oldPrune
-	})
+	opts := &cliOptions{outputDir: root, prune: true}
 
 	custom := filepath.Join(root, "src", "ItemService.cs")
 	if err := os.MkdirAll(filepath.Dir(custom), 0o755); err != nil {
@@ -43,7 +39,7 @@ func TestApplyMigrationActionsRewritesFieldRenames(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 
-	applied, err := applyMigrationActions(diff, map[string]bool{}, nil, cmd)
+	applied, err := applyMigrationActions(opts, diff, map[string]bool{}, nil, cmd)
 	if err != nil || !applied {
 		t.Fatalf("applyMigrationActions = %v, %v; want true, nil", applied, err)
 	}
@@ -84,11 +80,9 @@ func TestChooseMigrationFiles(t *testing.T) {
 	files := []snapshot.FileRef{{Path: "src/A.cs"}, {Path: "src/B.cs"}}
 
 	t.Run("prune selects every file without prompting", func(t *testing.T) {
-		oldPrune := prune
-		prune = true
-		t.Cleanup(func() { prune = oldPrune })
+		opts := &cliOptions{prune: true}
 
-		selected, err := chooseMigrationFiles(files, func([]interactive.FileChoice) ([]string, error) {
+		selected, err := chooseMigrationFiles(opts, files, func([]interactive.FileChoice) ([]string, error) {
 			t.Fatal("prompt must not be called in --prune mode")
 			return nil, nil
 		})
@@ -98,11 +92,9 @@ func TestChooseMigrationFiles(t *testing.T) {
 	})
 
 	t.Run("prompt result is respected", func(t *testing.T) {
-		oldPrune := prune
-		prune = false
-		t.Cleanup(func() { prune = oldPrune })
+		opts := &cliOptions{}
 
-		selected, err := chooseMigrationFiles(files, func(choices []interactive.FileChoice) ([]string, error) {
+		selected, err := chooseMigrationFiles(opts, files, func(choices []interactive.FileChoice) ([]string, error) {
 			if len(choices) != 2 {
 				t.Fatalf("choices = %d, want 2", len(choices))
 			}

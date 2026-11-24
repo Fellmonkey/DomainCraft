@@ -12,7 +12,7 @@ import (
 // Regression: a role declared as `string` used to render as `string.Admin`
 // in generated C# tests, which does not compile.
 func TestGeneratedCSharpTestsHandleStringRole(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"versions":["10.0.0"]}`))
 	}))
 	defer srv.Close()

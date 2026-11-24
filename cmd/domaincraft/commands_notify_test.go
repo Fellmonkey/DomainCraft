@@ -30,7 +30,7 @@ func TestCachedLatestCoreVersion(t *testing.T) {
 	}
 
 	// Network is now down — the fresh cache must still serve the same version.
-	httpGetBodyFn = func(url string) ([]byte, error) {
+	httpGetBodyFn = func(_ string) ([]byte, error) {
 		return nil, fmt.Errorf("network down")
 	}
 	latest2, err := cachedLatestCoreVersion()

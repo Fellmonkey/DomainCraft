@@ -23,7 +23,7 @@ func fakeReleases(tag string, assets map[string]string) func(string) ([]byte, er
 		sb.WriteString(`{"name":"` + name + `","browser_download_url":"` + url + `"}`)
 	}
 	sb.WriteString("]}")
-	return func(url string) ([]byte, error) {
+	return func(_ string) ([]byte, error) {
 		return []byte(sb.String()), nil
 	}
 }
@@ -135,12 +135,12 @@ func TestReleaseAssetFor(t *testing.T) {
 
 func TestDownloadAndReplace(t *testing.T) {
 	oldHTTP := httpGetBodyFn
-	httpGetBodyFn = func(url string) ([]byte, error) {
+	httpGetBodyFn = func(_ string) ([]byte, error) {
 		return []byte("new-binary-content"), nil
 	}
 	defer func() { httpGetBodyFn = oldHTTP }()
 
-	tmp, err := downloadBinary("https://example/dc")
+	tmp, err := downloadBinary("https://github.com/DomainCraft/DomainCraft/releases/download/v1.2.3/domaincraft-linux-amd64")
 	if err != nil {
 		t.Fatalf("downloadBinary: %v", err)
 	}

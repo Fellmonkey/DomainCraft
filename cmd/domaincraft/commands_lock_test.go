@@ -9,6 +9,8 @@ import (
 
 func TestWriteDomainLock(t *testing.T) {
 	root := t.TempDir()
+	// The bridge package recognises a monorepo by its module marker.
+	mustWriteFile(t, filepath.Join(root, "go.mod"), "module github.com/DomainCraft/DomainCraft\n")
 
 	// A monorepo-located bridge (csharp-core → bridges/csharp/core).
 	mp := filepath.Join(root, "bridges", "csharp", "core")

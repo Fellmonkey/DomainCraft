@@ -35,7 +35,7 @@ func TestResolveBaseChainOrdersOutermostBaseFirst(t *testing.T) {
 	b := writeBridgeDir(t, filepath.Join(root, "bridge-b"), c)
 	a := writeBridgeDir(t, filepath.Join(root, "bridge-a"), b)
 
-	chain, err := resolveBaseChain(a, b, logger.New())
+	chain, err := resolveBaseChain(&cliOptions{}, a, b, logger.New())
 	if err != nil {
 		t.Fatalf("resolveBaseChain: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestResolveBaseChainDetectsCycle(t *testing.T) {
 	// Close the cycle: B now extends A while A extends B.
 	writeBridgeDir(t, filepath.Join(root, "bridge-b"), a)
 
-	_, err := resolveBaseChain(a, b, logger.New())
+	_, err := resolveBaseChain(&cliOptions{}, a, b, logger.New())
 	if err == nil {
 		t.Fatal("expected a cycle error")
 	}
@@ -137,20 +137,23 @@ func TestResolveExtendsRefFallsBackWhenNoMonorepo(t *testing.T) {
 	}
 }
 
-func TestVersionDelta(t *testing.T) {
+func TestBridgeUpdateNoticeOmitsCachedVersion(t *testing.T) {
 	cases := []struct {
 		name string
 		u    *bridge.Update
-		want string
 	}{
-		{"nil update", nil, ""},
-		{"unknown local version", &bridge.Update{}, ""},
-		{"known local version", &bridge.Update{LocalVersion: "1.2.3"}, "(v1.2.3 available)"},
+		{"nil update", nil},
+		{"unknown local version", &bridge.Update{}},
+		{"known local version", &bridge.Update{LocalVersion: "1.2.3"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := versionDelta(c.u); got != c.want {
-				t.Errorf("versionDelta = %q, want %q", got, c.want)
+			got := bridgeUpdateNotice("csharp-core", c.u)
+			if !strings.Contains(got, "Updating bridge csharp-core") {
+				t.Errorf("notice = %q, want the bridge ID", got)
+			}
+			if strings.Contains(got, "1.2.3") || strings.Contains(got, "available") {
+				t.Errorf("notice = %q, must not present the cached version as available", got)
 			}
 		})
 	}

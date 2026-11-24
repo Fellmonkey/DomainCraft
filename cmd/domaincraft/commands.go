@@ -17,6 +17,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -44,22 +45,39 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var (
+const (
+	defaultDomainFile = "domain.yaml"
+	defaultOutputDir  = "generated"
+)
+
+// cliOptions holds the flag values of one command tree. A fresh instance is
+// created by every newRootCommand call, so two live trees never clobber each
+// other's flags.
+type cliOptions struct {
 	domainFile          string
 	bridgePath          string
 	outputDir           string
 	nonInteractive      bool
 	adminBridge         string // --admin [bridge-id]; empty = not requested
 	prune               bool   // --prune: apply migration cleanup without prompting
-	addonsFlag          string // --addons "dapr,pulsar": comma-separated infrastructure accelerators
-	migrateFlag         bool   // --migrate: run the bridge's database-migration commands after generation
+	addons              string // --addons "dapr,pulsar": comma-separated infrastructure accelerators
+	migrate             bool   // --migrate: run the bridge's database-migration commands after generation
 	updateBridges       bool   // --update-bridges: download newer bridge versions before generating
 	checkUpdates        bool   // bridges --check-updates: contact remotes and report outdated cached bridges
 	allowBridgeCommands bool   // explicit consent to run shell lines declared by community bridges
 	replaceFlags        []string
+}
 
+func newCLIOptions() *cliOptions {
+	return &cliOptions{domainFile: defaultDomainFile, outputDir: defaultOutputDir}
+}
+
+var (
 	// commandCtx is cancelled on interrupt so child processes are not orphaned.
 	commandCtx = context.Background()
+
+	// isTerminal is a seam for testing prompt gating without a real TTY.
+	isTerminal = interactive.IsTerminal
 
 	// version is stamped at build time via -ldflags "-X main.version=vX.Y.Z" and,
 	// when it isn't, backed by the module version in build info (see init).
@@ -96,42 +114,50 @@ func init() {
 	}
 }
 
-func Execute() {
+// Execute runs the root command. Cobra is silenced so the error is printed
+// exactly once here; the error is returned to main, which owns the exit code.
+func Execute() error {
 	if err := newRootCommand().Execute(); err != nil {
-		os.Exit(1)
+		_, _ = fmt.Fprintln(os.Stderr, "Error:", err)
+		return err
 	}
+	return nil
 }
 
 func newRootCommand() *cobra.Command {
+	opts := newCLIOptions()
 	rootCmd := &cobra.Command{
-		Use:     "domaincraft",
-		Short:   "DomainCraft CLI",
-		Long:    "DomainCraft CLI — domain-driven code generator.\nParse domain.yaml, validate it, and generate production-ready code via pluggable bridges.",
-		Version: version,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		Use:           "domaincraft",
+		Short:         "DomainCraft CLI",
+		Long:          "DomainCraft CLI — domain-driven code generator.\nParse domain.yaml, validate it, and generate production-ready code via pluggable bridges.",
+		Version:       version,
+		Args:          cobra.NoArgs,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Make the root runnable so Cobra exposes its --version flag, while
 			// still showing the help text when invoked without a subcommand.
 			return cmd.Help()
 		},
 	}
 
-	rootCmd.PersistentFlags().StringVarP(&domainFile, "domain", "d", "domain.yaml", "path to domain.yaml")
-	rootCmd.PersistentFlags().StringVarP(&bridgePath, "bridge", "b", "", "bridge ID, path, or owner/repo (interactive if omitted)")
-	rootCmd.PersistentFlags().StringVarP(&outputDir, "output", "o", "generated", "output directory")
-	rootCmd.PersistentFlags().BoolVar(&nonInteractive, "non-interactive", false, "disable interactive prompts (requires all flags)")
-	rootCmd.PersistentFlags().StringVar(&addonsFlag, "addons", "", "comma-separated infrastructure addons to enable (e.g. dapr)")
-	rootCmd.PersistentFlags().BoolVar(&updateBridges, "update-bridges", false, "check cached bridges for newer versions and download them before generating (no prompts)")
+	rootCmd.PersistentFlags().StringVarP(&opts.domainFile, "domain", "d", defaultDomainFile, "path to domain.yaml")
+	rootCmd.PersistentFlags().StringVarP(&opts.bridgePath, "bridge", "b", "", "bridge ID, path, or owner/repo (interactive if omitted)")
+	rootCmd.PersistentFlags().StringVarP(&opts.outputDir, "output", "o", defaultOutputDir, "output directory")
+	rootCmd.PersistentFlags().BoolVar(&opts.nonInteractive, "non-interactive", false, "disable interactive prompts (requires all flags)")
+	rootCmd.PersistentFlags().StringVar(&opts.addons, "addons", "", "comma-separated infrastructure addons to enable (e.g. dapr)")
+	rootCmd.PersistentFlags().BoolVar(&opts.updateBridges, "update-bridges", false, "check cached bridges for newer versions and download them before generating (no prompts)")
 
 	// Best-effort "new version available" notice on every invocation.
-	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+	rootCmd.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
 		maybeNotifyUpdate(cmd)
 	}
 
 	for _, cmd := range []*cobra.Command{
-		newValidateCmd(),
-		newInitCmd(),
-		newGenerateCmd(),
-		newBridgesCmd(),
+		newValidateCmd(opts),
+		newInitCmd(opts),
+		newGenerateCmd(opts),
+		newBridgesCmd(opts),
 		newUpdateCmd(),
 	} {
 		rootCmd.AddCommand(cmd)
@@ -139,23 +165,25 @@ func newRootCommand() *cobra.Command {
 	return rootCmd
 }
 
-// commandLogger returns a logger writing to the command's output stream.
+// commandLogger returns a logger writing to the command's error stream. CLI
+// progress and diagnostics are not data; stdout stays usable for piping.
 func commandLogger(cmd *cobra.Command) *logger.Logger {
 	log := logger.New()
-	log.SetWriter(cmd.OutOrStdout())
+	log.SetWriter(cmd.ErrOrStderr())
 	return log
 }
 
 // --- validate ---
 
-func newValidateCmd() *cobra.Command {
+func newValidateCmd(opts *cliOptions) *cobra.Command {
 	return &cobra.Command{
 		Use:   "validate",
 		Short: "Validate domain.yaml",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			log := commandLogger(cmd)
-			log.Info("Validating %s", domainFile)
-			schema, err := loadAndValidate(cmd.OutOrStdout())
+			log.Info("Validating %s", opts.domainFile)
+			schema, err := loadAndValidate(opts, cmd)
 			if err != nil {
 				return err
 			}
@@ -167,62 +195,67 @@ func newValidateCmd() *cobra.Command {
 
 // --- generate ---
 
-func newGenerateCmd() *cobra.Command {
+func newGenerateCmd(opts *cliOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "generate",
 		Short: "Generate code from domain.yaml",
 		Long:  "Parse domain.yaml, build IR, and render code via the selected bridge.\nIf --bridge is omitted, an interactive selection menu is shown.\nUse --admin to also generate an admin panel (optionally specify a bridge ID).",
-		RunE:  runGenerate,
+		// One positional argument is the optional value of `--admin <id>`;
+		// `generate` itself takes none. runGenerate validates that pairing.
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runGenerate(opts, cmd, args)
+		},
 	}
 
 	// --admin [bridge-id] — optional value, defaults to "admin-alpine" when flag
 	// is present without a value. NoOptDefVal is used for the default, and the
 	// RunE handler reclaims a space-separated value from args so both
 	// `--admin <id>` and `--admin=<id>` work.
-	cmd.Flags().StringVar(&adminBridge, "admin", "", "generate admin panel (optionally specify bridge ID, default: admin-alpine)")
+	cmd.Flags().StringVar(&opts.adminBridge, "admin", "", "generate admin panel (optionally specify bridge ID, default: admin-alpine)")
 	cmd.Flags().Lookup("admin").NoOptDefVal = "admin-alpine"
 	// --prune — automatically delete/rename orphaned files without prompting (CI).
-	cmd.Flags().BoolVar(&prune, "prune", false, "automatically remove/rename orphaned files and rewrite renamed identifiers in custom files, then run the bridge's database migrations (best-effort) when the schema changed (no prompts; CI-safe)")
+	cmd.Flags().BoolVar(&opts.prune, "prune", false, "automatically remove/rename orphaned files and rewrite renamed identifiers in custom files, then run the bridge's database migrations (best-effort) when the schema changed (no prompts; CI-safe)")
 	// --migrate — after generation, run the bridge's declared database-migration commands.
-	cmd.Flags().BoolVar(&migrateFlag, "migrate", false, "run the bridge's database-migration commands after generation (e.g. dotnet ef database update)")
-	cmd.Flags().BoolVar(&allowBridgeCommands, "allow-bridge-commands", false, "allow shell commands declared by community bridges (required with --migrate or automatic --prune migrations)")
-	cmd.Flags().StringArrayVar(&replaceFlags, "replace", nil, "replace a bridge in the extends chain: layer=bridgeRef or bridgeId=bridgeRef (repeatable)")
+	cmd.Flags().BoolVar(&opts.migrate, "migrate", false, "run the bridge's database-migration commands after generation (e.g. dotnet ef database update)")
+	cmd.Flags().BoolVar(&opts.allowBridgeCommands, "allow-bridge-commands", false, "allow shell commands declared by community bridges (required with --migrate or automatic --prune migrations)")
+	cmd.Flags().StringArrayVar(&opts.replaceFlags, "replace", nil, "replace a bridge in the extends chain: layer=bridgeRef or bridgeId=bridgeRef (repeatable)")
 
 	return cmd
 }
 
 // runGenerate is shared by `generate` and `init --bridge` so both paths go
 // through the same validation, rendering and migration pipeline.
-func runGenerate(cmd *cobra.Command, args []string) error {
+func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
 	log := commandLogger(cmd)
 
-	log.Info("Parsing %s", domainFile)
-	schema, err := loadAndValidate(cmd.OutOrStdout())
+	log.Info("Parsing %s", opts.domainFile)
+	schema, err := loadAndValidate(opts, cmd)
 	if err != nil {
 		return err
 	}
 	log.Success("Schema valid (%d entities)", len(schema.Entities))
 
-	resolvedPath, bridgeName, err := resolveBridgeInteractive(log)
+	resolvedPath, bridgeName, err := resolveBridgeInteractive(opts, log)
 	if err != nil {
 		return err
 	}
-	bridgePath = resolvedPath
+	opts.bridgePath = resolvedPath
 
 	log.Info("Building IR")
 	irProject, err := ir.Build(schema)
 	if err != nil {
 		return err
 	}
-	applyAddons(irProject)
+	applyAddons(opts, irProject)
 
 	// --- Schema snapshot / migration diff ---
-	snapPath := snapshot.SnapshotPath(outputDir)
+	snapPath := snapshot.SnapshotPath(opts.outputDir)
 	oldSnapshot, err := snapshot.Load(snapPath)
 	if err != nil {
 		return fmt.Errorf("load schema snapshot: %w", err)
 	}
-	migrationDiff := snapshot.ComputeDiff(oldSnapshot, irProject, outputDir)
+	migrationDiff := snapshot.ComputeDiff(oldSnapshot, irProject, opts.outputDir)
 
 	// --- Abstract schema migration plan (smart core / dumb bridge) ---
 	// The core compares the previous model against the current one and
@@ -237,28 +270,28 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	mockDataset := seed.Generate(irProject, seed.Options{})
 
 	// Parse --replace flags (layer|bridgeId=bridgeRef).
-	replacements, err := parseReplaceFlags(replaceFlags)
+	replacements, err := parseReplaceFlags(opts.replaceFlags)
 	if err != nil {
 		return err
 	}
 	// Resolve extends chain with optional node replacements.
-	newBridgePath, basePaths, err := resolveChainWithReplacements(bridgePath, replacements, log)
+	newBridgePath, basePaths, err := resolveChainWithReplacements(opts, opts.bridgePath, replacements, log)
 	if err != nil {
 		return err
 	}
-	bridgePath = newBridgePath
+	opts.bridgePath = newBridgePath
 	// Phase 3.5: a community bridge (not a bundled official bridge) must
 	// never have migrations auto-run — that would execute arbitrary shell
 	// lines from an untrusted bridge.yaml during a code-generation run.
 	chainHasCommunity := false
-	for _, p := range append([]string{bridgePath}, basePaths...) {
+	for _, p := range append([]string{opts.bridgePath}, basePaths...) {
 		if !bridge.IsOfficialBundled(p) {
 			chainHasCommunity = true
 			break
 		}
 	}
-	log.Info("Rendering via %s", bridgePath)
-	rendererInstance, err := renderer.New(bridgePath, log)
+	log.Info("Rendering via %s", opts.bridgePath)
+	rendererInstance, err := renderer.New(opts.bridgePath, log)
 	if err != nil {
 		return err
 	}
@@ -269,34 +302,36 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	rendererInstance.SetSeedData(seedData)
 	rendererInstance.SetMockData(mockDataset)
 
-	writtenFiles, manifest, err := rendererInstance.Render(irProject, outputDir)
+	writtenFiles, manifest, err := rendererInstance.Render(irProject, opts.outputDir)
 	if err != nil {
 		return err
 	}
 
-	log.Success("Generated %d file(s) into %s", len(writtenFiles), outputDir)
+	log.Success("Generated %d file(s) into %s", len(writtenFiles), opts.outputDir)
 
 	// --- Admin panel generation ---
 	// pflag's NoOptDefVal makes `--admin <id>` stop consuming the next
 	// argument (it lands in args), so reclaim it here. This keeps both
 	// `--admin <path>` and `--admin=<path>` working while `--admin` alone
-	// still means the default admin-alpine bridge.
-	if cmd.Flags().Changed("admin") && adminBridge == "admin-alpine" && len(args) > 0 {
-		adminBridge = args[0]
+	// still means the default admin-alpine bridge. Any other positional
+	// argument is rejected by cobra.MaximumNArgs(1) / the check below.
+	if len(args) > 0 {
+		if !cmd.Flags().Changed("admin") || opts.adminBridge != "admin-alpine" {
+			return fmt.Errorf("unexpected positional argument %q: use --admin <bridge-id>", args[0])
+		}
+		opts.adminBridge = args[0]
 	}
-	if adminBridge == "" && !cmd.Flags().Changed("admin") && nonInteractive {
-		// In non-interactive mode, skip admin prompt — admin not requested.
-	} else if adminBridge == "" && !cmd.Flags().Changed("admin") && interactive.IsTerminal() {
+	if opts.adminBridge == "" && !cmd.Flags().Changed("admin") && !opts.nonInteractive && isTerminal() {
 		generate, err := interactive.PromptGenerateAdmin()
 		if err != nil {
 			return fmt.Errorf("prompt for admin panel: %w", err)
 		}
 		if generate {
-			adminBridge = "admin-alpine"
+			opts.adminBridge = "admin-alpine"
 		}
 	}
-	if adminBridge != "" {
-		adminManifest, err := generateAdminPanel(irProject, seedData, mockDataset, log)
+	if opts.adminBridge != "" {
+		adminManifest, err := generateAdminPanel(opts, irProject, seedData, mockDataset, log)
 		if err != nil {
 			return err
 		}
@@ -311,7 +346,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 			fresh[f.Path] = true
 		}
 	}
-	applied, err := applyMigrationActions(migrationDiff, fresh, log, cmd)
+	applied, err := applyMigrationActions(opts, migrationDiff, fresh, log, cmd)
 	if err != nil {
 		return err
 	}
@@ -321,19 +356,19 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	// has to think about SQL schemas. Triggered explicitly via --migrate, or
 	// automatically in --prune mode when the diff detected renames/deletions
 	// that must reach the database (skipped when cleanup was deferred).
-	autoMigrate := prune && migrationDiff.HasSchemaChanges()
+	autoMigrate := opts.prune && migrationDiff.HasSchemaChanges()
 	if autoMigrate && chainHasCommunity {
 		log.Warn("community bridge(s) in the resolved chain — not auto-running database migrations; use --migrate explicitly")
 		autoMigrate = false
 	}
-	shouldMigrate := migrateFlag || autoMigrate
+	shouldMigrate := opts.migrate || autoMigrate
 	cfg := rendererInstance.MigrationConfig()
 	if applied && shouldMigrate && cfg != nil && cfg.Enabled {
-		if !bridgeCommandsAllowed(chainHasCommunity, allowBridgeCommands) {
+		if !bridgeCommandsAllowed(chainHasCommunity, opts.allowBridgeCommands) {
 			return fmt.Errorf("community bridge(s) declared database migrations; re-run with --allow-bridge-commands to execute them")
 		}
-		if err := runDatabaseMigrations(rendererInstance.MigrationConfig(), outputDir, cmd, log); err != nil {
-			if migrateFlag {
+		if err := runDatabaseMigrations(rendererInstance.MigrationConfig(), opts.outputDir, cmd, log); err != nil {
+			if opts.migrate {
 				// Explicit --migrate: a failed migration is a hard error.
 				return err
 			}
@@ -372,13 +407,13 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		log.Info("Snapshot kept — cleanup pending (re-run with --prune to finish)")
 		return nil
 	}
-	bridgeID := bridgePath
+	bridgeID := opts.bridgePath
 	if bridgeName != "" {
 		bridgeID = bridgeName
 	}
 	// Record the resolved bridge chain next to domain.yaml (Phase 0.4).
 	// Best-effort: a lock-write failure must never abort generation.
-	if err := writeDomainLock(domainFile, append([]string{bridgePath}, basePaths...)); err != nil {
+	if err := writeDomainLock(opts.domainFile, append([]string{opts.bridgePath}, basePaths...)); err != nil {
 		log.Warn("could not write domaincraft.lock.json: %v", err)
 	}
 	if err := snapshot.Save(snapPath, snapshot.New(bridgeID, irProject, manifest)); err != nil {
@@ -390,12 +425,13 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 // --- bridges ---
 
-func newBridgesCmd() *cobra.Command {
+func newBridgesCmd(opts *cliOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bridges",
 		Short: "List available bridges",
 		Long:  "Show all known bridges with their cache status.",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			registry := bridge.Default()
 			out := cmd.OutOrStdout()
 
@@ -415,7 +451,7 @@ func newBridgesCmd() *cobra.Command {
 			)
 
 			for _, e := range entries {
-				st := e.Status(checkUpdates)
+				st := e.Status(opts.checkUpdates)
 				source := "remote"
 				switch {
 				case st.Embedded && st.Cached:
@@ -454,7 +490,7 @@ func newBridgesCmd() *cobra.Command {
 
 	// --check-updates — contact each cached bridge's remote and report whether a
 	// newer version is available (no modification, just status).
-	cmd.Flags().BoolVar(&checkUpdates, "check-updates", false, "contact remotes and report whether cached bridges are outdated")
+	cmd.Flags().BoolVar(&opts.checkUpdates, "check-updates", false, "contact remotes and report whether cached bridges are outdated")
 
 	return cmd
 }
@@ -462,15 +498,15 @@ func newBridgesCmd() *cobra.Command {
 // --- helpers ---
 
 // newBridgeResolver builds a resolver with the CLI's bridge cache/update options.
-func newBridgeResolver(log *logger.Logger) *bridge.Resolver {
-	return bridge.NewResolver(bridge.Default()).WithEnsureOptions(bridgeEnsureOptions(log))
+func newBridgeResolver(opts *cliOptions, log *logger.Logger) *bridge.Resolver {
+	return bridge.NewResolver(bridge.Default()).WithEnsureOptions(bridgeEnsureOptions(opts, log))
 }
 
 // walkBridgeChain resolves ref relative to fromDir and follows `extends` to the
 // deepest base. It returns absolute paths top-first: the resolved bridge first,
 // then its bases. Absolute paths make cycle detection path-based, not textual.
-func walkBridgeChain(ref, fromDir string, log *logger.Logger) ([]string, error) {
-	resolver := newBridgeResolver(log)
+func walkBridgeChain(opts *cliOptions, ref, fromDir string, log *logger.Logger) ([]string, error) {
+	resolver := newBridgeResolver(opts, log)
 	var chain []string
 	visited := make(map[string]bool)
 	for ref != "" {
@@ -498,24 +534,24 @@ func walkBridgeChain(ref, fromDir string, log *logger.Logger) ([]string, error) 
 
 // resolveBridgeInteractive resolves the bridge from the --bridge flag, or
 // prompts the user interactively. Returns (path, displayName, error).
-func resolveBridgeInteractive(log *logger.Logger) (string, string, error) {
-	resolver := newBridgeResolver(log)
+func resolveBridgeInteractive(opts *cliOptions, log *logger.Logger) (string, string, error) {
+	resolver := newBridgeResolver(opts, log)
 
-	if bridgePath != "" {
+	if opts.bridgePath != "" {
 		// Monorepo-first: an official bridge ID resolves to the local
 		// <root>/bridges/<path> copy when it exists (same order as `extends`).
-		if entry := bridge.Default().ByID(bridgePath); entry != nil && entry.Path != "" {
+		if entry := bridge.Default().ByID(opts.bridgePath); entry != nil && entry.Path != "" {
 			if wd, err := os.Getwd(); err == nil {
 				if p := bridge.FindMonorepoBridge(wd, entry.Path); p != "" {
 					return p, "", nil
 				}
 			}
 		}
-		resolved, err := resolver.Resolve(bridgePath)
+		resolved, err := resolver.Resolve(opts.bridgePath)
 		return resolved, "", err
 	}
 
-	if nonInteractive || !interactive.IsTerminal() {
+	if opts.nonInteractive || !isTerminal() {
 		return "", "", fmt.Errorf("--bridge is required in non-interactive mode")
 	}
 
@@ -535,8 +571,8 @@ func resolveBridgeInteractive(log *logger.Logger) (string, string, error) {
 // resolveBaseChain resolves an adapter bridge's `extends` chain to local bridge
 // paths, ordered outermost base first (so the deepest base renders first). Each
 // base is resolved the same way --bridge is: a path, registry ID or owner/repo.
-func resolveBaseChain(adapterDir, baseRef string, log *logger.Logger) ([]string, error) {
-	chain, err := walkBridgeChain(baseRef, adapterDir, log)
+func resolveBaseChain(opts *cliOptions, adapterDir, baseRef string, log *logger.Logger) ([]string, error) {
+	chain, err := walkBridgeChain(opts, baseRef, adapterDir, log)
 	if err != nil {
 		return nil, err
 	}
@@ -575,23 +611,23 @@ func bridgeLayerAndName(dir string, log *logger.Logger) (string, string, error) 
 }
 
 // buildFullChainTopFirst builds the full chain top-first: [entry, base1, base2, ... deepest].
-func buildFullChainTopFirst(entryDir string, log *logger.Logger) ([]string, error) {
-	return walkBridgeChain(entryDir, entryDir, log)
+func buildFullChainTopFirst(opts *cliOptions, entryDir string, log *logger.Logger) ([]string, error) {
+	return walkBridgeChain(opts, entryDir, entryDir, log)
 }
 
 // resolveChainWithReplacements resolves the extends chain with --replace overrides.
 // It returns the (possibly replaced) entry dir and base paths outermost-first.
-func resolveChainWithReplacements(entryDir string, reps []replaceEntry, log *logger.Logger) (string, []string, error) {
+func resolveChainWithReplacements(opts *cliOptions, entryDir string, reps []replaceEntry, log *logger.Logger) (string, []string, error) {
 	if len(reps) == 0 {
 		r, err := renderer.New(entryDir, log)
 		if err != nil {
 			return "", nil, err
 		}
-		bases, err := resolveBaseChain(entryDir, r.Extends(), log)
+		bases, err := resolveBaseChain(opts, entryDir, r.Extends(), log)
 		return entryDir, bases, err
 	}
-	resolver := newBridgeResolver(log)
-	fullChain, err := buildFullChainTopFirst(entryDir, log)
+	resolver := newBridgeResolver(opts, log)
+	fullChain, err := buildFullChainTopFirst(opts, entryDir, log)
 	if err != nil {
 		return "", nil, err
 	}
@@ -630,7 +666,7 @@ func resolveChainWithReplacements(entryDir string, reps []replaceEntry, log *log
 			log.Warn("layer mismatch: replacing %q (layer=%q) with %q (layer=%q)", rep.left, targetLayer, rightName, rightLayer)
 		}
 		// Build replacement's full chain top-first.
-		rightChain, err := buildFullChainTopFirst(rightPath, log)
+		rightChain, err := buildFullChainTopFirst(opts, rightPath, log)
 		if err != nil {
 			return "", nil, err
 		}
@@ -730,7 +766,7 @@ func writeDomainLock(domainPath string, dirs []string) error {
 // bridgeMetadata reads the identifying fields out of a bridge directory's
 // bridge.yaml for the lock file.
 func bridgeMetadata(dir string) (id, version string, contractVersion int, err error) {
-	data, err := os.ReadFile(filepath.Join(dir, "bridge.yaml"))
+	data, err := os.ReadFile(filepath.Join(dir, "bridge.yaml")) //nolint:gosec // dir comes from validated bridge resolution
 	if err != nil {
 		return "", "", 0, err
 	}
@@ -753,46 +789,44 @@ func bridgeMetadata(dir string) (id, version string, contractVersion int, err er
 //   - --update-bridges consents to downloading newer versions (CI-safe);
 //   - otherwise, an interactive terminal is prompted when an update is found;
 //   - in non-interactive mode the cached copy is kept and a warning is logged.
-func bridgeEnsureOptions(log *logger.Logger) *bridge.EnsureOptions {
+func bridgeEnsureOptions(cli *cliOptions, log *logger.Logger) *bridge.EnsureOptions {
 	opts := &bridge.EnsureOptions{
-		Force: updateBridges,
+		Force: cli.updateBridges,
 		Warn:  log.Warn,
 	}
 
 	switch {
-	case updateBridges:
+	case cli.updateBridges:
 		// The flag itself is the consent — update without prompting.
 		opts.ConfirmUpdate = func(entry bridge.RegistryEntry, u *bridge.Update) (bool, error) {
-			log.Info("Updating bridge %s %s", entry.ID, versionDelta(u))
+			log.Info("%s", bridgeUpdateNotice(entry.ID, u))
 			return true, nil
 		}
-	case interactive.IsTerminal():
+	case !cli.nonInteractive && isTerminal():
 		opts.ConfirmUpdate = func(entry bridge.RegistryEntry, u *bridge.Update) (bool, error) {
 			return interactive.PromptBridgeUpdate(entry, u)
 		}
 	default:
-		// Non-interactive without the flag: keep the cached copy; the bridge
-		// package logs a warning pointing at --update-bridges.
+		// Non-interactive (even on a TTY) without the flag: keep the cached
+		// copy; the bridge package logs a warning pointing at --update-bridges.
 		opts.ConfirmUpdate = nil
 	}
 	return opts
 }
 
-// versionDelta renders a "vX" hint for a detected update, or "" when the local
-// version is unknown.
-func versionDelta(u *bridge.Update) string {
-	if u == nil || u.LocalVersion == "" {
-		return ""
-	}
-	return fmt.Sprintf("(v%s available)", u.LocalVersion)
+// bridgeUpdateNotice renders the log line for a bridge update. It deliberately
+// omits version numbers: bridge.Update only carries the cached (old) version,
+// which must not be presented as the available release.
+func bridgeUpdateNotice(entryID string, _ *bridge.Update) string {
+	return fmt.Sprintf("Updating bridge %s (cached copy is outdated)", entryID)
 }
 
 // generateAdminPanel renders the optional admin panel bridge into the output
 // directory and returns the extra file manifest entries.
-func generateAdminPanel(irProject *ir.IRProject, seedData, mockDataset *ir.SeedDataset, log *logger.Logger) ([]renderer.RenderedFile, error) {
-	resolver := bridge.NewResolver(bridge.Default()).WithEnsureOptions(bridgeEnsureOptions(log))
+func generateAdminPanel(opts *cliOptions, irProject *ir.IRProject, seedData, mockDataset *ir.SeedDataset, log *logger.Logger) ([]renderer.RenderedFile, error) {
+	resolver := bridge.NewResolver(bridge.Default()).WithEnsureOptions(bridgeEnsureOptions(opts, log))
 
-	adminID := adminBridge
+	adminID := opts.adminBridge
 	if adminID == "" {
 		adminID = "admin-alpine"
 	}
@@ -810,7 +844,7 @@ func generateAdminPanel(irProject *ir.IRProject, seedData, mockDataset *ir.SeedD
 	adminRenderer.SetSeedData(seedData)
 	adminRenderer.SetMockData(mockDataset)
 
-	adminFiles, adminManifest, err := adminRenderer.Render(irProject, outputDir)
+	adminFiles, adminManifest, err := adminRenderer.Render(irProject, opts.outputDir)
 	if err != nil {
 		return nil, err
 	}
@@ -852,7 +886,7 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 			shell = "sh"
 			argv = []string{"-c", command}
 		}
-		c := exec.CommandContext(commandCtx, shell, argv...)
+		c := exec.CommandContext(commandCtx, shell, argv...) //nolint:gosec // shell line is gated by explicit bridge-command consent
 		c.Dir = outDir
 		c.Stdout = out
 		c.Stderr = out
@@ -875,7 +909,7 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 // (non-interactive without --prune) it returns false so the caller keeps the
 // previous snapshot — otherwise orphaned files would be forgotten and a later
 // --prune run could no longer find them.
-func applyMigrationActions(diff *snapshot.Diff, fresh map[string]bool, log *logger.Logger, cmd *cobra.Command) (bool, error) {
+func applyMigrationActions(opts *cliOptions, diff *snapshot.Diff, fresh map[string]bool, log *logger.Logger, cmd *cobra.Command) (bool, error) {
 	if diff == nil || diff.IsEmpty() {
 		return true, nil
 	}
@@ -886,13 +920,13 @@ func applyMigrationActions(diff *snapshot.Diff, fresh map[string]bool, log *logg
 	// namespace after a project rename, and renamed entity fields. Generated
 	// files are already regenerated with the new names; custom files are not,
 	// so this is what keeps them compiling.
-	if prune {
+	if opts.prune {
 		if diff.NamespaceRename != nil {
 			for _, rel := range diff.NamespaceRename.Files {
 				if fresh[rel] {
 					continue
 				}
-				rewrote, err := snapshot.RewriteFile(outputDir, rel, snapshot.NamespaceTransform(diff.NamespaceRename))
+				rewrote, err := snapshot.RewriteFile(opts.outputDir, rel, snapshot.NamespaceTransform(diff.NamespaceRename))
 				if err != nil {
 					log.Warn("could not rewrite namespace in %s: %v", rel, err)
 					continue
@@ -907,7 +941,7 @@ func applyMigrationActions(diff *snapshot.Diff, fresh map[string]bool, log *logg
 				if fresh[rel] {
 					continue
 				}
-				rewrote, err := snapshot.RewriteFile(outputDir, rel, snapshot.FieldTransform(fr))
+				rewrote, err := snapshot.RewriteFile(opts.outputDir, rel, snapshot.FieldTransform(fr))
 				if err != nil {
 					log.Warn("could not rewrite field references in %s: %v", rel, err)
 					continue
@@ -924,7 +958,7 @@ func applyMigrationActions(diff *snapshot.Diff, fresh map[string]bool, log *logg
 		if len(del.Files) == 0 {
 			continue
 		}
-		done, err := handleDeletedEntity(del, fresh, log, out)
+		done, err := handleDeletedEntity(opts, del, fresh, log, out)
 		if err != nil {
 			return false, err
 		}
@@ -935,7 +969,7 @@ func applyMigrationActions(diff *snapshot.Diff, fresh map[string]bool, log *logg
 		if len(ren.Files) == 0 {
 			continue
 		}
-		done, err := handleRename(ren, diff, fresh, log, out)
+		done, err := handleRename(opts, ren, diff, fresh, log, out)
 		if err != nil {
 			return false, err
 		}
@@ -947,9 +981,9 @@ func applyMigrationActions(diff *snapshot.Diff, fresh map[string]bool, log *logg
 // chooseMigrationFiles returns the files selected for cleanup. --prune takes
 // all of them; otherwise the caller's prompt decides. The non-interactive
 // fallback stays in the caller because its warning is operation-specific.
-func chooseMigrationFiles(files []snapshot.FileRef, prompt func([]interactive.FileChoice) ([]string, error)) (map[string]bool, error) {
+func chooseMigrationFiles(opts *cliOptions, files []snapshot.FileRef, prompt func([]interactive.FileChoice) ([]string, error)) (map[string]bool, error) {
 	selected := make(map[string]bool)
-	if prune {
+	if opts.prune {
 		for _, f := range files {
 			selected[f.Path] = true
 		}
@@ -972,15 +1006,15 @@ func chooseMigrationFiles(files []snapshot.FileRef, prompt func([]interactive.Fi
 // handleDeletedEntity deletes generated files automatically and asks (or warns)
 // about custom files of a removed entity. Returns false when cleanup was
 // deferred (non-interactive without --prune).
-func handleDeletedEntity(del snapshot.DeletedEntity, fresh map[string]bool, log *logger.Logger, out io.Writer) (bool, error) {
-	if !prune && !interactive.IsTerminal() {
+func handleDeletedEntity(opts *cliOptions, del snapshot.DeletedEntity, fresh map[string]bool, log *logger.Logger, out io.Writer) (bool, error) {
+	if !opts.prune && (opts.nonInteractive || !isTerminal()) {
 		log.Warn("Entity %q was removed from domain.yaml — orphaned files kept (re-run with --prune to delete):", del.Name)
 		for _, f := range del.Files {
 			_, _ = fmt.Fprintf(out, "    - %s%s\n", f.Path, customMark(f))
 		}
 		return false, nil
 	}
-	selected, err := chooseMigrationFiles(del.Files, func(choices []interactive.FileChoice) ([]string, error) {
+	selected, err := chooseMigrationFiles(opts, del.Files, func(choices []interactive.FileChoice) ([]string, error) {
 		return interactive.PromptDeleteFiles(del.Name, choices)
 	})
 	if err != nil {
@@ -991,7 +1025,7 @@ func handleDeletedEntity(del snapshot.DeletedEntity, fresh map[string]bool, log 
 		if !selected[f.Path] || fresh[f.Path] {
 			continue
 		}
-		if err := snapshot.DeleteFile(outputDir, f.Path); err != nil {
+		if err := snapshot.DeleteFile(opts.outputDir, f.Path); err != nil {
 			log.Warn("could not delete %s: %v", f.Path, err)
 			continue
 		}
@@ -1005,15 +1039,15 @@ func handleDeletedEntity(del snapshot.DeletedEntity, fresh map[string]bool, log 
 // the renamed files' contents are rewritten too (entity, namespace and field
 // identifiers), so the developer-owned file keeps compiling after the rename.
 // Returns false when cleanup was deferred (non-interactive without --prune).
-func handleRename(ren snapshot.Rename, d *snapshot.Diff, fresh map[string]bool, log *logger.Logger, out io.Writer) (bool, error) {
-	if !prune && !interactive.IsTerminal() {
+func handleRename(opts *cliOptions, ren snapshot.Rename, d *snapshot.Diff, fresh map[string]bool, log *logger.Logger, out io.Writer) (bool, error) {
+	if !opts.prune && (opts.nonInteractive || !isTerminal()) {
 		log.Warn("Entity %q was renamed to %q — files kept (re-run with --prune to rename):", ren.OldName, ren.NewName)
 		for _, f := range ren.Files {
 			_, _ = fmt.Fprintf(out, "    - %s -> %s\n", f.Path, snapshot.RenameRelPath(f.Path, ren.OldName, ren.NewName))
 		}
 		return false, nil
 	}
-	selected, err := chooseMigrationFiles(ren.Files, func(choices []interactive.FileChoice) ([]string, error) {
+	selected, err := chooseMigrationFiles(opts, ren.Files, func(choices []interactive.FileChoice) ([]string, error) {
 		return interactive.PromptRenameFiles(ren.OldName, ren.NewName, choices)
 	})
 	if err != nil {
@@ -1030,18 +1064,18 @@ func handleRename(ren snapshot.Rename, d *snapshot.Diff, fresh map[string]bool, 
 				// The destination was scaffolded this run by the custom
 				// (overwrite: false) template. Replace it with the developer's
 				// existing custom file so custom hooks survive the rename.
-				if err := os.Remove(filepath.Join(outputDir, filepath.FromSlash(newRel))); err != nil {
+				if err := os.Remove(filepath.Join(opts.outputDir, filepath.FromSlash(newRel))); err != nil {
 					log.Warn("could not replace scaffolded %s: %v", newRel, err)
 					continue
 				}
 			}
-			newRel, renamed, err := snapshot.RenameEntityFile(outputDir, f.Path, ren.OldName, ren.NewName)
+			newRel, renamed, err := snapshot.RenameEntityFile(opts.outputDir, f.Path, ren.OldName, ren.NewName)
 			if err != nil {
 				log.Warn("could not rename %s: %v", f.Path, err)
 				continue
 			}
 			if renamed {
-				if rewrote, rerr := snapshot.RewriteFile(outputDir, newRel, snapshot.RenameTransforms(ren.OldName, ren.NewName, d)...); rerr != nil {
+				if rewrote, rerr := snapshot.RewriteFile(opts.outputDir, newRel, snapshot.RenameTransforms(ren.OldName, ren.NewName, d)...); rerr != nil {
 					log.Warn("could not rewrite content of %s: %v", newRel, rerr)
 				} else if rewrote {
 					_, _ = fmt.Fprintf(out, "  ▸ renamed %s -> %s (content updated)\n", f.Path, newRel)
@@ -1052,7 +1086,7 @@ func handleRename(ren snapshot.Rename, d *snapshot.Diff, fresh map[string]bool, 
 			continue
 		}
 		// Generated files have been regenerated under the new name — remove the stale copy.
-		if err := snapshot.DeleteFile(outputDir, f.Path); err != nil {
+		if err := snapshot.DeleteFile(opts.outputDir, f.Path); err != nil {
 			log.Warn("could not delete stale generated file %s: %v", f.Path, err)
 			continue
 		}
@@ -1077,14 +1111,14 @@ func customMark(f snapshot.FileRef) string {
 // applyAddons parses the --addons flag into the IR project's Addons set,
 // validating each name against specmeta. Unknown addons are silently ignored so
 // bridges that don't know a given addon simply render their non-addon templates.
-func applyAddons(project *ir.IRProject) {
-	if strings.TrimSpace(addonsFlag) == "" {
+func applyAddons(opts *cliOptions, project *ir.IRProject) {
+	if strings.TrimSpace(opts.addons) == "" {
 		return
 	}
 	if project.Addons == nil {
 		project.Addons = make(map[string]bool)
 	}
-	for _, addon := range strings.Split(addonsFlag, ",") {
+	for addon := range strings.SplitSeq(opts.addons, ",") {
 		addon = strings.TrimSpace(addon)
 		if addon == "" {
 			continue
@@ -1095,8 +1129,11 @@ func applyAddons(project *ir.IRProject) {
 	}
 }
 
-func loadAndValidate(out io.Writer) (*parser.ParsedSchema, error) {
-	data, err := os.ReadFile(domainFile)
+// loadAndValidate reports warnings on the command's error stream and returns
+// hard validation errors as one aggregated error. The caller prints that error
+// once; printing each error here as well would duplicate every line.
+func loadAndValidate(opts *cliOptions, cmd *cobra.Command) (*parser.ParsedSchema, error) {
+	data, err := os.ReadFile(opts.domainFile)
 	if err != nil {
 		return nil, fmt.Errorf("read domain file: %w", err)
 	}
@@ -1105,19 +1142,17 @@ func loadAndValidate(out io.Writer) (*parser.ParsedSchema, error) {
 		return nil, err
 	}
 
-	allErrors := validator.New(schema).Validate()
-	var hardErrors []validator.ValidationError
-	for _, e := range allErrors {
+	errOut := cmd.ErrOrStderr()
+	hardErrors := make([]error, 0)
+	for _, e := range validator.New(schema).Validate() {
 		if e.Warning {
-			_, _ = fmt.Fprintf(out, "⚠ %s\n", e.Error())
-		} else {
-			hardErrors = append(hardErrors, e)
-			_, _ = fmt.Fprintln(out, e.Error())
+			_, _ = fmt.Fprintf(errOut, "⚠ %s\n", e.Error())
+			continue
 		}
+		hardErrors = append(hardErrors, e)
 	}
-
 	if len(hardErrors) > 0 {
-		return nil, fmt.Errorf("validation failed with %d error(s)", len(hardErrors))
+		return nil, fmt.Errorf("validation failed with %d error(s): %w", len(hardErrors), errors.Join(hardErrors...))
 	}
 
 	return schema, nil

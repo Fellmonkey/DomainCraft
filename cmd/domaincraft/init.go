@@ -78,7 +78,7 @@ func defaultProjectName() string {
 	return filepath.Base(wd)
 }
 
-func newInitCmd() *cobra.Command {
+func newInitCmd(opts *cliOptions) *cobra.Command {
 	var scenarioFlag string
 	var nameFlag string
 	var force bool
@@ -88,19 +88,20 @@ func newInitCmd() *cobra.Command {
 		Short: "Bootstrap a starter domain.yaml and generate code",
 		Long: "Choose a scenario (shop, saas, crm, blog), write a starter domain.yaml and generate code.\n" +
 			"Non-interactive runs require --scenario. Add --bridge to generate immediately; without it the model is written and the generate command is printed.",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			log := commandLogger(cmd)
 
 			selected := scenarioFlag
 			if selected == "" {
-				if nonInteractive || !interactive.IsTerminal() {
+				if opts.nonInteractive || !isTerminal() {
 					return fmt.Errorf("--scenario is required in non-interactive mode (shop|saas|crm|blog)")
 				}
 				options := make([]interactive.Option, 0, len(scenarios))
 				for _, s := range scenarios {
 					options = append(options, interactive.Option{Label: s.label, Description: s.description})
 				}
-				idx, err := interactive.SelectOption("Select a starter scenario", "Writes "+domainFile+" and offers to generate", options)
+				idx, err := interactive.SelectOption("Select a starter scenario", "Writes "+opts.domainFile+" and offers to generate", options)
 				if err != nil {
 					return err
 				}
@@ -116,38 +117,38 @@ func newInitCmd() *cobra.Command {
 				return err
 			}
 
-			_, statErr := os.Stat(domainFile)
+			_, statErr := os.Stat(opts.domainFile)
 			if statErr == nil && !force {
-				return fmt.Errorf("%s already exists; use --force to overwrite", domainFile)
+				return fmt.Errorf("%s already exists; use --force to overwrite", opts.domainFile)
 			}
 			if statErr != nil && !os.IsNotExist(statErr) {
-				return fmt.Errorf("check %s: %w", domainFile, statErr)
+				return fmt.Errorf("check %s: %w", opts.domainFile, statErr)
 			}
-			if err := fsutil.AtomicWrite(domainFile, []byte(content)); err != nil {
-				return fmt.Errorf("write %s: %w", domainFile, err)
+			if err := fsutil.AtomicWrite(opts.domainFile, []byte(content)); err != nil {
+				return fmt.Errorf("write %s: %w", opts.domainFile, err)
 			}
-			log.Success("Created %s from the %s scenario", domainFile, selected)
+			log.Success("Created %s from the %s scenario", opts.domainFile, selected)
 
 			// Generate when explicitly requested, or after an interactive
 			// confirmation. Non-interactive runs without --bridge stop here —
 			// they cannot pick a bridge on the user's behalf.
-			generate := bridgePath != ""
-			if !generate && interactive.IsTerminal() && !nonInteractive {
+			generate := opts.bridgePath != ""
+			if !generate && !opts.nonInteractive && isTerminal() {
 				generate, err = interactive.PromptYesNo("Generate code now?", "Runs domaincraft generate with the selected bridge")
 				if err != nil {
 					return err
 				}
 			}
 			if !generate {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Next: domaincraft validate --domain %s\nthen: domaincraft generate --domain %s --bridge <id>\n", domainFile, domainFile)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Next: domaincraft validate --domain %s\nthen: domaincraft generate --domain %s --bridge <id>\n", opts.domainFile, opts.domainFile)
 				return nil
 			}
 
-			genCmd := newGenerateCmd()
+			genCmd := newGenerateCmd(opts)
 			genCmd.SetOut(cmd.OutOrStdout())
 			genCmd.SetErr(cmd.ErrOrStderr())
 			genCmd.SetIn(cmd.InOrStdin())
-			return runGenerate(genCmd, nil)
+			return runGenerate(opts, genCmd, nil)
 		},
 	}
 
