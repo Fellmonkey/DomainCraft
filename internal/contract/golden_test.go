@@ -6,16 +6,24 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/DomainCraft/DomainCraft/internal/appdir"
 	"github.com/DomainCraft/DomainCraft/internal/bridge"
+	"github.com/DomainCraft/DomainCraft/internal/bridgechain"
 	"github.com/DomainCraft/DomainCraft/internal/ir"
+	"github.com/DomainCraft/DomainCraft/internal/packages"
 	"github.com/DomainCraft/DomainCraft/internal/parser"
 	"github.com/DomainCraft/DomainCraft/internal/renderer"
 	"github.com/DomainCraft/DomainCraft/internal/seed"
@@ -24,12 +32,180 @@ import (
 
 var updateGolden = flag.Bool("update", false, "regenerate golden files")
 
-// leafBridges are the self-contained (no `extends`) official bridges that
-// render without network package resolution — the hermetic subject of the
-// golden test. Composed bridges (e.g. csharp-rest → … → csharp-core) need the
-// extends-chain resolver, which lives in cmd/domaincraft; covering them here is
-// a follow-up once that resolution moves into an importable package.
-var leafBridges = []string{"csharp-core", "ts-core", "admin-alpine", "appwrite"}
+// goldenBridges are the official bridges with committed golden manifests: the
+// self-contained leaves plus the composed chains (csharp-rest → … →
+// csharp-core, react-rest → … → ts-core). Composed chains are resolved by the
+// same importable bridgechain.Walk the CLI uses and rendered base-first, so
+// their manifests pin the real composition order.
+var goldenBridges = []string{
+	"csharp-core",
+	"ts-core",
+	"admin-alpine",
+	"appwrite",
+	"csharp-rest",
+	"react-rest",
+}
+
+// hermeticPackageVersion is the fixed version seeded into the per-bridge
+// package cache in TestMain. Composed C# bridges declare NuGet packages; the
+// seeded cache keeps rendering offline and makes the golden manifests stable
+// even when upstream versions change.
+const hermeticPackageVersion = "1.0.0"
+
+type goldenBridgeManifest struct {
+	Name             string            `yaml:"name"`
+	RegistryURL      string            `yaml:"registry_url"`
+	RegistryPackages map[string]string `yaml:"registry_packages"`
+}
+
+type goldenPackageCache struct {
+	Entries map[string]goldenPackageEntry `json:"entries"`
+}
+
+type goldenPackageEntry struct {
+	Value    string    `json:"value"`
+	StoredAt time.Time `json:"stored_at"`
+}
+
+// TestMain points per-user state at a temporary directory and seeds the
+// package-version caches of every bundled bridge. No registry is contacted by
+// any test in this package.
+func TestMain(m *testing.M) {
+	root, err := os.MkdirTemp("", "domaincraft-golden-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "golden temp dir:", err)
+		os.Exit(1)
+	}
+	appdir.SetBaseForTesting(root)
+	code := 0
+	framework, err := goldenPlatform()
+	if err == nil {
+		err = seedPackageVersions(framework)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "seed package versions:", err)
+		code = 1
+	} else {
+		code = m.Run()
+	}
+	appdir.SetBaseForTesting("")
+	_ = os.RemoveAll(root)
+	os.Exit(code)
+}
+
+// goldenPlatform returns the target platform of the golden domain model. It is
+// part of the package-version cache key and must match the framework the
+// renderer sees.
+func goldenPlatform() (string, error) {
+	data, err := os.ReadFile(filepath.Join("testdata", "domain.yaml"))
+	if err != nil {
+		return "", err
+	}
+	schema, err := parser.ParseYAML(data)
+	if err != nil {
+		return "", err
+	}
+	proj, err := ir.Build(schema)
+	if err != nil {
+		return "", err
+	}
+	return proj.Platform, nil
+}
+
+// cacheNamespace mirrors renderer.cacheNamespace: package versions are cached
+// under the adapter bridge's name, not under its filesystem path.
+func cacheNamespace(name string) string {
+	var b strings.Builder
+	for _, ch := range strings.ToLower(strings.TrimSpace(name)) {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' {
+			b.WriteRune(ch)
+		}
+	}
+	if b.Len() == 0 {
+		return "default"
+	}
+	return b.String()
+}
+
+func readBridgeManifest(dir string) (goldenBridgeManifest, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "bridge.yaml"))
+	if err != nil {
+		return goldenBridgeManifest{}, err
+	}
+	var m goldenBridgeManifest
+	if err := yaml.Unmarshal(data, &m); err != nil {
+		return goldenBridgeManifest{}, fmt.Errorf("parse %s: %w", dir, err)
+	}
+	return m, nil
+}
+
+// seedPackageVersions writes one packages.json per bundled adapter so the
+// renderer never needs a network lookup. The key layout is the one documented
+// by internal/packages: registryURL + NUL + packageID + NUL + framework.
+func seedPackageVersions(framework string) error {
+	resolver := bridge.NewResolver(bridge.Default())
+	for _, entry := range bridge.Default().All() {
+		if entry.Path == "" || entry.Deprecated {
+			continue
+		}
+		dir, err := filepath.Abs(filepath.Join("..", "..", "bridges", filepath.FromSlash(entry.Path)))
+		if err != nil {
+			return err
+		}
+		chain, err := bridgechain.Walk(dir, dir, resolver, nil)
+		if err != nil {
+			return fmt.Errorf("resolve %s: %w", entry.ID, err)
+		}
+		// The renderer merges registry_packages from the whole chain under a
+		// single URL: the adapter's, otherwise the first one declared by a base.
+		packageIDs := make(map[string]struct{})
+		registryURL := ""
+		var adapter goldenBridgeManifest
+		for i, base := range chain {
+			m, err := readBridgeManifest(base)
+			if err != nil {
+				return err
+			}
+			if i == 0 {
+				adapter = m
+			}
+			for _, packageID := range m.RegistryPackages {
+				packageIDs[packageID] = struct{}{}
+			}
+			if registryURL == "" && m.RegistryURL != "" {
+				registryURL = m.RegistryURL
+			}
+		}
+		if len(packageIDs) == 0 {
+			continue
+		}
+		if registryURL == "" {
+			return fmt.Errorf("bridge %s declares packages but no registry_url", entry.ID)
+		}
+		packagesByKey := make(map[string]goldenPackageEntry, len(packageIDs))
+		storedAt := time.Now()
+		for packageID := range packageIDs {
+			key := registryURL + "\x00" + packageID + "\x00" + framework
+			packagesByKey[key] = goldenPackageEntry{Value: hermeticPackageVersion, StoredAt: storedAt}
+		}
+		cacheDir, err := appdir.CacheDir(cacheNamespace(adapter.Name))
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+			return err
+		}
+		data, err := json.Marshal(goldenPackageCache{Entries: packagesByKey})
+		if err != nil {
+			return err
+		}
+		path := filepath.Join(cacheDir, packages.CacheFileName)
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			return fmt.Errorf("write %s: %w", path, err)
+		}
+	}
+	return nil
+}
 
 func loadGoldenProject(t *testing.T) *ir.Project {
 	t.Helper()
@@ -63,33 +239,16 @@ func bridgeDir(t *testing.T, id string) string {
 }
 
 // resolveChain resolves a bridge's full `extends` chain top-first (adapter
-// first, deepest base last) using the importable resolver. It mirrors what the
-// CLI does, so the contract tests exercise the same resolution path.
+// first, deepest base last) through the same importable walker the CLI uses.
 func resolveChain(t *testing.T, entryDir string) []string {
 	t.Helper()
-	resolver := bridge.NewResolver(bridge.Default())
-	chain := []string{entryDir}
-	seen := map[string]bool{entryDir: true}
-	cur := entryDir
-	for {
-		r, err := renderer.New(cur, nil)
-		if err != nil {
-			t.Fatalf("renderer.New(%s): %v", cur, err)
-		}
-		ext := r.Extends()
-		if ext == "" {
-			break
-		}
-		next, err := bridge.ResolveExtendsRef(ext, cur, resolver)
-		if err != nil {
-			t.Fatalf("resolve extends %q from %s: %v", ext, cur, err)
-		}
-		if seen[next] {
-			t.Fatalf("extends cycle detected at %q", next)
-		}
-		seen[next] = true
-		chain = append(chain, next)
-		cur = next
+	abs, err := filepath.Abs(entryDir)
+	if err != nil {
+		t.Fatalf("abs(%s): %v", entryDir, err)
+	}
+	chain, err := bridgechain.Walk(abs, abs, bridge.NewResolver(bridge.Default()), nil)
+	if err != nil {
+		t.Fatalf("bridgechain.Walk(%s): %v", abs, err)
 	}
 	return chain
 }
@@ -105,8 +264,12 @@ func renderChain(t *testing.T, chain []string, proj *ir.Project) map[string]stri
 		t.Fatalf("renderer.New(%s): %v", chain[0], err)
 	}
 	if len(chain) > 1 {
-		if err := r.AttachBases(chain[1:]); err != nil {
-			t.Fatalf("AttachBases(%v): %v", chain[1:], err)
+		// Walk returns top-first; AttachBases wants the outermost base first,
+		// exactly as the CLI's resolveBaseChain does.
+		bases := slices.Clone(chain[1:])
+		slices.Reverse(bases)
+		if err := r.AttachBases(bases); err != nil {
+			t.Fatalf("AttachBases(%v): %v", bases, err)
 		}
 	}
 	r.SetSeedData(seed.Normalize(proj))
@@ -153,16 +316,16 @@ func manifestLines(m map[string]string) []string {
 	return lines
 }
 
-// TestGoldenLeafBridges asserts that each hermetic leaf bridge produces
-// byte-identical output to a committed golden manifest. Regenerate changed
-// output with `go test ./internal/contract -update`.
+// TestGoldenLeafBridges asserts that every hermetic bridge — leaves and
+// composed chains alike — produces byte-identical output to a committed golden
+// manifest. Regenerate changed output with `go test ./internal/contract -update`.
 func TestGoldenLeafBridges(t *testing.T) {
 	t.Parallel()
 	proj := loadGoldenProject(t)
-	for _, id := range leafBridges {
+	for _, id := range goldenBridges {
 		t.Run(id, func(t *testing.T) {
 			t.Parallel()
-			got := strings.Join(manifestLines(renderChain(t, []string{bridgeDir(t, id)}, proj)), "\n")
+			got := strings.Join(manifestLines(renderChain(t, resolveChain(t, bridgeDir(t, id)), proj)), "\n")
 			goldenPath := filepath.Join("testdata", id+".golden.txt")
 			if *updateGolden {
 				if err := os.WriteFile(goldenPath, []byte(got+"\n"), 0o644); err != nil {

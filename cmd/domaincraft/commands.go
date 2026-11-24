@@ -30,6 +30,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/DomainCraft/DomainCraft/internal/bridge"
+	"github.com/DomainCraft/DomainCraft/internal/bridgechain"
 	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 	"github.com/DomainCraft/DomainCraft/internal/interactive"
 	"github.com/DomainCraft/DomainCraft/internal/ir"
@@ -513,33 +514,10 @@ func newBridgeResolver(opts *cliOptions, log *logger.Logger) *bridge.Resolver {
 }
 
 // walkBridgeChain resolves ref relative to fromDir and follows `extends` to the
-// deepest base. It returns absolute paths top-first: the resolved bridge first,
-// then its bases. Absolute paths make cycle detection path-based, not textual.
+// deepest base. The resolution itself lives in the importable bridgechain
+// package so the CLI and the contract tests share one chain order.
 func walkBridgeChain(opts *cliOptions, ref, fromDir string, log *logger.Logger) ([]string, error) {
-	resolver := newBridgeResolver(opts, log)
-	var chain []string
-	visited := make(map[string]bool)
-	for ref != "" {
-		path, err := bridge.ResolveExtendsRef(ref, fromDir, resolver)
-		if err != nil {
-			return nil, fmt.Errorf("resolve bridge `extends: %s`: %w", ref, err)
-		}
-		if abs, err := filepath.Abs(path); err == nil {
-			path = abs
-		}
-		if visited[path] {
-			return nil, fmt.Errorf("bridge `extends` cycle detected at %q", ref)
-		}
-		visited[path] = true
-		chain = append(chain, path)
-
-		base, err := renderer.New(path, log)
-		if err != nil {
-			return nil, fmt.Errorf("load bridge %s: %w", path, err)
-		}
-		ref, fromDir = base.Extends(), path
-	}
-	return chain, nil
+	return bridgechain.Walk(ref, fromDir, newBridgeResolver(opts, log), log)
 }
 
 // resolveBridgeInteractive resolves the bridge from the --bridge flag, or
