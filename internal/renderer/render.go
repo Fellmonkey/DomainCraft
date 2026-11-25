@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"text/template"
 
 	"github.com/DomainCraft/DomainCraft/internal/fsutil"
@@ -77,8 +78,23 @@ func safeOutputPathCached(outputDir, renderedTarget string, verified map[string]
 
 // beforeCommitHook is a test seam called once between staging and commit. It is
 // nil in production; tests set it to mutate the filesystem at that exact point.
-// Tests using it must not run in parallel.
-var beforeCommitHook func()
+// The atomic pointer keeps a long-lived host safe from races with rendering.
+var beforeCommitHook atomic.Pointer[func()]
+
+func setBeforeCommitHook(fn func()) {
+	if fn == nil {
+		beforeCommitHook.Store(nil)
+		return
+	}
+	beforeCommitHook.Store(&fn)
+}
+
+func currentBeforeCommitHook() func() {
+	if hook := beforeCommitHook.Load(); hook != nil {
+		return *hook
+	}
+	return nil
+}
 
 // failWithTempCleanup closes and removes a staged temp file, joining any
 // cleanup failure to the primary error so a leftover file cannot go unnoticed.
@@ -256,6 +272,10 @@ type renderSession struct {
 	staged      []stagedWrite
 	committed   []stagedWrite
 	manifest    []RenderedFile
+	// customTargets tracks scaffold-once paths planned in this run. Without
+	// it, two contexts with the same constant target both see "missing" on
+	// disk and the second write overwrites the first.
+	customTargets map[string]bool
 }
 
 // dirRoot returns the handle for a staged file's parent directory. The handle
@@ -384,11 +404,17 @@ func (r *Renderer) stageTemplates(s *renderSession) error {
 					// Scaffold semantics: overwrite: false files are created only once.
 					// The developer owns them afterwards, so they survive regeneration.
 					if spec.IsCustom() {
+						if s.customTargets[absTarget] {
+							record.Written = false
+							s.manifest = append(s.manifest, record)
+							continue
+						}
 						if _, statErr := os.Stat(absTarget); statErr == nil {
 							record.Written = false
 							s.manifest = append(s.manifest, record)
 							continue
 						}
+						s.customTargets[absTarget] = true
 					}
 
 					if err := os.MkdirAll(filepath.Dir(absTarget), 0o755); err != nil { //nolint:gosec // generated project dirs must stay world-readable
@@ -471,8 +497,8 @@ func (r *Renderer) stageTemplates(s *renderSession) error {
 // aside into a sibling backup before the rendered temp file takes its place;
 // rollback moves the backup back, so no prior content is read into memory.
 func (r *Renderer) commitWrites(s *renderSession) error {
-	if beforeCommitHook != nil {
-		beforeCommitHook()
+	if hook := currentBeforeCommitHook(); hook != nil {
+		hook()
 	}
 	for _, w := range s.staged {
 		root, err := s.dirRoot(&w)
@@ -571,8 +597,9 @@ func (r *Renderer) Render(project *ir.Project, outputDir string) ([]string, []Re
 		roots:       make(map[string]*os.Root),
 		staged:      make([]stagedWrite, 0),
 		// committed is empty during staging; commitWrites appends as files land.
-		committed: make([]stagedWrite, 0),
-		manifest:  make([]RenderedFile, 0),
+		committed:     make([]stagedWrite, 0),
+		manifest:      make([]RenderedFile, 0),
+		customTargets: make(map[string]bool),
 	}
 
 	defer func() {

@@ -10,6 +10,7 @@
 package snapshot
 
 import (
+	"bytes"
 	"cmp"
 	"encoding/json"
 	"errors"
@@ -395,22 +396,16 @@ func detectNamespaceMismatch(outputDir string, old *Snapshot, oldNamespace, newN
 	return &NamespaceMismatch{OldNamespace: oldNamespace, NewNamespace: newNamespace, Files: affected}
 }
 
-// referencesNamespace reports whether s declares the given root namespace, e.g.
-// `namespace EscrowPay...` or `namespace EscrowPay;`.
+// referencesNamespace reports whether s mentions the old root namespace as a
+// standalone identifier. It deliberately does not assume C# syntax: the same
+// token appears in `namespace X;`, TypeScript imports and Python module paths.
+// The shared identifier-aware rewriter supplies the boundary rules.
 func referencesNamespace(s, namespace string) bool {
-	for line := range strings.SplitSeq(s, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "namespace ") {
-			continue
-		}
-		rest := strings.TrimPrefix(line, "namespace ")
-		rest = strings.TrimSuffix(rest, ";")
-		rest = strings.TrimSpace(rest)
-		if rest == namespace || strings.HasPrefix(rest, namespace+".") {
-			return true
-		}
+	if namespace == "" {
+		return false
 	}
-	return false
+	rewritten := rewriteCasings([]byte(s), namespaceCasings(namespace, "\x00"))
+	return !bytes.Equal(rewritten, []byte(s))
 }
 
 // NamespaceRenameReport returns a human-readable report for the project-namespace

@@ -6,10 +6,40 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/DomainCraft/DomainCraft/internal/ir"
 )
+
+// TestBeforeCommitHookConcurrentAccess would report a data race under -race
+// if the test seam were an unsynchronized package-level func variable.
+func TestBeforeCommitHookConcurrentAccess(t *testing.T) {
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			setBeforeCommitHook(func() {})
+		}()
+		go func() {
+			defer wg.Done()
+			_ = currentBeforeCommitHook()
+		}()
+	}
+	wg.Wait()
+	called := false
+	setBeforeCommitHook(func() { called = true })
+	if hook := currentBeforeCommitHook(); hook == nil {
+		t.Fatal("hook was lost after concurrent access")
+	} else {
+		hook()
+	}
+	if !called {
+		t.Fatal("retrieved hook was not the stored hook")
+	}
+	setBeforeCommitHook(nil)
+}
 
 // writeHardeningBridge lays out a minimal bridge directory for the filesystem
 // hardening tests. Keys are forward-slash relative paths.
@@ -293,15 +323,15 @@ templates:
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	beforeCommitHook = func() {
+	setBeforeCommitHook(func() {
 		if err := os.Remove(a); err != nil && !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("remove staged target: %v", err)
 		}
 		if err := os.Symlink(outside, filepath.Join(out, "b.txt")); err != nil {
 			t.Errorf("plant symlink before commit: %v", err)
 		}
-	}
-	t.Cleanup(func() { beforeCommitHook = nil })
+	})
+	t.Cleanup(func() { setBeforeCommitHook(nil) })
 
 	if _, _, err := r.Render(&ir.Project{Name: "P"}, out); err == nil {
 		t.Fatal("Render succeeded despite a blocked commit")
@@ -347,15 +377,15 @@ templates:
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	beforeCommitHook = func() {
+	setBeforeCommitHook(func() {
 		if err := os.RemoveAll(src); err != nil {
 			t.Errorf("remove staged src: %v", err)
 		}
 		if err := os.Symlink(outside, src); err != nil {
 			t.Errorf("plant parent symlink: %v", err)
 		}
-	}
-	t.Cleanup(func() { beforeCommitHook = nil })
+	})
+	t.Cleanup(func() { setBeforeCommitHook(nil) })
 
 	if _, _, err := r.Render(&ir.Project{Name: "P"}, out); err == nil {
 		t.Fatal("Render succeeded after parent directory was replaced by a symlink")
@@ -426,6 +456,46 @@ func TestRollbackErrorKeepsOriginalPrimary(t *testing.T) {
 	}
 	if !errors.Is(rollbackError(primary, nil), primary) {
 		t.Error("no-op rollback must return the original error unchanged")
+	}
+}
+
+func TestCustomTemplateStagedOncePerRun(t *testing.T) {
+	t.Parallel()
+	bridge := writeHardeningBridge(t, map[string]string{
+		"bridge.yaml": `name: demo
+templates:
+  - for: entity
+    source: templates/custom.tmpl
+    target: "custom.txt"
+    overwrite: false
+`,
+		"templates/custom.tmpl": `entity-{{ .Entity.Name }}`,
+	})
+	r, err := New(bridge, nil)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	project := &ir.Project{Name: "P", Entities: []ir.Entity{
+		{Name: "Alpha"},
+		{Name: "Beta"},
+	}}
+	out := filepath.Join(t.TempDir(), "out")
+	_, manifest, err := r.Render(project, out)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(manifest) != 2 {
+		t.Fatalf("manifest has %d entries, want 2: %v", len(manifest), manifest)
+	}
+	if !manifest[0].Written || manifest[1].Written {
+		t.Fatalf("scaffold-once manifest = %v, want first written and second skipped", manifest)
+	}
+	data, err := os.ReadFile(filepath.Join(out, "custom.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "entity-Alpha" {
+		t.Fatalf("custom file = %q, want entity-Alpha", data)
 	}
 }
 
@@ -527,12 +597,12 @@ templates:
 			t.Fatalf("write prior Alpha.txt: %v", err)
 		}
 
-		beforeCommitHook = func() {
+		setBeforeCommitHook(func() {
 			if err := os.Symlink(outside, filepath.Join(out2, "shared.txt")); err != nil {
 				t.Errorf("plant symlink before commit: %v", err)
 			}
-		}
-		t.Cleanup(func() { beforeCommitHook = nil })
+		})
+		t.Cleanup(func() { setBeforeCommitHook(nil) })
 
 		written, manifest, err := r.Render(project, out2)
 		if err == nil {

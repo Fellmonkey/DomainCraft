@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 	"github.com/DomainCraft/DomainCraft/internal/specmeta"
@@ -56,8 +57,18 @@ func replaceLongest(content []byte, variants map[string]string, ok func([]rune, 
 		return cmp.Compare(string(a.old), string(b.old))
 	})
 
-	rs := []rune(string(content))
-	out := make([]rune, 0, len(rs))
+	// Decode for matching only. Unmatched positions are copied from the
+	// original bytes: []rune(string(content)) would replace invalid UTF-8 with
+	// U+FFFD and silently corrupt developer-owned files in legacy encodings.
+	rs := make([]rune, 0, len(content))
+	starts := make([]int, 0, len(content))
+	for i := 0; i < len(content); {
+		r, size := utf8.DecodeRune(content[i:])
+		rs = append(rs, r)
+		starts = append(starts, i)
+		i += size
+	}
+	out := make([]byte, 0, len(content))
 	for i := 0; i < len(rs); {
 		matched := false
 		for _, v := range vars {
@@ -70,17 +81,21 @@ func replaceLongest(content []byte, variants map[string]string, ok func([]rune, 
 			if !ok(rs, i, len(v.old)) {
 				continue
 			}
-			out = append(out, v.value...)
+			out = append(out, []byte(string(v.value))...)
 			i += len(v.old) // replacement text is never scanned again
 			matched = true
 			break
 		}
 		if !matched {
-			out = append(out, rs[i])
+			end := len(content)
+			if i+1 < len(rs) {
+				end = starts[i+1]
+			}
+			out = append(out, content[starts[i]:end]...)
 			i++
 		}
 	}
-	return []byte(string(out))
+	return out
 }
 
 func hasPrefixRunes(s, prefix []rune) bool {

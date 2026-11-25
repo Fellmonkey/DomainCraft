@@ -191,6 +191,9 @@ func KindOf(src any) string {
 
 // Set assigns value under key in d and returns d.
 func Set(d map[string]any, key string, value any) map[string]any {
+	if d == nil {
+		d = make(map[string]any)
+	}
 	d[key] = value
 	return d
 }

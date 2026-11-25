@@ -8,16 +8,29 @@ package appdir
 import (
 	"os"
 	"path/filepath"
+	"sync/atomic"
 )
 
 // baseOverride, when set, redirects the app base directory. Used by tests so
-// they never write into the user's real home directory.
-var baseOverride string
+// they never write into the user's real home directory. The atomic pointer
+// keeps parallel tests from racing on the override.
+var baseOverride atomic.Pointer[string]
 
 // SetBaseForTesting redirects the app base directory for a test. Restore with
 // SetBaseForTesting("") in a defer.
 func SetBaseForTesting(dir string) {
-	baseOverride = dir
+	if dir == "" {
+		baseOverride.Store(nil)
+		return
+	}
+	baseOverride.Store(&dir)
+}
+
+func currentBaseOverride() string {
+	if override := baseOverride.Load(); override != nil {
+		return *override
+	}
+	return ""
 }
 
 // Base returns the per-user DomainCraft directory, typically ~/.domaincraft.
@@ -25,8 +38,8 @@ func SetBaseForTesting(dir string) {
 // directory is unavailable. The directory is NOT created; callers that write
 // under it are responsible for creating the subdirectories they need.
 func Base() (string, error) {
-	if baseOverride != "" {
-		return baseOverride, nil
+	if override := currentBaseOverride(); override != "" {
+		return override, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {

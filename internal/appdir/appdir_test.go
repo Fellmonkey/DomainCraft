@@ -2,12 +2,14 @@ package appdir
 
 import (
 	"path/filepath"
+	"strconv"
+	"sync"
 	"testing"
 )
 
 func setBaseForTest(t *testing.T, dir string) {
 	t.Helper()
-	old := baseOverride
+	old := currentBaseOverride()
 	SetBaseForTesting(dir)
 	t.Cleanup(func() { SetBaseForTesting(old) })
 }
@@ -43,6 +45,30 @@ func TestBaseFallback(t *testing.T) {
 			t.Errorf("Base() = %q, want .domaincraft", got)
 		}
 	})
+}
+
+// TestBaseOverrideConcurrentAccess would report a data race under -race if
+// SetBaseForTesting and Base touched an unsynchronized global.
+func TestBaseOverrideConcurrentAccess(t *testing.T) {
+	setBaseForTest(t, t.TempDir())
+	var wg sync.WaitGroup
+	for i := range 16 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, _ = Base()
+		}()
+		go func(i int) {
+			defer wg.Done()
+			SetBaseForTesting(filepath.Join("parallel", strconv.Itoa(i)))
+		}(i)
+	}
+	wg.Wait()
+	SetBaseForTesting("final")
+	got, err := Base()
+	if err != nil || got != "final" {
+		t.Fatalf("Base() after concurrent access = %q, %v; want final", got, err)
+	}
 }
 
 // TestDerivedPaths checks the test seam and both path constructors: the suite

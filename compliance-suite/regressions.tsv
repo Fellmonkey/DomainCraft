@@ -174,3 +174,9 @@ internal/validator/validator_hardening_test.go::TestInvalidDefaultsAreErrors	#re
 internal/lexer/lexer_hardening_test.go::TestUnterminatedModifierList	#review	field definition with an unclosed modifier list was accepted as valid
 internal/parser/parser_hardening_test.go::TestStrictParsingRejectsStructuralShortcuts	#review	fields sequence and unknown keys smuggled through YAML merges bypassed strict decoding
 internal/parser/parser_hardening_test.go::TestParseNilRawSchema	#review	Parser.Parse dereferenced a nil raw schema and panicked
+internal/snapshot/snapshot_hardening_test.go::TestRewritePreservesInvalidUTF8Bytes	#review	prune rewrite replaced invalid UTF-8 bytes with U+FFFD in developer-owned files
+internal/snapshot/snapshot_hardening_test.go::TestReferencesNamespaceIsLanguageAgnostic	#review	root-namespace detection only recognised C# `namespace X;` lines
+internal/renderer/hardening_test.go::TestCustomTemplateStagedOncePerRun	#review	two contexts with the same overwrite:false target overwrote each other in one render
+internal/templatefuncs/templatefuncs_hardening_test.go::TestSetInitializesNilMap	#review	Set template function panicked on a nil registry-packages map
+internal/appdir/appdir_test.go::TestBaseOverrideConcurrentAccess	#review	baseOverride was written without synchronization and raced under -race
+internal/renderer/hardening_test.go::TestBeforeCommitHookConcurrentAccess	#review	beforeCommitHook test seam was an unsynchronized global and raced with rendering
