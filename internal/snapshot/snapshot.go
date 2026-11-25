@@ -512,6 +512,51 @@ func RenameEntityFile(outputDir, relPath, oldName, newName string) (newRel strin
 	return newRel, true, nil
 }
 
+// removeFileFn is a seam for testing the failure path of ReplaceScaffoldedFile.
+var removeFileFn = os.Remove
+
+// ReplaceScaffoldedFile replaces a scaffolded custom file at destRel with the
+// developer's existing custom file at sourceRel, applying transforms to its
+// content in memory first. The destination is committed atomically before the
+// source is removed, so a failed write or transform never destroys either copy.
+// A failed source removal is reported: the destination is already correct and
+// the developer can remove the leftover manually.
+func ReplaceScaffoldedFile(outputDir, sourceRel, destRel string, transforms ...func([]byte) []byte) error {
+	src, err := safeRelPath(outputDir, sourceRel)
+	if err != nil {
+		return err
+	}
+	dst, err := safeRelPath(outputDir, destRel)
+	if err != nil {
+		return err
+	}
+	absOutput, err := filepath.Abs(outputDir)
+	if err != nil {
+		return fmt.Errorf("resolve output dir %q: %w", outputDir, err)
+	}
+	if err := fsutil.RefuseSymlinks(absOutput, src); err != nil {
+		return err
+	}
+	if err := fsutil.RefuseSymlinks(absOutput, dst); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(src) //nolint:gosec // src passed safeRelPath and RefuseSymlinks validation
+	if err != nil {
+		return fmt.Errorf("read %s: %w", sourceRel, err)
+	}
+	out := data
+	for _, transform := range transforms {
+		out = transform(out)
+	}
+	if err := fsutil.AtomicWrite(dst, out); err != nil {
+		return fmt.Errorf("write %s: %w", destRel, err)
+	}
+	if err := removeFileFn(src); err != nil {
+		return fmt.Errorf("remove replaced %s: %w", sourceRel, err)
+	}
+	return nil
+}
+
 // FieldRenameReport returns a human-readable report for the field renames in
 // the diff, or an empty string when there are none. It tells the developer that
 // a safe column rename is required — a DropColumn + AddColumn would destroy the

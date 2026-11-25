@@ -134,3 +134,5 @@ cmd/domaincraft/commands_update_security_test.go::TestReplaceExecutableUsesSameV
 cmd/domaincraft/commands_hardening_test.go::TestPruneCleanupErrorPrintedOnce	#5	failed namespace rewrite under --prune was warned about and then printed again as Error
 cmd/domaincraft/commands_hardening_test.go::TestUsageErrorsExitTwo	#5	bad flags, bad arguments and missing --bridge exited with code 1 instead of 2
 internal/renderer/enum_array_test.go::TestTSCoreRendersEnumArrayType	#5	generated TypeScript enum arrays were empty because the core dropped its array syntax fallback and the bridge declared no array_format
+internal/snapshot/snapshot_test.go::TestReplaceScaffoldedFileKeepsSourceOnRemoveFailure	#5	--prune deleted the scaffolded custom file before rename and lost both copies when rename failed
+internal/snapshot/snapshot_test.go::TestReplaceScaffoldedFileSucceeds	#5	scaffolded custom file replacement never committed the developer content atomically

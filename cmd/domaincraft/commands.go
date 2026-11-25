@@ -1237,9 +1237,11 @@ func handleRename(mc migrationContext, ren snapshot.Rename, d *snapshot.Diff) (b
 				// The destination was scaffolded this run by the custom
 				// (overwrite: false) template. Replace it with the developer's
 				// existing custom file so custom hooks survive the rename.
-				// Use the validated helper: a poisoned snapshot path must never
-				// remove a file outside outputDir (including through a symlink).
-				if err := snapshot.DeleteFile(mc.opts.outputDir, newRel); err != nil {
+				// The helper commits the new file before removing the old one:
+				// a failed write or removal cannot leave the developer without
+				// either copy, and poisoned snapshot paths stay inside outputDir.
+				transforms := snapshot.RenameTransforms(ren.OldName, ren.NewName, d)
+				if err := snapshot.ReplaceScaffoldedFile(mc.opts.outputDir, f.Path, newRel, transforms...); err != nil {
 					if mc.opts.prune {
 						failures = append(failures, fmt.Errorf("replace scaffolded %s: %w", newRel, err))
 					} else {
@@ -1247,6 +1249,8 @@ func handleRename(mc migrationContext, ren snapshot.Rename, d *snapshot.Diff) (b
 					}
 					continue
 				}
+				mc.log.Info("renamed %s -> %s (content updated)", f.Path, newRel)
+				continue
 			}
 			newRel, renamed, err := snapshot.RenameEntityFile(mc.opts.outputDir, f.Path, ren.OldName, ren.NewName)
 			if err != nil {

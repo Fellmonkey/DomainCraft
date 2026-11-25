@@ -867,3 +867,85 @@ func TestTypeChangeReport(t *testing.T) {
 		}
 	})
 }
+
+// TestReplaceScaffoldedFileKeepsSourceOnRemoveFailure guards the --prune
+// replace path: a failed source removal must never destroy the developer's
+// file, and the destination must already hold the transformed content.
+func TestReplaceScaffoldedFileKeepsSourceOnRemoveFailure(t *testing.T) {
+	// This test mutates the removeFileFn seam, so it must not run in parallel.
+	dir := t.TempDir()
+	sourceRel := "src/Services/ProductService.cs"
+	destRel := "src/Services/ItemService.cs"
+	source := filepath.Join(dir, filepath.FromSlash(sourceRel))
+	dest := filepath.Join(dir, filepath.FromSlash(destRel))
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(source, []byte("// developer hook for ProductService\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if err := os.WriteFile(dest, []byte("// scaffolded ItemService\n"), 0o644); err != nil {
+		t.Fatalf("write destination: %v", err)
+	}
+
+	original := removeFileFn
+	t.Cleanup(func() { removeFileFn = original })
+	removeFileFn = func(string) error { return fmt.Errorf("remove failed") }
+
+	transform := func(b []byte) []byte {
+		return []byte(strings.ReplaceAll(string(b), "Product", "Item"))
+	}
+	err := ReplaceScaffoldedFile(dir, sourceRel, destRel, transform)
+	if err == nil {
+		t.Fatal("expected error from failed source removal")
+	}
+
+	gotDest, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("read destination: %v", err)
+	}
+	if !strings.Contains(string(gotDest), "developer hook for ItemService") {
+		t.Errorf("destination lost the developer content: %q", gotDest)
+	}
+	if strings.Contains(string(gotDest), "scaffolded") {
+		t.Errorf("destination still holds the scaffolded content: %q", gotDest)
+	}
+	if _, err := os.Stat(source); err != nil {
+		t.Errorf("source was removed before the destination was committed: %v", err)
+	}
+}
+
+func TestReplaceScaffoldedFileSucceeds(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sourceRel := "src/Services/ProductService.cs"
+	destRel := "src/Services/ItemService.cs"
+	source := filepath.Join(dir, filepath.FromSlash(sourceRel))
+	dest := filepath.Join(dir, filepath.FromSlash(destRel))
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(source, []byte("// developer hook for ProductService\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if err := os.WriteFile(dest, []byte("// scaffolded ItemService\n"), 0o644); err != nil {
+		t.Fatalf("write destination: %v", err)
+	}
+
+	transform := func(b []byte) []byte {
+		return []byte(strings.ReplaceAll(string(b), "Product", "Item"))
+	}
+	if err := ReplaceScaffoldedFile(dir, sourceRel, destRel, transform); err != nil {
+		t.Fatalf("ReplaceScaffoldedFile() error = %v", err)
+	}
+	gotDest, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("read destination: %v", err)
+	}
+	if !strings.Contains(string(gotDest), "developer hook for ItemService") {
+		t.Errorf("destination = %q, want transformed developer content", gotDest)
+	}
+	if _, err := os.Stat(source); !os.IsNotExist(err) {
+		t.Errorf("source still exists or stat failed: %v", err)
+	}
+}
