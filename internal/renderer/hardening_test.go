@@ -313,6 +313,59 @@ templates:
 	assertNoRenderTemps(t, out)
 }
 
+// A directory swapped for a symlink after staging must not redirect the commit.
+// A plain os.Lstat at commit time sees only the leaf and would miss this; the
+// whole write path now goes through os.Root, which refuses to follow the link.
+func TestRenderRejectsParentSymlinkPlantedBeforeCommit(t *testing.T) {
+	base := t.TempDir()
+	bridge := writeHardeningBridge(t, map[string]string{
+		"bridge.yaml": `name: demo
+contract_version: 1
+templates:
+  - for: project
+    source: templates/good.tmpl
+    target: "src/App.cs"
+`,
+		"templates/good.tmpl": `generated`,
+	})
+	out := filepath.Join(base, "out")
+	src := filepath.Join(out, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatalf("mkdir src: %v", err)
+	}
+	outside := filepath.Join(base, "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatalf("mkdir outside: %v", err)
+	}
+	probe := filepath.Join(base, "probe.link")
+	if err := os.Symlink(outside, probe); err != nil {
+		t.Skipf("symlinks unavailable on this host: %v", err)
+	}
+	_ = os.Remove(probe)
+
+	r, err := New(bridge, nil)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	beforeCommitHook = func() {
+		if err := os.RemoveAll(src); err != nil {
+			t.Errorf("remove staged src: %v", err)
+		}
+		if err := os.Symlink(outside, src); err != nil {
+			t.Errorf("plant parent symlink: %v", err)
+		}
+	}
+	t.Cleanup(func() { beforeCommitHook = nil })
+
+	if _, _, err := r.Render(&ir.Project{Name: "P"}, out); err == nil {
+		t.Fatal("Render succeeded after parent directory was replaced by a symlink")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "App.cs")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("rendered file escaped outputDir through a parent symlink")
+	}
+	assertNoRenderTemps(t, out)
+}
+
 func assertNoRenderTemps(t *testing.T, dir string) {
 	t.Helper()
 	entries, err := os.ReadDir(dir)

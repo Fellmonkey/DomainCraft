@@ -158,3 +158,11 @@ internal/bridge/update_contract_test.go::TestGithubAPIHeadRejectsUnsafeDefaultBr
 pkg/textutil/textutil_test.go::TestCasingKeepsUnicodeValid	#review	byte-sliced first letter corrupted multi-byte project names
 cmd/domaincraft/commands_admin_test.go::TestGenerateAdminPanelPath	#review	admin bridge resolution and rendering had no CLI coverage
 internal/renderer/load_test.go::TestLoadSourceCacheFollowsContentChanges	#review	shared bridge parse cache could serve a stale manifest after an update
+internal/renderer/hardening_test.go::TestRenderRejectsParentSymlinkPlantedBeforeCommit	#review	parent directory swapped for a symlink after staging redirected the commit rename outside outputDir
+pkg/logger/logger_test.go::TestLoggerOmitsANSIWhenNotTTY	#review	ANSI escapes were written into redirected stderr on every CLI invocation
+internal/bridge/hardening_test.go::TestCheckForUpdateJoinsCacheWriteFailure	#review	cache-write error was dropped when the update probe also failed, so every run repeated the timeout
+internal/ir/endpoints_test.go::TestEndpointsDoNotShareErrorStatuses	#review	endpoint pairs shared one ErrorStatuses backing array; mutating one changed its sibling
+internal/ir/dto_test.go::TestDTOFieldsDoNotShareValidations	#review	DTO projections copied Field but not Field.Validations; mutating a DTO changed the IR field
+internal/renderer/models_test.go::TestSeedReturnsDefensiveCopy	#review	RenderContext.Seed() returned Records directly; mutating the result changed SeedData
+internal/bridge/context_test.go::TestCommandContextConcurrentAccess	#review	global commandCtx was read and written without synchronization and raced under -race
+internal/renderer/load_test.go::TestParsedSourceCacheEvictsOldEntries	#review	parsedSourceCache had no bound and grew on every bridge.yaml edit in a long-lived host

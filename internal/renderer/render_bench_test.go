@@ -63,11 +63,17 @@ templates:
 // BenchmarkRenderWarm performs twice per file (before and after MkdirAll).
 // Measured on Windows/amd64 at 2000 entities: containment 213 ms for 2000
 // calls (~106 us/call, x2 per file) vs 3.80 s total render — about 11%.
-// An os.Root rewrite removed the component walks but made warm render 2.9x
-// slower there, because every Root operation re-resolves each component through
-// directory handles. The first pass is now cached per Render (directories
-// only); the second stays fresh. A/B at 2000 entities: 4.32 s -> 4.17 s median
-// warm render. Keep this benchmark as the measurement baseline.
+// The first pass is cached per Render (directories only); the second stays
+// fresh. A/B at 2000 entities: 4.32 s -> 4.17 s median warm render.
+//
+// A full os.Root rewrite of staging + commit is NOT acceptable: every Root
+// operation re-resolves each path component through directory handles, which
+// measured 10.43 s/op vs 3.65 s/op baseline (2.86x). The commit-phase fix
+// instead captures each parent directory once during staging, opens one
+// os.Root per parent at commit, and routes only the two rename calls through
+// it (single-component names): 4.14 s/op (1.13x). Do not move staging file
+// creation, Lstat or containment checks onto Root — that reintroduces the
+// 2.9x regression. Keep this benchmark as the measurement baseline.
 func BenchmarkSafeOutputPathWarm(b *testing.B) {
 	for _, size := range []int{100, 500, 2000} {
 		b.Run(fmt.Sprintf("entities=%d", size), func(b *testing.B) {

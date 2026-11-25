@@ -99,9 +99,20 @@ func failWithTempCleanup(err error, tmp *os.File, path string) error {
 // original is retained for callers that invoke rollbackWrites directly with
 // in-memory bytes; Render itself no longer reads existing targets up front.
 type stagedWrite struct {
-	temp     string
-	target   string
-	backup   string
+	temp   string // absolute temp path, for staging cleanup and messages
+	target string // absolute target path, for the returned list and messages
+	backup string // absolute backup path, for messages
+
+	// parentDir was verified free of symlinks at staging. dirRoot is opened
+	// from it at commit; every commit/rename goes through that handle, so a
+	// directory swapped for a symlink afterwards cannot redirect the write.
+	parentDir  string
+	parentInfo os.FileInfo
+	dirRoot    *os.Root
+	leaf       string // target name inside parentDir
+	tempLeaf   string // temp name inside parentDir
+	backupLeaf string // backup name inside parentDir
+
 	original []byte
 	existed  bool
 	mode     os.FileMode
@@ -118,31 +129,73 @@ func rollbackWrites(staged, committed []stagedWrite) error {
 		if w.backup != "" {
 			// The previous file was moved aside before the new one landed;
 			// moving it back restores bytes, mode and timestamps exactly.
-			if err := os.Rename(w.backup, w.target); err != nil {
+			var err error
+			if w.dirRoot != nil {
+				err = w.dirRoot.Rename(w.backupLeaf, w.leaf)
+			} else {
+				err = os.Rename(w.backup, w.target)
+			}
+			if err != nil {
 				failures = append(failures, fmt.Errorf("restore %s: %w", w.target, err))
 			}
 			continue
 		}
 		if w.existed {
-			if err := fsutil.AtomicWrite(w.target, w.original); err != nil {
+			var err error
+			if w.dirRoot != nil {
+				err = fsutil.AtomicWriteRoot(w.dirRoot, w.leaf, w.original)
+			} else {
+				err = fsutil.AtomicWrite(w.target, w.original)
+			}
+			if err != nil {
 				failures = append(failures, fmt.Errorf("restore %s: %w", w.target, err))
 				continue
 			}
-			if err := os.Chmod(w.target, w.mode); err != nil {
+			if w.dirRoot != nil {
+				err = chmodRoot(w.dirRoot, w.leaf, w.mode)
+			} else {
+				err = os.Chmod(w.target, w.mode)
+			}
+			if err != nil {
 				failures = append(failures, fmt.Errorf("restore mode of %s: %w", w.target, err))
 			}
 			continue
 		}
-		if err := os.Remove(w.target); err != nil && !errors.Is(err, os.ErrNotExist) {
+		var err error
+		if w.dirRoot != nil {
+			err = w.dirRoot.Remove(w.leaf)
+		} else {
+			err = os.Remove(w.target)
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			failures = append(failures, fmt.Errorf("remove %s: %w", w.target, err))
 		}
 	}
 	for _, w := range staged {
-		if err := os.Remove(w.temp); err != nil && !errors.Is(err, os.ErrNotExist) {
+		var err error
+		if w.dirRoot != nil {
+			err = w.dirRoot.Remove(w.tempLeaf)
+		} else {
+			err = os.Remove(w.temp)
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			failures = append(failures, fmt.Errorf("remove temp %s: %w", w.temp, err))
 		}
 	}
 	return errors.Join(failures...)
+}
+
+// chmodRoot applies mode to a file inside root. os.Root has no Chmod method,
+// so the file is reopened for the metadata-only change.
+func chmodRoot(root *os.Root, rel string, mode os.FileMode) error {
+	f, err := root.OpenFile(rel, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	if err := f.Chmod(mode); err != nil {
+		return errors.Join(err, f.Close())
+	}
+	return f.Close()
 }
 
 // rollbackError attaches rollback failures to the error that triggered them.
@@ -195,10 +248,48 @@ type renderSession struct {
 	pkgs      map[string]string
 	helpers   *template.Template
 
-	verified  map[string]bool
-	staged    []stagedWrite
-	committed []stagedWrite
-	manifest  []RenderedFile
+	verified map[string]bool
+	// parentInfos is captured once per directory during staging; roots holds
+	// one os.Root per directory, opened at commit and reused by all its files.
+	parentInfos map[string]os.FileInfo
+	roots       map[string]*os.Root
+	staged      []stagedWrite
+	committed   []stagedWrite
+	manifest    []RenderedFile
+}
+
+// dirRoot returns the handle for a staged file's parent directory. The handle
+// is opened at commit and checked against the FileInfo captured at staging:
+// if the directory was replaced in between, the mismatch aborts the render
+// instead of following the replacement.
+//
+// Scope is deliberate: only the two renames per file go through Root. Opening
+// every staging operation (MkdirAll, Lstat, CreateTemp) through Root re-resolves
+// each component and makes a warm render ~2.9x slower — see the A/B numbers in
+// BenchmarkSafeOutputPathWarm. The symlink containment checks already cover
+// staging, so Root is needed only for the final check-then-use window.
+func (s *renderSession) dirRoot(w *stagedWrite) (*os.Root, error) {
+	if root := s.roots[w.parentDir]; root != nil {
+		return root, nil
+	}
+	root, err := os.OpenRoot(w.parentDir)
+	if err != nil {
+		return nil, fmt.Errorf("open output directory %s: %w", w.parentDir, err)
+	}
+	info, err := root.Stat(".")
+	if err != nil {
+		_ = root.Close()
+		return nil, fmt.Errorf("inspect output directory %s: %w", w.parentDir, err)
+	}
+	if !os.SameFile(w.parentInfo, info) {
+		_ = root.Close()
+		return nil, fmt.Errorf("output directory %s was replaced before commit", w.parentDir)
+	}
+	if s.roots == nil {
+		s.roots = make(map[string]*os.Root)
+	}
+	s.roots[w.parentDir] = root
+	return root, nil
 }
 
 // fail drops every staged temp file and restores committed files, attaching
@@ -309,6 +400,18 @@ func (r *Renderer) stageTemplates(s *renderSession) error {
 					if _, err := safeOutputPath(s.outputDir, renderedTarget); err != nil {
 						return s.fail(err)
 					}
+					// Capture the verified parent directory now. Commit opens an
+					// os.Root from this path and compares the directory identity,
+					// so a swap before commit is detected instead of followed.
+					parentDir := filepath.Dir(absTarget)
+					parentInfo, ok := s.parentInfos[parentDir]
+					if !ok {
+						parentInfo, err = os.Lstat(parentDir)
+						if err != nil {
+							return s.fail(fmt.Errorf("inspect output directory for %s: %w", renderedTarget, err))
+						}
+						s.parentInfos[parentDir] = parentInfo
+					}
 
 					existed := false
 					mode := os.FileMode(0o644) // os.Create's default under the usual umask
@@ -346,11 +449,15 @@ func (r *Renderer) stageTemplates(s *renderSession) error {
 						return s.fail(fmt.Errorf("close temp output %s: %w", tmpPath, err))
 					}
 					s.staged = append(s.staged, stagedWrite{
-						temp:    tmpPath,
-						target:  absTarget,
-						existed: existed,
-						mode:    mode,
-						record:  record,
+						temp:       tmpPath,
+						target:     absTarget,
+						parentDir:  parentDir,
+						parentInfo: parentInfo,
+						leaf:       filepath.Base(absTarget),
+						tempLeaf:   filepath.Base(tmpPath),
+						existed:    existed,
+						mode:       mode,
+						record:     record,
 					})
 					s.manifest = append(s.manifest, record)
 				}
@@ -368,16 +475,24 @@ func (r *Renderer) commitWrites(s *renderSession) error {
 		beforeCommitHook()
 	}
 	for _, w := range s.staged {
+		root, err := s.dirRoot(&w)
+		if err != nil {
+			return s.fail(err)
+		}
+		w.dirRoot = root
+		// os.Lstat sees only the leaf, which is enough here: the renames below
+		// go through root, so a parent swapped for a symlink cannot redirect
+		// them even if this stat saw a regular file.
 		if info, err := os.Lstat(w.target); err == nil {
 			if info.Mode()&os.ModeSymlink != 0 {
 				return s.fail(fmt.Errorf("template target path escapes output directory through a symlink: %s", w.record.Path))
 			}
 			// The staged temp name is already unique in this directory.
-			backup := w.temp + ".bak"
-			if err := os.Rename(w.target, backup); err != nil {
+			w.backup = w.temp + ".bak"
+			w.backupLeaf = w.tempLeaf + ".bak"
+			if err := root.Rename(w.leaf, w.backupLeaf); err != nil {
 				return s.fail(fmt.Errorf("back up output file %s: %w", w.record.Path, err))
 			}
-			w.backup = backup
 			w.existed = true
 			w.mode = info.Mode().Perm()
 		} else if errors.Is(err, os.ErrNotExist) {
@@ -392,7 +507,7 @@ func (r *Renderer) commitWrites(s *renderSession) error {
 		// Record the write before the final rename so a failure here still
 		// restores the backup and removes the staged temp file.
 		s.committed = append(s.committed, w)
-		if err := os.Rename(w.temp, w.target); err != nil {
+		if err := root.Rename(w.tempLeaf, w.leaf); err != nil {
 			return s.fail(fmt.Errorf("commit output file %s: %w", w.record.Path, err))
 		}
 	}
@@ -405,7 +520,13 @@ func (r *Renderer) commitWrites(s *renderSession) error {
 func (r *Renderer) cleanupBackups(s *renderSession) {
 	for _, w := range s.committed {
 		if w.backup != "" {
-			if err := os.Remove(w.backup); err != nil && !errors.Is(err, os.ErrNotExist) {
+			var err error
+			if w.dirRoot != nil {
+				err = w.dirRoot.Remove(w.backupLeaf)
+			} else {
+				err = os.Remove(w.backup)
+			}
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
 				r.log.Warn("remove backup %s: %v", w.backup, err)
 			}
 		}
@@ -440,17 +561,25 @@ func (r *Renderer) Render(project *ir.Project, outputDir string) ([]string, []Re
 	}
 
 	session := &renderSession{
-		outputDir: outputDir,
-		project:   project,
-		funcMap:   funcMap,
-		pkgs:      pkgs,
-		helpers:   helpersTemplate,
-		verified:  make(map[string]bool),
-		staged:    make([]stagedWrite, 0),
+		outputDir:   outputDir,
+		project:     project,
+		funcMap:     funcMap,
+		pkgs:        pkgs,
+		helpers:     helpersTemplate,
+		verified:    make(map[string]bool),
+		parentInfos: make(map[string]os.FileInfo),
+		roots:       make(map[string]*os.Root),
+		staged:      make([]stagedWrite, 0),
 		// committed is empty during staging; commitWrites appends as files land.
 		committed: make([]stagedWrite, 0),
 		manifest:  make([]RenderedFile, 0),
 	}
+
+	defer func() {
+		for _, root := range session.roots {
+			_ = root.Close()
+		}
+	}()
 
 	if err := r.stageTemplates(session); err != nil {
 		return nil, nil, err
