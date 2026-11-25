@@ -12,6 +12,7 @@ on:
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -22,6 +23,7 @@ concurrency:
 
 jobs:
   test:
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -69,7 +71,10 @@ jobs:
 
       - name: Test
         # Shuffles order because suites mutate package-global seams.
-        run: go test -race -count=1 -shuffle=on ./...
+        # CI must never skip the bundled-bridge contract gate via local opt-out.
+        run: |
+          unset DOMAINCRAFT_LOCAL_DEV
+          go test -race -count=1 -shuffle=on ./...
 
       - name: Integration tests
         run: go test -tags=integration ./internal/bridge
@@ -77,6 +82,7 @@ jobs:
   schema-check:
     name: Verify generated schema is up to date
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout

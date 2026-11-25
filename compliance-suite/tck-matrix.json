@@ -1,0 +1,46 @@
+{
+  "comment": "Single source of truth for certification targets. Adding a bridge = one row here; compliance-suite/tck.sh discovers it with Python. kind: hermetic = npm suite only; glue = generated project typecheck; k6 = generated backend over Docker Compose + suite.js + interop clients.",
+  "targets": [
+    {
+      "id": "ts-core",
+      "kind": "hermetic",
+      "enabled": true,
+      "bridge": "bridges/typescript/core",
+      "tck_dir": "bridges/typescript/core/tck",
+      "script": "certify"
+    },
+    {
+      "id": "ts-client",
+      "kind": "hermetic",
+      "enabled": true,
+      "bridge": "bridges/typescript/client",
+      "tck_dir": "bridges/typescript/client/tck",
+      "script": "certify"
+    },
+    {
+      "id": "react-rest",
+      "kind": "glue",
+      "enabled": true,
+      "bridge": "bridges/typescript/react",
+      "output": "bridges/typescript/react/tck/generated",
+      "script": "typecheck"
+    },
+    {
+      "id": "csharp-rest",
+      "kind": "k6",
+      "enabled": true,
+      "bridge": "bridges/csharp/transport/rest",
+      "output": "test-app",
+      "port": 9000,
+      "health_path": "/health/ready",
+      "interop": [
+        {
+          "id": "ts-client",
+          "bridge": "bridges/typescript/client",
+          "tck_dir": "bridges/typescript/client/tck",
+          "script": "interop"
+        }
+      ]
+    }
+  ]
+}

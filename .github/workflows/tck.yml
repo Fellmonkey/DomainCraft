@@ -1,0 +1,95 @@
+name: tck
+
+# Targets: compliance-suite/tck-matrix.json. Logic: compliance-suite/tck.sh.
+# This file only declares jobs. A bridge change selects that bridge and its
+# extenders; a core change selects everything.
+
+on:
+  push:
+    branches: [main]
+    paths: ['bridges/**', 'internal/**', 'pkg/**', 'spec/**', 'cmd/**', 'compliance-suite/**', 'go.mod', 'go.sum', '.github/workflows/tck.yml']
+  pull_request:
+    paths: ['bridges/**', 'internal/**', 'pkg/**', 'spec/**', 'cmd/**', 'compliance-suite/**', 'go.mod', 'go.sum', '.github/workflows/tck.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tck-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      node: ${{ steps.scope.outputs.node }}
+      k6: ${{ steps.scope.outputs.k6 }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.27.4', cache: true, cache-dependency-path: go.sum }
+      - name: Scope targets changed in this PR
+        id: scope
+        run: bash compliance-suite/tck.sh discover
+
+  node:
+    name: Node TCK — ${{ matrix.target.id }}
+    needs: discover
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.discover.outputs.node) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.27.4', cache: true, cache-dependency-path: go.sum }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.target.tck_dir && format('{0}/package-lock.json', matrix.target.tck_dir) || 'bridges/typescript/core/tck/package-lock.json' }}
+      - name: Generate and certify
+        run: bash compliance-suite/tck.sh node '${{ toJSON(matrix.target) }}'
+
+  k6:
+    name: Backend TCK — ${{ matrix.target.id }}
+    needs: discover
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.discover.outputs.k6) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.27.4', cache: true, cache-dependency-path: go.sum }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: bridges/typescript/client/tck/package-lock.json
+      - uses: grafana/setup-k6-action@v1
+      - name: Generate and start backend
+        run: bash compliance-suite/tck.sh backend-up '${{ toJSON(matrix.target) }}'
+      - name: Run k6 certification suite
+        run: k6 run -e API_URL="http://localhost:${{ matrix.target.port || 9000 }}" ./compliance-suite/suite.js
+      - name: Client interop against the same backend
+        run: bash compliance-suite/tck.sh interop '${{ toJSON(matrix.target) }}'
+      - name: Dump logs on failure
+        if: failure()
+        run: bash compliance-suite/tck.sh logs '${{ toJSON(matrix.target) }}'
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: tck-logs-${{ matrix.target.id }}
+          path: ${{ runner.temp }}/compose-${{ matrix.target.id }}.log
+          if-no-files-found: ignore
+      - name: Stop backend
+        if: always()
+        run: bash compliance-suite/tck.sh backend-down '${{ toJSON(matrix.target) }}'

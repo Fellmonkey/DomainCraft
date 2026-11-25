@@ -56,6 +56,7 @@ type goldenBridgeManifest struct {
 	Name             string            `yaml:"name"`
 	RegistryURL      string            `yaml:"registry_url"`
 	RegistryPackages map[string]string `yaml:"registry_packages"`
+	TargetFramework  string            `yaml:"target_framework"`
 }
 
 type goldenPackageCache struct {
@@ -182,11 +183,26 @@ func seedPackageVersions(framework string) error {
 		if registryURL == "" {
 			return fmt.Errorf("bridge %s declares packages but no registry_url", entry.ID)
 		}
-		packagesByKey := make(map[string]goldenPackageEntry, len(packageIDs))
+		// The renderer uses the project platform when set, otherwise the
+		// bridge-declared target_framework. Seed both keys so a golden run is
+		// hermetic even when the golden domain declares no platform.
+		frameworks := map[string]bool{framework: true}
+		for _, base := range chain {
+			m, err := readBridgeManifest(base)
+			if err != nil {
+				return err
+			}
+			if m.TargetFramework != "" {
+				frameworks[m.TargetFramework] = true
+			}
+		}
+		packagesByKey := make(map[string]goldenPackageEntry, len(packageIDs)*len(frameworks))
 		storedAt := time.Now()
 		for packageID := range packageIDs {
-			key := registryURL + "\x00" + packageID + "\x00" + framework
-			packagesByKey[key] = goldenPackageEntry{Value: hermeticPackageVersion, StoredAt: storedAt}
+			for fw := range frameworks {
+				key := registryURL + "\x00" + packageID + "\x00" + fw
+				packagesByKey[key] = goldenPackageEntry{Value: hermeticPackageVersion, StoredAt: storedAt}
+			}
 		}
 		cacheDir, err := appdir.CacheDir(cacheNamespace(adapter.Name))
 		if err != nil {
@@ -345,6 +361,31 @@ func TestGoldenLeafBridges(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestGoldenSeedCoversBridgeTargetFramework guards the hermetic cache: the
+// renderer resolves packages with the bridge-declared TFM when the domain has
+// no platform, so that key must be seeded or golden runs hit the network.
+func TestGoldenSeedCoversBridgeTargetFramework(t *testing.T) {
+	cacheDir, err := appdir.CacheDir(cacheNamespace("csharp-rest"))
+	if err != nil {
+		t.Fatalf("resolve seeded cache dir: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(cacheDir, packages.CacheFileName))
+	if err != nil {
+		t.Fatalf("read seeded package cache: %v", err)
+	}
+	var cache goldenPackageCache
+	if err := json.Unmarshal(data, &cache); err != nil {
+		t.Fatalf("decode seeded package cache: %v", err)
+	}
+	want := "\x00net10.0"
+	for key := range cache.Entries {
+		if strings.HasSuffix(key, want) {
+			return
+		}
+	}
+	t.Fatalf("seeded cache has no %q key (keys: %d)", want, len(cache.Entries))
 }
 
 // TestRenderDeterministic asserts that two renders of the same domain through
