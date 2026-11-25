@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/DomainCraft/DomainCraft/internal/appdir"
 )
@@ -371,7 +373,12 @@ func TestValidateFetchBranch(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateFetchBranch(tt.branch)
+			// ApplyUpdate validates the fetch branch with validatePinRef and
+			// wraps its error with this wording; check the same wrapper.
+			err := validatePinRef(tt.branch)
+			if err != nil {
+				err = fmt.Errorf("invalid fetch branch %q: %w", tt.branch, err)
+			}
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("validateFetchBranch(%q) = %v, wantErr %v", tt.branch, err, tt.wantErr)
 			}
@@ -526,5 +533,65 @@ func TestCheckForUpdateJoinsCacheWriteFailure(t *testing.T) {
 	}
 	if !strings.Contains(msg, probeErr.Error()) {
 		t.Errorf("error = %q, want the network failure context", msg)
+	}
+}
+
+// --check-updates is a status query: probing the remote must not rewrite
+// .domaincraft-meta.json. Generation-time probes still record the attempt.
+func TestStatusCheckDoesNotMutateCacheMeta(t *testing.T) {
+	// No t.Parallel: the cache base and httpGetBodyFn are package globals.
+	root := t.TempDir()
+	appdir.SetBaseForTesting(root)
+	t.Cleanup(func() { appdir.SetBaseForTesting("") })
+
+	entry := cacheEntry("status-readonly", "owner/status-readonly")
+	checkedAt := time.Now().Add(-time.Hour).UTC().Truncate(time.Millisecond)
+	if err := WriteMeta(entry, &CacheMeta{
+		ID: entry.ID, Source: entry.GitHub, Version: "1.0.0",
+		Commit: "local-head", Branch: "main", LastCheckedAt: checkedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := httpGetBodyFn
+	t.Cleanup(func() { httpGetBodyFn = orig })
+	httpGetBodyFn = func(url string) ([]byte, error) {
+		switch {
+		case containsAny(url, "/commits/"):
+			return []byte(`{"sha":"abcdef1234567890"}`), nil
+		case containsAny(url, "/bridge.yaml"):
+			return []byte("name: b\ncontract_version: 1\n"), nil
+		case containsAny(url, "/repos/"):
+			return []byte(`{"default_branch":"main"}`), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	st := entry.Status(true)
+	if !st.RemoteReachable || !st.Outdated {
+		t.Fatalf("status = %+v, want a reachable, supported update", st)
+	}
+
+	after, err := ReadMeta(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after == nil {
+		t.Fatal("cache metadata disappeared after a status check")
+	}
+	if !after.LastCheckedAt.Equal(checkedAt) || after.Commit != "local-head" {
+		t.Fatalf("status check mutated cache metadata: got %+v, want LastCheckedAt %v and Commit local-head", after, checkedAt)
+	}
+
+	// The ordinary (generation-time) probe must keep its previous behavior.
+	if _, err := CheckForUpdate(entry, 0); err != nil {
+		t.Fatal(err)
+	}
+	written, err := ReadMeta(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if written.LastCheckedAt.Equal(checkedAt) {
+		t.Fatal("CheckForUpdate stopped recording LastCheckedAt")
 	}
 }

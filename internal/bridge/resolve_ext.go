@@ -203,13 +203,13 @@ func (e RegistryEntry) Status(checkRemote bool) Status {
 	if meta, err := ReadMeta(e); err == nil && meta != nil && meta.Pin != "" {
 		return s
 	}
-	u, err := CheckForUpdate(e, 0)
+	u, err := CheckForUpdateReadOnly(e, 0)
 	if err == nil && u != nil {
 		s.RemoteReachable = true
 		// Only flag an update when the remote contract can be read and is
 		// supported. A failed probe is "cannot offer update".
 		if c, rerr := remoteContractVersion(e, u.RemoteBranch); rerr == nil {
-			if cerr := shouldApplyContract(c); cerr == nil {
+			if cerr := CheckContractVersion(c); cerr == nil {
 				s.Outdated = true
 			}
 		}

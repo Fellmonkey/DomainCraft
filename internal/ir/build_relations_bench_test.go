@@ -33,12 +33,31 @@ func BenchmarkSortEntities(b *testing.B) {
 				_ = sortEntities(entities)
 			}
 		})
-		// Fan-out: one pop makes every other entity ready at once, so each
-		// insertion re-sorts a growing ready queue.
+		// Fan-out: one pop makes every other entity ready at once, so the
+		// ready queue grows by O(n) insertions at a single step.
 		b.Run(fmt.Sprintf("fanout/%d", size), func(b *testing.B) {
 			entities := make([]Entity, size)
 			for i := range entities {
 				entities[i] = Entity{Name: fmt.Sprintf("E%04d", i)}
+			}
+			for i := 1; i < size; i++ {
+				entities[i].RelationsOut = []Relation{{
+					FieldName:    "root",
+					TargetEntity: &entities[0],
+					IsMany:       false,
+				}}
+			}
+			for b.Loop() {
+				_ = sortEntities(entities)
+			}
+		})
+		// Reverse fan-out: the root unlocks every other entity in descending
+		// name order, so each binary insert shifts the whole ready slice — the
+		// quadratic case the min-heap removes.
+		b.Run(fmt.Sprintf("fanout-reverse/%d", size), func(b *testing.B) {
+			entities := make([]Entity, size)
+			for i := range entities {
+				entities[i] = Entity{Name: fmt.Sprintf("E%04d", size-1-i)}
 			}
 			for i := 1; i < size; i++ {
 				entities[i].RelationsOut = []Relation{{

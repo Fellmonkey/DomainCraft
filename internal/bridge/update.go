@@ -25,6 +25,12 @@ var httpClient = &http.Client{Timeout: 10 * time.Second}
 // cancellable command context cannot hang on a stalled remote.
 const gitCommandTimeout = 2 * time.Minute
 
+// gitCommandContext is the single context source for git children. The initial
+// clone and every update command share this deadline; callers must cancel it.
+func gitCommandContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(CommandContext(), gitCommandTimeout)
+}
+
 // httpGetBodyFn is the HTTP GET used by update probes. It is a variable so
 // tests can substitute a fake and exercise the GitHub code paths offline.
 var httpGetBodyFn = httpGetBody
@@ -79,13 +85,6 @@ func ParseContractVersion(data []byte) (int, bool, error) {
 	return *cfg.ContractVersion, true, nil
 }
 
-// parseBridgeContractVersion keeps the update-side seam used by probes and
-// tests; the parsing itself lives in ParseContractVersion.
-func parseBridgeContractVersion(data []byte) (int, error) {
-	version, _, err := ParseContractVersion(data)
-	return version, err
-}
-
 // CheckContractVersion verifies that a bridge declaring contractVersion is
 // supported by the current core. A newer contract is a hard error — an
 // unsupported bridge must never be downloaded/applied. Shared with the
@@ -95,10 +94,6 @@ func CheckContractVersion(contractVersion int) error {
 		return fmt.Errorf("bridge requires contract v%d, but this core implements contract v%d", contractVersion, CoreContractVersion)
 	}
 	return nil
-}
-
-func shouldApplyContract(contractVersion int) error {
-	return CheckContractVersion(contractVersion)
 }
 
 // remoteContractVersion fetches a bridge's declared contract version at a ref
@@ -119,7 +114,8 @@ func remoteContractVersion(entry RegistryEntry, ref string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return parseBridgeContractVersion(body)
+	version, _, err := ParseContractVersion(body)
+	return version, err
 }
 
 // Update describes a detected newer version of a cached bridge. Callers hand it
@@ -139,6 +135,18 @@ type Update struct {
 // offline generation keeps working with the cached copy. A nil result means the
 // bridge is current (or the check was skipped).
 func CheckForUpdate(entry RegistryEntry, interval time.Duration) (*Update, error) {
+	return checkForUpdate(entry, interval, true)
+}
+
+// CheckForUpdateReadOnly detects updates without recording the attempt in cache
+// metadata. It is the `bridges --check-updates` path: a status query must not
+// mutate .domaincraft-meta.json, while generation-time probes keep refreshing
+// LastCheckedAt through CheckForUpdate.
+func CheckForUpdateReadOnly(entry RegistryEntry, interval time.Duration) (*Update, error) {
+	return checkForUpdate(entry, interval, false)
+}
+
+func checkForUpdate(entry RegistryEntry, interval time.Duration, recordCheck bool) (*Update, error) {
 	meta, err := ensureMeta(entry)
 	if err != nil {
 		return nil, err
@@ -161,14 +169,17 @@ func CheckForUpdate(entry RegistryEntry, interval time.Duration) (*Update, error
 	remoteBranch, remoteCommit, err := githubAPIHead(entry)
 
 	// Record the attempt regardless of outcome so the freshness gate applies
-	// even while offline (otherwise every run would wait on a timeout).
+	// even while offline (otherwise every run would wait on a timeout) — but
+	// only for write-enabled probes; status checks leave the cache untouched.
 	meta.LastCheckedAt = now
-	werr := WriteMeta(entry, meta)
-	if err != nil && werr != nil {
-		return nil, errors.Join(err, fmt.Errorf("record bridge update check: %w", werr))
-	}
-	if werr != nil {
-		return nil, werr
+	if recordCheck {
+		werr := WriteMeta(entry, meta)
+		if err != nil && werr != nil {
+			return nil, errors.Join(err, fmt.Errorf("record bridge update check: %w", werr))
+		}
+		if werr != nil {
+			return nil, werr
+		}
 	}
 
 	if err != nil || remoteCommit == "" {
@@ -184,17 +195,6 @@ func CheckForUpdate(entry RegistryEntry, interval time.Duration) (*Update, error
 		RemoteCommit: remoteCommit,
 		RemoteBranch: remoteBranch,
 	}, nil
-}
-
-// validateFetchBranch applies the strict git-ref grammar used for pinned refs
-// to the branch name passed to `git fetch`. The branch can come from cache
-// metadata, so an attacker-controlled value must never become a git option or a
-// revision expression.
-func validateFetchBranch(branch string) error {
-	if err := validatePinRef(branch); err != nil {
-		return fmt.Errorf("invalid fetch branch %q: %w", branch, err)
-	}
-	return nil
 }
 
 // ApplyUpdate brings a cached bridge up to the upstream default branch,
@@ -219,8 +219,10 @@ func ApplyUpdate(entry RegistryEntry, u *Update) (string, error) {
 	} else if meta, err := ReadMeta(entry); err == nil && meta != nil && meta.Branch != "" {
 		branch = meta.Branch
 	}
-	if err := validateFetchBranch(branch); err != nil {
-		return "", err
+	// The branch can come from cache metadata, so an attacker-controlled value
+	// must never become a git option or a revision expression.
+	if err := validatePinRef(branch); err != nil {
+		return "", fmt.Errorf("invalid fetch branch %q: %w", branch, err)
 	}
 
 	// Fast path: update the existing checkout in place. Keep why it failed so a
@@ -236,11 +238,11 @@ func ApplyUpdate(entry RegistryEntry, u *Update) (string, error) {
 		if serr != nil {
 			return "", fmt.Errorf("read fetched bridge manifest: %w", serr)
 		}
-		contract, perr := parseBridgeContractVersion([]byte(out))
+		contract, _, perr := ParseContractVersion([]byte(out))
 		if perr != nil {
 			return "", perr
 		}
-		if cerr := shouldApplyContract(contract); cerr != nil {
+		if cerr := CheckContractVersion(contract); cerr != nil {
 			return "", cerr
 		}
 		if _, err := runGit(cacheDir, "reset", "--hard", "FETCH_HEAD"); err != nil {
@@ -416,7 +418,7 @@ func httpGetBody(rawURL string) ([]byte, error) {
 func runGit(dir string, args ...string) (string, error) {
 	// A library host may wire context.Background(), so git needs its own
 	// deadline: a hung fetch or clone must not block generation forever.
-	ctx, cancel := context.WithTimeout(CommandContext(), gitCommandTimeout)
+	ctx, cancel := gitCommandContext()
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...) //nolint:gosec // args passed separately; no shell interpretation
 	cmd.Dir = dir

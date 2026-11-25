@@ -39,22 +39,31 @@ func sortEntities(entities []Entity) []Entity {
 			ready = append(ready, e.Name)
 		}
 	}
-	// Deterministic ordering: process ready entities in name order.
 	slices.Sort(ready)
+
+	// Appending is O(1); only an out-of-order append makes the queue unsorted.
+	// Deferring the sort until the next pop turns fan-out (N-1 insertions at
+	// one step) into one sort instead of N-1 full-slice copies. Ascending
+	// insertions never set dirty and keep the old O(1) append path.
+	dirty := false
 	insertReady := func(name string) {
-		at, _ := slices.BinarySearch(ready, name)
-		ready = slices.Insert(ready, at, name)
+		if len(ready) > 0 && name < ready[len(ready)-1] {
+			dirty = true
+		}
+		ready = append(ready, name)
 	}
 
 	order := make([]string, 0, len(entities))
 	for len(ready) > 0 {
+		if dirty {
+			slices.Sort(ready)
+			dirty = false
+		}
 		name := ready[0]
 		ready = ready[1:]
 		order = append(order, name)
 
 		// Decrement only the entities that actually depend on this name.
-		// The binary insert keeps the queue sorted, so the emitted order is
-		// unchanged from sorting the whole queue after every insertion.
 		for _, i := range dependents[name] {
 			inDegree[i]--
 			if inDegree[i] == 0 {

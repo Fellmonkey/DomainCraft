@@ -14,10 +14,10 @@ func TestCoreContractVersionMatchesSpecmeta(t *testing.T) {
 	if CoreContractVersion != specmeta.ContractVersion {
 		t.Errorf("CoreContractVersion = %d, specmeta.ContractVersion = %d", CoreContractVersion, specmeta.ContractVersion)
 	}
-	if err := shouldApplyContract(specmeta.ContractVersion); err != nil {
+	if err := CheckContractVersion(specmeta.ContractVersion); err != nil {
 		t.Errorf("contract equal to specmeta version must be accepted: %v", err)
 	}
-	if err := shouldApplyContract(specmeta.ContractVersion + 1); err == nil {
+	if err := CheckContractVersion(specmeta.ContractVersion + 1); err == nil {
 		t.Error("contract newer than specmeta version must be rejected")
 	}
 }
@@ -39,25 +39,25 @@ func TestParseBridgeContractVersion(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := parseBridgeContractVersion([]byte(c.in))
+			got, _, err := ParseContractVersion([]byte(c.in))
 			if (err != nil) != c.wantErr {
-				t.Fatalf("parseBridgeContractVersion error = %v, wantErr %v", err, c.wantErr)
+				t.Fatalf("ParseContractVersion error = %v, wantErr %v", err, c.wantErr)
 			}
 			if err == nil && got != c.want {
-				t.Errorf("parseBridgeContractVersion = %d, want %d", got, c.want)
+				t.Errorf("ParseContractVersion = %d, want %d", got, c.want)
 			}
 		})
 	}
 }
 
 func TestShouldApplyContract(t *testing.T) {
-	if err := shouldApplyContract(1); err != nil {
+	if err := CheckContractVersion(1); err != nil {
 		t.Errorf("contract 1 should be accepted, got %v", err)
 	}
-	if err := shouldApplyContract(CoreContractVersion); err != nil {
+	if err := CheckContractVersion(CoreContractVersion); err != nil {
 		t.Errorf("contract equal to core should be accepted, got %v", err)
 	}
-	if err := shouldApplyContract(CoreContractVersion + 1); err == nil {
+	if err := CheckContractVersion(CoreContractVersion + 1); err == nil {
 		t.Error("newer contract must be rejected")
 	} else if !strings.Contains(err.Error(), "contract") {
 		t.Errorf("error should mention the contract, got: %v", err)

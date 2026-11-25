@@ -7,12 +7,17 @@ import (
 	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 )
 
-// TestContractVersionAliasesSpecmeta pins the single source of truth: the
-// renderer's public constant must be the specmeta contract, never a copy.
+// TestContractVersionAliasesSpecmeta pins the single source of truth: a bridge
+// that omits `contract_version` resolves to the specmeta contract, never a copy.
 func TestContractVersionAliasesSpecmeta(t *testing.T) {
 	t.Parallel()
-	if ContractVersion != specmeta.ContractVersion {
-		t.Fatalf("renderer.ContractVersion = %d, specmeta.ContractVersion = %d", ContractVersion, specmeta.ContractVersion)
+	dir := writeBridgeConfig(t, "name: b\n")
+	r, err := New(dir, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if got := r.Config().ContractVersion; got != specmeta.ContractVersion {
+		t.Fatalf("default contract version = %d, specmeta.ContractVersion = %d", got, specmeta.ContractVersion)
 	}
 }
 

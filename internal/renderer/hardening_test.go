@@ -638,3 +638,82 @@ templates:
 		}
 	})
 }
+
+// TestRenderCommitPreservesCustomFileCreatedBeforeCommit closes the staging→
+// commit race for overwrite:false targets. Staging skipped a custom file that
+// already existed, but commit backed up and replaced whatever was there and
+// cleanupBackups then deleted the backup, silently losing developer-owned
+// bytes. Earlier committed writes must still roll back when the race is hit.
+func TestRenderCommitPreservesCustomFileCreatedBeforeCommit(t *testing.T) {
+	bridge := writeHardeningBridge(t, map[string]string{
+		"bridge.yaml": `name: demo
+contract_version: 1
+templates:
+  - for: project
+    source: templates/existing.tmpl
+    target: "existing.txt"
+  - for: project
+    source: templates/fresh.tmpl
+    target: "fresh.txt"
+  - for: project
+    source: templates/custom.tmpl
+    target: "custom.txt"
+    overwrite: false
+`,
+		"templates/existing.tmpl": `generated-existing`,
+		"templates/fresh.tmpl":    `generated-fresh`,
+		"templates/custom.tmpl":   `generated-custom`,
+	})
+	r, err := New(bridge, nil)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	out := filepath.Join(t.TempDir(), "out")
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		t.Fatalf("mkdir output: %v", err)
+	}
+	existing := filepath.Join(out, "existing.txt")
+	if err := os.WriteFile(existing, []byte("original"), 0o644); err != nil {
+		t.Fatalf("write prior output: %v", err)
+	}
+	custom := filepath.Join(out, "custom.txt")
+	setBeforeCommitHook(func() {
+		if err := os.WriteFile(custom, []byte("developer-owned"), 0o644); err != nil {
+			t.Errorf("create custom file before commit: %v", err)
+		}
+	})
+	t.Cleanup(func() { setBeforeCommitHook(nil) })
+
+	written, manifest, err := r.Render(&ir.Project{Name: "P"}, out)
+	if err == nil {
+		t.Fatal("Render succeeded after a custom file appeared before commit")
+	}
+	if written != nil || manifest != nil {
+		t.Errorf("failed render returned paths=%q manifest=%+v, want both nil", written, manifest)
+	}
+	if !strings.Contains(err.Error(), "custom.txt") || !strings.Contains(err.Error(), "preserved") {
+		t.Errorf("error = %q, want it to name the preserved custom file", err)
+	}
+
+	data, err := os.ReadFile(custom)
+	if err != nil || string(data) != "developer-owned" {
+		t.Errorf("custom file was replaced: data=%q err=%v", data, err)
+	}
+	data, err = os.ReadFile(existing)
+	if err != nil || string(data) != "original" {
+		t.Errorf("earlier committed write not rolled back: data=%q err=%v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "fresh.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("newly committed file survived rollback: %v", err)
+	}
+	entries, err := os.ReadDir(out)
+	if err != nil {
+		t.Fatalf("read output dir: %v", err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, ".domaincraft-render-") || strings.HasSuffix(name, ".bak") {
+			t.Errorf("leftover phase artifact: %s", name)
+		}
+	}
+}

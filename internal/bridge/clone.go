@@ -222,7 +222,7 @@ func maybeUpdate(entry RegistryEntry, opts *EnsureOptions) error {
 		warnOpts(opts, "skipping update of %q: cannot read remote contract: %v", entry.ID, rerr)
 		return nil
 	}
-	if cerr := shouldApplyContract(c); cerr != nil {
+	if cerr := CheckContractVersion(c); cerr != nil {
 		warnOpts(opts, "skipping update of %q: %v", entry.ID, cerr)
 		return nil
 	}
@@ -262,6 +262,20 @@ func warnOpts(opts *EnsureOptions, format string, args ...any) {
 	}
 }
 
+// prepareCloneCacheDir checks the whole cache path for planted symlinks before
+// creating the parent directory. A clone must not follow a link out of the
+// cache any more than embedded materialization or metadata writes may.
+func prepareCloneCacheDir(cacheDir string) error {
+	if err := refuseSymlinks(CacheDir(), cacheDir); err != nil {
+		return fmt.Errorf("prepare bridge cache dir %q: %w", cacheDir, err)
+	}
+	parent := filepath.Dir(cacheDir)
+	if err := os.MkdirAll(parent, 0o755); err != nil { //nolint:gosec // bridge cache dirs must stay readable across CLI runs
+		return fmt.Errorf("create cache directory: %w", err)
+	}
+	return nil
+}
+
 // CloneBridge performs a shallow git clone of the bridge repository.
 func CloneBridge(entry RegistryEntry) error {
 	if err := validateCacheID(entry.ID); err != nil {
@@ -272,13 +286,14 @@ func CloneBridge(entry RegistryEntry) error {
 	}
 
 	cacheDir := CachePath(entry)
-	parent := filepath.Dir(cacheDir)
-	if err := os.MkdirAll(parent, 0o755); err != nil { //nolint:gosec // bridge cache dirs must stay readable across CLI runs
-		return fmt.Errorf("create cache directory: %w", err)
+	if err := prepareCloneCacheDir(cacheDir); err != nil {
+		return err
 	}
 
 	url := fmt.Sprintf("https://github.com/%s.git", entry.GitHub)
-	cmd := exec.CommandContext(commandCtx, "git", "clone", "--depth", "1", url, cacheDir) //nolint:gosec // args passed separately; no shell interpretation
+	ctx, cancel := gitCommandContext()
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", url, cacheDir) //nolint:gosec // args passed separately; no shell interpretation
 	cmd.Env = gitScrubbedEnv()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		cloneErr := fmt.Errorf("clone %s: %w: %s", url, err, out)

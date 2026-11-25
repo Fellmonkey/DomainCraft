@@ -236,7 +236,7 @@ func TestCacheIsolationBetweenOwners(t *testing.T) {
 }
 
 // TestApplyUpdateRejectsUnsupportedContract checks the hard invariant at the
-// apply site, not only the isolated shouldApplyContract predicate: a bridge
+// apply site, not only the isolated CheckContractVersion predicate: a bridge
 // declaring a newer contract must never be fetched into the cache.
 func TestApplyUpdateRejectsUnsupportedContract(t *testing.T) {
 	if !gitAvailable() {

@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/DomainCraft/DomainCraft/internal/bridge"
+	"github.com/DomainCraft/DomainCraft/internal/netutil"
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
 )
 
@@ -111,8 +112,8 @@ func TestRedactURL(t *testing.T) {
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := redactURL(tt.raw); got != tt.want {
-				t.Errorf("redactURL = %q, want %q", got, tt.want)
+			if got := netutil.RedactedURL(tt.raw); got != tt.want {
+				t.Errorf("netutil.RedactedURL = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -143,7 +144,7 @@ func TestReadResponseBodyRejectsOversizedPayload(t *testing.T) {
 				Body:       io.NopCloser(strings.NewReader(tt.body)),
 				Request:    &http.Request{URL: u},
 			}
-			got, err := readResponseBody(resp, u.String())
+			got, err := netutil.ReadBoundedBody(resp, u.String(), maxResponseBody, validateReleaseRedirect)
 			if tt.wantErr {
 				if err == nil || !strings.Contains(err.Error(), "exceeds") {
 					t.Fatalf("err = %v, want oversized error", err)
@@ -177,10 +178,10 @@ func TestReadResponseBodyChecksRedirectHost(t *testing.T) {
 				Body:       io.NopCloser(strings.NewReader("ok")),
 				Request:    &http.Request{URL: u},
 			}
-			_, err = readResponseBody(resp, updateAssetURL("dc"))
+			_, err = netutil.ReadBoundedBody(resp, updateAssetURL("dc"), maxResponseBody, validateReleaseRedirect)
 			if tt.wantErrPart == "" {
 				if err != nil {
-					t.Fatalf("readResponseBody: %v", err)
+					t.Fatalf("netutil.ReadBoundedBody: %v", err)
 				}
 				return
 			}

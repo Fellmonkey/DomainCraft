@@ -11,18 +11,10 @@ import (
 
 	"github.com/DomainCraft/DomainCraft/internal/bridge"
 	"github.com/DomainCraft/DomainCraft/internal/ir"
-	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
 
 	"gopkg.in/yaml.v3"
 )
-
-// ContractVersion is the version of the bridge contract the core implements. A
-// bridge may declare the contract it was authored against via `contract_version`
-// in bridge.yaml. The core rejects bridges written against a newer contract and
-// treats an absent declaration as this version (with a deprecation notice).
-// It aliases specmeta.ContractVersion so the contract has one definition.
-const ContractVersion = specmeta.ContractVersion
 
 // sourceConfig is one bridge directory plus its parsed bridge.yaml. A composed
 // renderer holds several of these, ordered base-first, with the adapter last.

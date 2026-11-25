@@ -132,6 +132,7 @@ type stagedWrite struct {
 	original []byte
 	existed  bool
 	mode     os.FileMode
+	custom   bool // overwrite:false — developer-owned, must not be replaced at commit
 	record   RenderedFile
 }
 
@@ -483,6 +484,7 @@ func (r *Renderer) stageTemplates(s *renderSession) error {
 						tempLeaf:   filepath.Base(tmpPath),
 						existed:    existed,
 						mode:       mode,
+						custom:     record.Custom,
 						record:     record,
 					})
 					s.manifest = append(s.manifest, record)
@@ -512,6 +514,13 @@ func (r *Renderer) commitWrites(s *renderSession) error {
 		if info, err := os.Lstat(w.target); err == nil {
 			if info.Mode()&os.ModeSymlink != 0 {
 				return s.fail(fmt.Errorf("template target path escapes output directory through a symlink: %s", w.record.Path))
+			}
+			// A scaffold-once target was missing at staging but appeared before
+			// commit: it is now developer-owned. Backing it up and deleting the
+			// backup after commit would silently replace it, so preserve it and
+			// abort. Rollback still restores writes committed earlier in this run.
+			if w.custom {
+				return s.fail(fmt.Errorf("custom file %s appeared before commit and was preserved", w.record.Path))
 			}
 			// The staged temp name is already unique in this directory.
 			w.backup = w.temp + ".bak"

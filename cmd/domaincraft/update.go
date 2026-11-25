@@ -340,12 +340,6 @@ func parseAllowedURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// redactURL reduces a URL to scheme and host before it is embedded in an error
-// message. Kept as a seam for the update tests; the redaction is shared.
-func redactURL(raw string) string {
-	return netutil.RedactedURL(raw)
-}
-
 // releaseChecksum reads the SHA-256 digest for name from the release's
 // checksums.txt asset. A missing, malformed or foreign digest is an error.
 func releaseChecksum(rel *githubRelease, name string) (string, error) {
@@ -406,13 +400,6 @@ func validateReleaseRedirect(u *url.URL) error {
 // policy.
 func httpGetBody(rawURL string) ([]byte, error) {
 	return netutil.BoundedGet(bridge.CommandContext(), httpClient, rawURL, maxResponseBody, validateReleaseRedirect)
-}
-
-// readResponseBody reads at most maxResponseBody+1 bytes so an oversized
-// response is rejected instead of being silently truncated into a valid binary.
-// It stays as a test seam for the response-level checks.
-func readResponseBody(resp *http.Response, rawURL string) ([]byte, error) {
-	return netutil.ReadBoundedBody(resp, rawURL, maxResponseBody, validateReleaseRedirect)
 }
 
 // downloadBinary fetches a release asset into a temp file in dir and returns
