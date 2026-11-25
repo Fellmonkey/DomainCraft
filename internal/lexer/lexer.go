@@ -47,9 +47,9 @@ func Parse(input string) (*FieldDefinition, error) {
 
 func parse(input string, extraStringMods []string) (*FieldDefinition, error) {
 	input = strings.TrimSpace(input)
-	fd := &FieldDefinition{
-		Validations: make(map[string]string),
-	}
+	// Validations is created on first use. Most field definitions carry no
+	// validation modifiers, so the map would be pure garbage.
+	fd := &FieldDefinition{}
 
 	// Split into type and modifiers: "string [required, max:255]". Split at the
 	// first "[" only; the rest (modifiers, which may themselves contain brackets,
@@ -169,6 +169,9 @@ func parseModifiers(modStr string, fd *FieldDefinition, extraStringMods []string
 
 			switch {
 			case specmeta.IsValidationModifier(key, extraStringMods):
+				if fd.Validations == nil {
+					fd.Validations = make(map[string]string, 2)
+				}
 				fd.Validations[key] = value
 			case key == "default":
 				// Check for function-style defaults like now(), uuid()
@@ -199,6 +202,9 @@ func parseModifiers(modStr string, fd *FieldDefinition, extraStringMods []string
 
 		// Bare string flags live in specmeta alongside their key:value forms.
 		if specmeta.IsStringFlagValidationModifier(mod) {
+			if fd.Validations == nil {
+				fd.Validations = make(map[string]string, 2)
+			}
 			fd.Validations[mod] = "true"
 			continue
 		}

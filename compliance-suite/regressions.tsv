@@ -95,3 +95,7 @@ cmd/domaincraft/commands_init_test.go::TestRenderScenarioRejectsControlCharacter
 pkg/logger/logger_test.go::TestNewWithWriterNeverColorsBuffers	#review	logger colors were decided from process stderr after output had been redirected to a buffer
 internal/interactive/theme_test.go::TestFitVisible	#review	wide CJK and emoji counted as one column, so a "fitting" prompt wrapped and broke in-place redraw
 internal/specmeta/specmeta_test.go::TestSplitArrayDefaultRespectsQuotes	#review	a comma inside a quoted array default was treated as a separator by the validator and seed generator but not by the lexer
+pkg/textutil/textutil_test.go::TestIdentifierTransformsMatchReference	#review	identifier fast path changed casing of acronyms, separators and unicode names
+cmd/wasm-validator/api_test.go::TestWasmApiContracts	#review	WASM export refactor changed the JSON shape returned to the GUI
+cmd/wasm-validator/api_test.go::TestResultCacheAlternatingInputs	#review	interleaved cached goValidate/goParseDomain calls returned a stale schema
+internal/specmeta/specmeta_test.go::TestSplitRespectingQuotesFastPathMatchesSlow	#review	modifier splitter fast path changed quote or bracket handling

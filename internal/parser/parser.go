@@ -219,6 +219,9 @@ func ParseField(name string, fieldDef string) (*ParsedField, error) {
 
 	// Sync required flag to validations map so templates can use HasValidation "required"
 	if fd.IsRequired {
+		if fd.Validations == nil {
+			fd.Validations = make(map[string]string, 1)
+		}
 		fd.Validations["required"] = "true"
 	}
 

@@ -568,6 +568,68 @@ func TestSplitArrayDefaultRespectsQuotes(t *testing.T) {
 	}
 }
 
+// referenceSplitRespectingQuotes is the pre-fast-path implementation. The
+// fast path must produce the same tokens for every clause it claims.
+func referenceSplitRespectingQuotes(s string) []string {
+	var out []string
+	var cur strings.Builder
+	depth := 0
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if quote != 0 {
+			cur.WriteByte(c)
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch c {
+		case '\'', '"':
+			quote = c
+			cur.WriteByte(c)
+		case '[':
+			depth++
+			cur.WriteByte(c)
+		case ']':
+			if depth > 0 {
+				depth--
+			}
+			cur.WriteByte(c)
+		case ',':
+			if depth == 0 {
+				out = append(out, cur.String())
+				cur.Reset()
+				continue
+			}
+			cur.WriteByte(c)
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	return append(out, cur.String())
+}
+
+func TestSplitRespectingQuotesFastPathMatchesSlow(t *testing.T) {
+	t.Parallel()
+	for _, s := range []string{
+		"", "required", "required, max:255", "a,b,c",
+		`default:["a,b", c], required`, "default:[a, b, c]",
+		`regex:^a,b$`, `default:'x,y'`, "a,,b", "default:[nested,[x,y]], later",
+	} {
+		got, want := SplitRespectingQuotes(s), referenceSplitRespectingQuotes(s)
+		if len(got) != len(want) {
+			t.Errorf("SplitRespectingQuotes(%q) = %q, want %q", s, got, want)
+			continue
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("SplitRespectingQuotes(%q)[%d] = %q, want %q", s, i, got[i], want[i])
+			}
+		}
+	}
+}
+
 func TestEffectiveContractVersion(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
