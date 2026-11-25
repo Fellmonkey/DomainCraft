@@ -125,6 +125,9 @@ func (p *Project) AuthEndpoints() []EndpointDecl {
 		return nil
 	}
 	entity := p.Auth.Entity
+	if entity == "" {
+		return nil
+	}
 	base := "api/" + entity
 
 	var decls []EndpointDecl

@@ -99,6 +99,9 @@ func New(raw *RawSchema) *Parser {
 
 // Parse performs full parsing with validation
 func (p *Parser) Parse() (*ParsedSchema, error) {
+	if p == nil || p.raw == nil {
+		return nil, fmt.Errorf("parser: raw schema is nil")
+	}
 	auth := p.raw.Auth
 	schema := &ParsedSchema{
 		Project:     p.raw.Project,
@@ -162,7 +165,7 @@ func (p *Parser) parseEntity(name string, raw RawEntity) (*ParsedEntity, error) 
 		fieldDef := raw.Fields[fieldName]
 		field, err := p.parseField(fieldName, fieldDef)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("field %q: %w", fieldName, err)
 		}
 		entity.Fields[fieldName] = field
 		// Skip if already added by addFeatureFields (user overriding a feature field).

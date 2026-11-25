@@ -108,12 +108,27 @@ func yamlMergeKeyNames(value *yaml.Node) []string {
 			}
 		case yaml.MappingNode:
 			for i := 0; i < len(node.Content)-1; i += 2 {
+				if node.Content[i].Value == "<<" {
+					collect(node.Content[i+1])
+					continue
+				}
 				names = append(names, node.Content[i].Value)
 			}
 		}
 	}
 	collect(value)
 	return names
+}
+
+// rejectUnknownMergeKeys applies the same strict key check to keys contributed
+// by a YAML merge ("<<") as to keys written directly in the block.
+func rejectUnknownMergeKeys(value *yaml.Node, valid map[string]bool, errFn func(string) error) error {
+	for _, name := range yamlMergeKeyNames(value) {
+		if !valid[name] {
+			return errFn(name)
+		}
+	}
+	return nil
 }
 
 // unmarshalYAMLWithPresence decodes a config block through target — an alias
@@ -139,6 +154,9 @@ func unmarshalYAMLWithPresence(value *yaml.Node, target any, typeName string, al
 		if key.Value == "<<" {
 			if key.Tag != "!!str" {
 				for _, name := range yamlMergeKeyNames(value.Content[i+1]) {
+					if !allowedKeys[name] {
+						return fmt.Errorf("line %d: field %s not found in type parser.%s", key.Line, name, typeName)
+					}
 					if mark, merged := presence[name]; merged {
 						mark()
 					}
@@ -262,11 +280,22 @@ func (p *RawPermissions) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind != yaml.MappingNode {
 		return value.Decode((*rawPermissionsAlias)(p))
 	}
-	// Iterate keys explicitly so unknown permission keys become errors.
+	// Iterate keys explicitly so unknown permission keys become errors,
+	// including keys smuggled in through a YAML merge.
+	reject := func(key string) error {
+		return fmt.Errorf("unknown permission key %q; valid keys: %s", key, strings.Join(specmeta.PermissionKeys, ", "))
+	}
 	for i := 0; i < len(value.Content)-1; i += 2 {
-		key := value.Content[i].Value
+		keyNode := value.Content[i]
+		key := keyNode.Value
+		if key == "<<" && keyNode.Tag != "!!str" {
+			if err := rejectUnknownMergeKeys(value.Content[i+1], specmeta.SliceToSet(specmeta.PermissionKeys), reject); err != nil {
+				return err
+			}
+			continue
+		}
 		if !specmeta.IsPermissionKey(key) {
-			return fmt.Errorf("unknown permission key %q; valid keys: %s", key, strings.Join(specmeta.PermissionKeys, ", "))
+			return reject(key)
 		}
 	}
 	return value.Decode((*rawPermissionsAlias)(p))
@@ -298,6 +327,9 @@ func (e *RawEntity) UnmarshalYAML(value *yaml.Node) error {
 				return err
 			}
 		case "fields":
+			if valNode.Kind != yaml.MappingNode {
+				return fmt.Errorf("line %d: fields must be a mapping of field name to definition", valNode.Line)
+			}
 			e.Fields = make(map[string]string)
 			e.FieldOrder = make([]string, 0, len(valNode.Content)/2)
 			for j := 0; j < len(valNode.Content)-1; j += 2 {
@@ -307,7 +339,7 @@ func (e *RawEntity) UnmarshalYAML(value *yaml.Node) error {
 				}
 				var fVal string
 				if err := valNode.Content[j+1].Decode(&fVal); err != nil {
-					return err
+					return fmt.Errorf("field %q: %w", fKey, err)
 				}
 				e.Fields[fKey] = fVal
 				e.FieldOrder = append(e.FieldOrder, fKey)
@@ -351,10 +383,20 @@ func (r *RawIndex) UnmarshalYAML(value *yaml.Node) error {
 		return value.Decode((*rawIndexAlias)(r))
 	}
 	valid := specmeta.SliceToSet([]string{"fields", "type", "sort", "unique"})
+	reject := func(key string) error {
+		return fmt.Errorf("unknown index key %q; valid keys: fields, type, sort, unique", key)
+	}
 	for i := 0; i < len(value.Content)-1; i += 2 {
-		key := value.Content[i].Value
+		keyNode := value.Content[i]
+		key := keyNode.Value
+		if key == "<<" && keyNode.Tag != "!!str" {
+			if err := rejectUnknownMergeKeys(value.Content[i+1], valid, reject); err != nil {
+				return err
+			}
+			continue
+		}
 		if !valid[key] {
-			return fmt.Errorf("unknown index key %q; valid keys: fields, type, sort, unique", key)
+			return reject(key)
 		}
 	}
 	return value.Decode((*rawIndexAlias)(r))

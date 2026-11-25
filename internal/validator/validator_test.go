@@ -2081,7 +2081,7 @@ func TestValidateStringMinMaxNonNumeric(t *testing.T) {
 	errs := New(schema).Validate()
 	found := false
 	for _, e := range errs {
-		if strings.Contains(e.Message, "'max' value \"abc\" is not a valid number") {
+		if !e.Warning && strings.Contains(e.Message, "'max' value \"abc\" must be an integer") {
 			found = true
 		}
 	}
@@ -2245,12 +2245,12 @@ func TestValidateDefaultDateInvalid(t *testing.T) {
 	errs := New(schema).Validate()
 	found := false
 	for _, e := range errs {
-		if e.Warning && strings.Contains(e.Message, "not a valid date") {
+		if !e.Warning && strings.Contains(e.Message, "not a valid date") {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("expected warning about invalid date default, got %v", errs)
+		t.Fatalf("expected error about invalid date default, got %v", errs)
 	}
 }
 
@@ -2275,12 +2275,12 @@ func TestValidateDefaultUuidInvalid(t *testing.T) {
 	errs := New(schema).Validate()
 	found := false
 	for _, e := range errs {
-		if e.Warning && strings.Contains(e.Message, "not a valid UUID") {
+		if !e.Warning && strings.Contains(e.Message, "not a valid UUID") {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("expected warning about invalid uuid default, got %v", errs)
+		t.Fatalf("expected error about invalid uuid default, got %v", errs)
 	}
 }
 
@@ -2764,38 +2764,38 @@ func TestValidateRejectsNegativeProjectNumericValues(t *testing.T) {
 func TestValidateRejectsInvalidNumericDefault(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name        string
-		ftype       string
-		defaultVal  string
-		wantWarning bool
+		name       string
+		ftype      string
+		defaultVal string
+		wantError  bool
 	}{
-		{name: "int rejects text", ftype: specmeta.FieldTypeInt, defaultVal: "abc", wantWarning: true},
+		{name: "int rejects text", ftype: specmeta.FieldTypeInt, defaultVal: "abc", wantError: true},
 		{name: "int accepts integer", ftype: specmeta.FieldTypeInt, defaultVal: "42"},
-		{name: "bigint rejects text", ftype: specmeta.FieldTypeBigint, defaultVal: "twelve", wantWarning: true},
+		{name: "bigint rejects text", ftype: specmeta.FieldTypeBigint, defaultVal: "twelve", wantError: true},
 		{name: "bigint accepts integer", ftype: specmeta.FieldTypeBigint, defaultVal: "-9000000000"},
-		{name: "float rejects text", ftype: specmeta.FieldTypeFloat, defaultVal: "1.2.3", wantWarning: true},
+		{name: "float rejects text", ftype: specmeta.FieldTypeFloat, defaultVal: "1.2.3", wantError: true},
 		{name: "float accepts decimal", ftype: specmeta.FieldTypeFloat, defaultVal: "1.25"},
-		{name: "decimal rejects text", ftype: specmeta.FieldTypeDecimal, defaultVal: "price", wantWarning: true},
+		{name: "decimal rejects text", ftype: specmeta.FieldTypeDecimal, defaultVal: "price", wantError: true},
 		{name: "decimal accepts decimal", ftype: specmeta.FieldTypeDecimal, defaultVal: "99.95"},
-		{name: "legacy true still warns on int", ftype: specmeta.FieldTypeInt, defaultVal: "true", wantWarning: true},
-		{name: "legacy false still warns on bigint", ftype: specmeta.FieldTypeBigint, defaultVal: "false", wantWarning: true},
+		{name: "legacy true still fails on int", ftype: specmeta.FieldTypeInt, defaultVal: "true", wantError: true},
+		{name: "legacy false still fails on bigint", ftype: specmeta.FieldTypeBigint, defaultVal: "false", wantError: true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			errs := validateDefaultValue("Item", "amount", c.ftype, c.defaultVal)
-			if c.wantWarning {
-				if len(errs) != 1 || !errs[0].Warning {
-					t.Fatalf("validateDefaultValue(%q, %q) = %v, want one warning", c.ftype, c.defaultVal, errs)
+			if c.wantError {
+				if len(errs) != 1 || errs[0].Warning {
+					t.Fatalf("validateDefaultValue(%q, %q) = %v, want one error", c.ftype, c.defaultVal, errs)
 				}
 				msg := errs[0].Message
 				if msg != strings.ToLower(msg) || strings.HasSuffix(msg, ".") {
-					t.Errorf("warning message %q is not lowercase or ends with punctuation", msg)
+					t.Errorf("error message %q is not lowercase or ends with punctuation", msg)
 				}
 				return
 			}
 			if len(errs) != 0 {
-				t.Fatalf("validateDefaultValue(%q, %q) = %v, want no warnings", c.ftype, c.defaultVal, errs)
+				t.Fatalf("validateDefaultValue(%q, %q) = %v, want no errors", c.ftype, c.defaultVal, errs)
 			}
 		})
 	}
@@ -2815,7 +2815,7 @@ func TestValidateRejectsInvalidNumericDefault(t *testing.T) {
 			field := testutil.MustParsedField(t, "scores", c.def)
 			errs := v.validateFieldDefault("Item", "scores", field)
 			if len(errs) != c.want {
-				t.Fatalf("validateFieldDefault(%q) = %v, want %d warnings", c.def, errs, c.want)
+				t.Fatalf("validateFieldDefault(%q) = %v, want %d errors", c.def, errs, c.want)
 			}
 		})
 	}

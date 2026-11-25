@@ -350,7 +350,7 @@ func (v *Validator) validateAuth() []ValidationError {
 			"unknown auth.type %q; allowed: %s", auth.Type, strings.Join(specmeta.AuthTypes, ", ")))
 	}
 
-	if auth.Type == "none" {
+	if auth.Type == "" || auth.Type == "none" {
 		return errs
 	}
 
@@ -370,9 +370,14 @@ func (v *Validator) validateAuth() []ValidationError {
 		// Auto-detect: find entity with email + password using specmeta helper.
 		entityFields := v.buildEntityFields()
 		if specmeta.FindAuthEntity(v.schema.EntityOrder, entityFields) == "" {
-			errs = append(errs, warnf("<schema>", "",
+			errs = append(errs, invalidf("<schema>", "",
 				"auth.type is %q but no entity has both 'email' and 'password' fields; specify auth.entity explicitly", auth.Type))
 		}
+	}
+
+	if auth.Type == "jwt" && len(auth.Roles) == 0 {
+		errs = append(errs, invalidf("<schema>", "",
+			"auth.roles must declare at least one role when auth.type is \"jwt\""))
 	}
 
 	// Roles must be valid identifiers
@@ -548,18 +553,9 @@ func (v *Validator) validateEntity(entityName string, entity *parser.ParsedEntit
 		// Must not have duplicate primary keys.
 		errs = append(errs, invalidf(entityName, "",
 			"entity has %d primary keys; expected exactly one", pkCount))
-	} else {
-		// A relation cannot be a primary key: the IR resolves relation types
-		// through the target's primary key, which recurses on relation-PK cycles.
-		for _, fieldName := range entity.FieldOrder {
-			field := entity.Fields[fieldName]
-			if field != nil && field.IsPrimary && field.IsRelation() {
-				errs = append(errs, invalidf(entityName, fieldName,
-					"primary key cannot be a relation field (target '%s'); use a scalar id field", field.TargetEntity))
-				break
-			}
-		}
 	}
+	// A relation cannot be a primary key: validatePrimaryKeyField reports it
+	// once per field; repeating the check here produced duplicate errors.
 
 	// Track DB column names for collision detection.
 	columnNames := make(map[string]string) // column -> field name
@@ -810,7 +806,7 @@ func validateFieldValidations(entityName, fieldName string, field *parser.Parsed
 	isString := specmeta.IsStringType(ftype)
 
 	for mod, val := range field.Validations {
-		if specmeta.IsStringValidationModifier(mod) && !isString {
+		if specmeta.IsStringOnlyValidationModifier(mod) && !isString {
 			errs = append(errs, warnf(entityName, fieldName,
 				"validation '%s' is only applicable to string/text fields, not %s", mod, ftype))
 		}
@@ -818,17 +814,31 @@ func validateFieldValidations(entityName, fieldName string, field *parser.Parsed
 			errs = append(errs, warnf(entityName, fieldName,
 				"validation '%s' is only applicable to numeric fields, not %s", mod, ftype))
 		}
-		// Validate that numeric validation values are actually numeric
-		// (numeric modifiers AND string min/max, which are also numeric).
-		if (specmeta.IsNumericValidationModifier(mod) || mod == "min" || mod == "max") && val != "" {
-			if n, err := strconv.ParseFloat(val, 64); err != nil {
+		if (mod == "min" || mod == "max") && !isString && !isNumeric {
+			errs = append(errs, warnf(entityName, fieldName,
+				"validation '%s' is only applicable to string/text or numeric fields, not %s", mod, ftype))
+		}
+		if val == "" {
+			continue
+		}
+		switch {
+		case mod == "min" || mod == "max":
+			// String bounds are lengths and numeric bounds are values, but both
+			// must be integers: IR emits min_value/max_value as numeric literals.
+			n, err := strconv.ParseInt(val, 10, 64)
+			if err != nil {
 				errs = append(errs, invalidf(entityName, fieldName,
-					"validation '%s' value %q is not a valid number", mod, val))
-			} else if isString && (mod == "min" || mod == "max") && n <= 0 {
+					"validation '%s' value %q must be an integer", mod, val))
+			} else if isString && n <= 0 {
 				// String length bounds drive seed truncation; a non-positive
 				// maximum would slice with a negative index.
 				errs = append(errs, invalidf(entityName, fieldName,
 					"validation '%s' must be positive for string length, got %q", mod, val))
+			}
+		case specmeta.IsNumericValidationModifier(mod):
+			if _, err := strconv.ParseFloat(val, 64); err != nil {
+				errs = append(errs, invalidf(entityName, fieldName,
+					"validation '%s' value %q is not a valid number", mod, val))
 			}
 		}
 	}
@@ -905,32 +915,32 @@ func validateDefaultValue(entityName, fieldName, ftype, defaultVal string) []Val
 		switch {
 		case specmeta.IsIntegralType(inner):
 			if _, err := strconv.ParseInt(value, 10, 64); err != nil {
-				errs = append(errs, warnf(entityName, fieldName,
+				errs = append(errs, invalidf(entityName, fieldName,
 					"default value '%s' is not valid for numeric type %s", value, inner))
 			}
 		case specmeta.IsFloatType(inner):
 			if _, err := strconv.ParseFloat(value, 64); err != nil {
-				errs = append(errs, warnf(entityName, fieldName,
+				errs = append(errs, invalidf(entityName, fieldName,
 					"default value '%s' is not valid for numeric type %s", value, inner))
 			}
 		case inner == specmeta.FieldTypeBoolean:
 			if !boolValues[value] {
-				errs = append(errs, warnf(entityName, fieldName,
+				errs = append(errs, invalidf(entityName, fieldName,
 					"default value '%s' is not valid for boolean (expected true/false)", value))
 			}
 		case inner == specmeta.FieldTypeDate:
 			if !isValidDate(value) {
-				errs = append(errs, warnf(entityName, fieldName,
+				errs = append(errs, invalidf(entityName, fieldName,
 					"default value '%s' is not a valid date (expected YYYY-MM-DD)", value))
 			}
 		case inner == specmeta.FieldTypeDatetime:
 			if !isValidDatetime(value) {
-				errs = append(errs, warnf(entityName, fieldName,
+				errs = append(errs, invalidf(entityName, fieldName,
 					"default value '%s' is not a valid datetime (expected ISO 8601 format, e.g. 2024-01-15T10:30:00Z)", value))
 			}
 		case inner == specmeta.FieldTypeUUID:
 			if !isValidUUID(value) {
-				errs = append(errs, warnf(entityName, fieldName,
+				errs = append(errs, invalidf(entityName, fieldName,
 					"default value '%s' is not a valid UUID", value))
 			}
 		}
@@ -972,29 +982,53 @@ func validateContradictoryRanges(entityName, fieldName string, field *parser.Par
 		return f, true
 	}
 
-	if isString {
+	if isString || isNumeric {
 		minVal, hasMin := getFloat("min")
 		maxVal, hasMax := getFloat("max")
 		if hasMin && hasMax && minVal > maxVal {
 			errs = append(errs, invalidf(entityName, fieldName,
-				"validation min (%.0f) is greater than max (%.0f)", minVal, maxVal))
+				"validation min (%g) is greater than max (%g)", minVal, maxVal))
 		}
 	}
 
 	if isNumeric {
-		// Check gte vs lt (strict upper bound)
-		gteVal, hasGte := getFloat("gte")
-		ltVal, hasLt := getFloat("lt")
-		if hasGte && hasLt && gteVal >= ltVal {
-			errs = append(errs, invalidf(entityName, fieldName,
-				"validation gte (%.0f) must be less than lt (%.0f)", gteVal, ltVal))
+		// Compare the effective bounds, not just the four original pairs:
+		// gte/lte, gt/lt and numeric min/max must be checked too, and one
+		// contradictory range must produce one error.
+		type bound struct {
+			name   string
+			value  float64
+			strict bool
 		}
-		// Check gt vs lte (non-strict bounds)
-		gtVal, hasGt := getFloat("gt")
-		lteVal, hasLte := getFloat("lte")
-		if hasGt && hasLte && gtVal >= lteVal {
+		var lower, upper *bound
+		addLower := func(b bound) {
+			if lower == nil || b.value > lower.value || (b.value == lower.value && b.strict) {
+				chosen := b
+				lower = &chosen
+			}
+		}
+		addUpper := func(b bound) {
+			if upper == nil || b.value < upper.value || (b.value == upper.value && b.strict) {
+				chosen := b
+				upper = &chosen
+			}
+		}
+		if value, ok := getFloat("gte"); ok {
+			addLower(bound{name: "gte", value: value})
+		}
+		if value, ok := getFloat("gt"); ok {
+			addLower(bound{name: "gt", value: value, strict: true})
+		}
+		if value, ok := getFloat("lte"); ok {
+			addUpper(bound{name: "lte", value: value})
+		}
+		if value, ok := getFloat("lt"); ok {
+			addUpper(bound{name: "lt", value: value, strict: true})
+		}
+		if lower != nil && upper != nil &&
+			(lower.value > upper.value || (lower.value == upper.value && (lower.strict || upper.strict))) {
 			errs = append(errs, invalidf(entityName, fieldName,
-				"validation gt (%.0f) must be less than lte (%.0f)", gtVal, lteVal))
+				"validation %s (%g) must be less than %s (%g)", lower.name, lower.value, upper.name, upper.value))
 		}
 	}
 
@@ -1036,7 +1070,7 @@ func (v *Validator) validateIndex(entityName string, idxNum int, idx *parser.Par
 		if _, ok := entity.Fields[f]; !ok {
 			errs = append(errs, invalidf(entityName, f,
 				"index %d references unknown field '%s'", idxNum, f))
-		} else if entity.Fields[f].IsRelation() && !isFKFieldName(f) {
+		} else if entity.Fields[f].IsRelation() && !specmeta.HasIDSuffix(f) {
 			errs = append(errs, warnf(entityName, f,
 				"index %d references relation field '%s'; index the FK field instead (e.g. '%sId')", idxNum, f, f))
 		}
@@ -1311,12 +1345,6 @@ func isValidDate(s string) bool {
 func isValidJSONArray(s string) bool {
 	var arr []any
 	return json.Unmarshal([]byte(s), &arr) == nil
-}
-
-// isFKFieldName reports whether a field name is already an FK-style name
-// (ends with "Id" or "ID"), in which case indexing it maps to a real FK column.
-func isFKFieldName(name string) bool {
-	return specmeta.HasIDSuffix(name)
 }
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)

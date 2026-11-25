@@ -113,7 +113,11 @@ var StringFieldTypes = []string{FieldTypeString, FieldTypeText}
 var NumericValidationModifiers = []string{"gte", "gt", "lte", "lt"}
 
 // StringValidationModifiers lists string validation modifier names.
+// min/max are also valid on numeric fields (length vs value bounds).
 var StringValidationModifiers = []string{"min", "max", "email", "url", "ipv4", "regex"}
+
+// StringOnlyValidationModifiers lists validators that never apply to numeric fields.
+var StringOnlyValidationModifiers = []string{"email", "url", "ipv4", "regex"}
 
 // StringFlagValidationModifiers lists string validations usable as bare flags.
 var StringFlagValidationModifiers = []string{"email", "url", "ipv4"}
@@ -290,6 +294,11 @@ func IsInfraStore(value string) bool { return infraStoreSet[value] }
 // IsStringValidationModifier reports whether mod applies to string fields. It
 // reads the slice directly so extending the spec needs no lexer change.
 func IsStringValidationModifier(mod string) bool { return slices.Contains(StringValidationModifiers, mod) }
+
+// IsStringOnlyValidationModifier reports whether mod is invalid on numeric fields.
+func IsStringOnlyValidationModifier(mod string) bool {
+	return slices.Contains(StringOnlyValidationModifiers, mod)
+}
 
 // IsStringFlagValidationModifier reports whether mod is a bare string flag.
 func IsStringFlagValidationModifier(mod string) bool {

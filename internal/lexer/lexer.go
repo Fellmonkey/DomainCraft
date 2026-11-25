@@ -73,7 +73,11 @@ func (l *Lexer) Parse() (*FieldDefinition, error) {
 
 	// Parse modifiers if present
 	if len(parts) > 1 {
-		modifierStr := strings.TrimSuffix(strings.TrimSpace(parts[1]), "]")
+		modifierStr := strings.TrimSpace(parts[1])
+		if !strings.HasSuffix(modifierStr, "]") {
+			return nil, fmt.Errorf("unterminated modifier list in %q: expected ']'", l.input)
+		}
+		modifierStr = strings.TrimSuffix(modifierStr, "]")
 		if err := l.parseModifiers(modifierStr, fd); err != nil {
 			return nil, err
 		}

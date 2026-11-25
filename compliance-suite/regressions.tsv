@@ -166,3 +166,11 @@ internal/ir/dto_test.go::TestDTOFieldsDoNotShareValidations	#review	DTO projecti
 internal/renderer/models_test.go::TestSeedReturnsDefensiveCopy	#review	RenderContext.Seed() returned Records directly; mutating the result changed SeedData
 internal/bridge/context_test.go::TestCommandContextConcurrentAccess	#review	global commandCtx was read and written without synchronization and raced under -race
 internal/renderer/load_test.go::TestParsedSourceCacheEvictsOldEntries	#review	parsedSourceCache had no bound and grew on every bridge.yaml edit in a long-lived host
+internal/validator/validator_hardening_test.go::TestAuthJWTRequiresEntityAndRoles	#review	jwt auth without an auth entity or roles validated cleanly then crashed template rendering
+internal/validator/validator_hardening_test.go::TestRelationPrimaryKeyReportedOnce	#review	relation primary key produced the same validation error twice
+internal/validator/validator_hardening_test.go::TestContradictoryRangePairs	#review	gte/lte, gt/lt and numeric min/max contradictions passed validation
+internal/validator/validator_hardening_test.go::TestStringLengthBoundsMustBeIntegers	#review	string max:1.5 passed validation and emitted a non-integer length literal
+internal/validator/validator_hardening_test.go::TestInvalidDefaultsAreErrors	#review	invalid numeric, boolean and date defaults were warnings instead of errors
+internal/lexer/lexer_hardening_test.go::TestUnterminatedModifierList	#review	field definition with an unclosed modifier list was accepted as valid
+internal/parser/parser_hardening_test.go::TestStrictParsingRejectsStructuralShortcuts	#review	fields sequence and unknown keys smuggled through YAML merges bypassed strict decoding
+internal/parser/parser_hardening_test.go::TestParseNilRawSchema	#review	Parser.Parse dereferenced a nil raw schema and panicked
