@@ -49,18 +49,37 @@ func cacheSourceMatches(entry RegistryEntry) bool {
 		return false // unreadable metadata is not proof of ownership
 	}
 	if meta == nil {
-		// Legacy cache without metadata: fall back to git's origin. A plain
-		// embedded materialization has no remote, so it stays usable.
+		// Legacy cache without metadata: fall back to git's origin. Fail closed
+		// when there is no remote or it names a different repository.
 		out, gitErr := runGit(CachePath(entry), "remote", "get-url", "origin")
 		if gitErr != nil {
-			return true
+			return false
 		}
-		return strings.Contains(out, entry.GitHub)
+		return githubOriginMatches(out, entry.GitHub)
 	}
 	if meta.Source == "" {
-		return true // old metadata without a source cannot disprove ownership
+		return false // metadata without a source cannot prove ownership
 	}
 	return meta.Source == entry.GitHub
+}
+
+// githubOriginMatches compares a git origin with the expected GitHub slug.
+// A substring check would accept an unrelated repository whose name merely
+// contains the expected one.
+func githubOriginMatches(origin, repo string) bool {
+	origin = strings.TrimSuffix(strings.TrimSpace(origin), ".git")
+	for _, prefix := range []string{
+		"https://github.com/",
+		"http://github.com/",
+		"ssh://git@github.com/",
+		"git@github.com:",
+		"git://github.com/",
+	} {
+		if origin == prefix+repo {
+			return true
+		}
+	}
+	return false
 }
 
 // validateCacheID rejects bridge IDs that could resolve outside the cache

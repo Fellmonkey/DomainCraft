@@ -3,6 +3,7 @@ package bridgechain
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -64,6 +65,19 @@ func TestWalkDetectsCycle(t *testing.T) {
 	_, err := Walk(a, a, testResolver(), nil)
 	if err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("err = %v, want a cycle error", err)
+	}
+}
+
+func TestWalkDetectsCycleAcrossCaseVariants(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("case-insensitive filesystem check")
+	}
+	root := t.TempDir()
+	a := writeBridge(t, filepath.Join(root, "CycleA"), "")
+	b := writeBridge(t, filepath.Join(root, "cyclea"), a)
+
+	if _, err := Walk(a, a, testResolver(), nil); err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("err = %v, want a cycle error across case variants (%q vs %q)", err, a, b)
 	}
 }
 

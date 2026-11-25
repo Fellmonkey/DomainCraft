@@ -702,13 +702,16 @@ func resolveChainWithReplacements(opts *cliOptions, entryDir string, reps []repl
 		newChain = append(newChain, rightChain...)
 		// Validate no duplicate layer and no cycle.
 		seenLayer := make(map[string]string)
-		seenPath := make(map[string]bool)
+		seenPaths := make([]string, 0, len(newChain))
 		for _, d := range newChain {
-			abs, _ := filepath.Abs(d)
-			if seenPath[abs] {
+			abs, err := filepath.Abs(d)
+			if err != nil {
+				return "", nil, fmt.Errorf("resolve absolute bridge path %q: %w", d, err)
+			}
+			if slices.ContainsFunc(seenPaths, func(seen string) bool { return bridge.SamePath(seen, abs) }) {
 				return "", nil, fmt.Errorf("bridge `extends` cycle detected at %q", d)
 			}
-			seenPath[abs] = true
+			seenPaths = append(seenPaths, abs)
 			layer, _, err := bridgeLayerAndName(d, log)
 			if err != nil {
 				return "", nil, fmt.Errorf("read layer of %s: %w", d, err)

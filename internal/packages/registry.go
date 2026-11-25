@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -199,26 +200,35 @@ func MaxMajorForFramework(framework string) int {
 	if i := strings.IndexAny(major, ".-+ "); i >= 0 {
 		major = major[:i]
 	}
-	n, err := strconv.Atoi(major)
-	if err != nil || n <= 0 {
-		return 0
-	}
-	return n
+	return numericPrefix(major)
 }
 
-func versionMajor(version string) int {
+// numericPrefix parses the leading digits of a version component. Overflow
+// clamps to MaxInt instead of silently becoming zero, which would drop a
+// framework's major-version cap or misorder two versions.
+func numericPrefix(component string) int {
 	i := 0
-	for i < len(version) && version[i] >= '0' && version[i] <= '9' {
+	for i < len(component) && component[i] >= '0' && component[i] <= '9' {
 		i++
 	}
 	if i == 0 {
 		return 0
 	}
-	n, err := strconv.Atoi(version[:i])
+	n, err := strconv.ParseInt(component[:i], 10, 64)
 	if err != nil {
+		return math.MaxInt
+	}
+	if n <= 0 {
 		return 0
 	}
-	return n
+	if n > math.MaxInt {
+		return math.MaxInt
+	}
+	return int(n)
+}
+
+func versionMajor(version string) int {
+	return numericPrefix(version)
 }
 
 // latestStable returns the highest stable version whose major is <= maxMajor.
@@ -286,10 +296,10 @@ func VersionGreater(a, b string) bool {
 	for i := range maxLen {
 		var ai, bi int
 		if i < len(aParts) {
-			ai, _ = strconv.Atoi(aParts[i])
+			ai = numericPrefix(aParts[i])
 		}
 		if i < len(bParts) {
-			bi, _ = strconv.Atoi(bParts[i])
+			bi = numericPrefix(bParts[i])
 		}
 		if ai > bi {
 			return true

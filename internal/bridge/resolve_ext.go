@@ -109,6 +109,12 @@ func monorepoRoot(dir string) string {
 	return found
 }
 
+// SamePath compares two paths using the filesystem's case rules. Consumers
+// outside this package use it for cycle detection on case-insensitive hosts.
+func SamePath(a, b string) bool {
+	return samePath(a, b)
+}
+
 // samePath compares two absolute paths using the filesystem's case rules.
 func samePath(a, b string) bool {
 	a, b = filepath.Clean(a), filepath.Clean(b)

@@ -66,18 +66,11 @@ func (r *Resolver) Resolve(input string) (string, error) {
 	// 3. GitHub shorthand "owner/repo" — clone directly. An owner of "." or
 	// ".." would be a path fragment, not a GitHub user (looksLikePath already
 	// rejects dot-led inputs; this keeps step 3 correct on its own too).
-	parts := strings.SplitN(input, "/", 2)
-	isOwnerRepo := len(parts) == 2 && parts[0] != "" && parts[1] != "" && parts[0] != "." && parts[0] != ".."
+	repo, ref, isOwnerRepo, err := parseGitHubRef(input)
+	if err != nil {
+		return "", err
+	}
 	if isOwnerRepo {
-		if strings.ContainsAny(parts[1], "/\\") || parts[1] == "." || parts[1] == ".." {
-			return "", fmt.Errorf("bridge %q not found: invalid repository name", input)
-		}
-		repo, ref := splitPinRef(input)
-		if ref != "" {
-			if err := validatePinRef(ref); err != nil {
-				return "", err
-			}
-		}
 		entry := RegistryEntry{
 			// Owner-scoped: the bare repository name would collide in the
 			// cache with another owner's repo of the same name.
@@ -102,6 +95,27 @@ func (r *Resolver) Resolve(input string) (string, error) {
 	}
 
 	return "", fmt.Errorf("bridge %q not found: not a local path, registry ID, or owner/repo", input)
+}
+
+// parseGitHubRef splits an `owner/repo@ref` shorthand and validates both parts.
+// The pin is split first: a ref may legally contain "/", while a repository
+// name may not.
+func parseGitHubRef(input string) (repo, ref string, isOwnerRepo bool, err error) {
+	repo, ref = splitPinRef(input)
+	parts := strings.SplitN(repo, "/", 2)
+	isOwnerRepo = len(parts) == 2 && parts[0] != "" && parts[1] != "" && parts[0] != "." && parts[0] != ".."
+	if !isOwnerRepo {
+		return "", "", false, nil
+	}
+	if strings.ContainsAny(parts[1], "/\\") || parts[1] == "." || parts[1] == ".." {
+		return "", "", false, fmt.Errorf("bridge %q not found: invalid repository name", input)
+	}
+	if ref != "" {
+		if err := validatePinRef(ref); err != nil {
+			return "", "", false, err
+		}
+	}
+	return repo, ref, true, nil
 }
 
 // missingBridgeConfigError marks an existing directory that has no bridge.yaml.

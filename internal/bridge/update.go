@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,10 @@ import (
 
 // httpClient is shared by remote version probes.
 var httpClient = &http.Client{Timeout: 10 * time.Second}
+
+// gitCommandTimeout bounds every git child so a library host without a
+// cancellable command context cannot hang on a stalled remote.
+const gitCommandTimeout = 2 * time.Minute
 
 // httpGetBodyFn is the HTTP GET used by update probes. It is a variable so
 // tests can substitute a fake and exercise the GitHub code paths offline.
@@ -277,7 +282,7 @@ func ApplyUpdate(entry RegistryEntry, u *Update) (string, error) {
 func checkCachedContract(entry RegistryEntry) error {
 	data, err := os.ReadFile(filepath.Join(CachePath(entry), "bridge.yaml"))
 	if err != nil {
-		return fmt.Errorf("read re-cloned bridge manifest: %w", err)
+		return fmt.Errorf("read bridge manifest in %q: %w", CachePath(entry), err)
 	}
 	version, _, err := ParseContractVersion(data)
 	if err != nil {
@@ -292,6 +297,11 @@ func finishUpdate(entry RegistryEntry, branch, pin string) (string, error) {
 	if pin != "" {
 		if err := checkoutPinnedRef(CachePath(entry), pin); err != nil {
 			return "", fmt.Errorf("restore pinned ref %q after update: %w", pin, err)
+		}
+		// The gate above checked FETCH_HEAD, not the ref we actually keep.
+		// Re-check the pinned manifest before recording the cache.
+		if err := checkCachedContract(entry); err != nil {
+			return "", fmt.Errorf("check pinned bridge %q contract: %w", pin, err)
 		}
 	}
 	version, err := syncMetaAfterUpdate(entry, branch)
@@ -404,7 +414,11 @@ func httpGetBody(rawURL string) ([]byte, error) {
 // can never redirect a bridge-cache operation onto the wrong repository — the
 // command always acts on the repo in dir.
 func runGit(dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(commandCtx, "git", args...) //nolint:gosec // args passed separately; no shell interpretation
+	// A library host may wire context.Background(), so git needs its own
+	// deadline: a hung fetch or clone must not block generation forever.
+	ctx, cancel := context.WithTimeout(CommandContext(), gitCommandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...) //nolint:gosec // args passed separately; no shell interpretation
 	cmd.Dir = dir
 	cmd.Env = gitScrubbedEnv()
 	out, err := cmd.Output()

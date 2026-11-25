@@ -1,7 +1,10 @@
 package packages
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -62,10 +65,15 @@ func versionStore(bridgeID string) (map[string]versionEntry, error) {
 		Entries map[string]versionEntry `json:"entries"`
 	}
 	// A missing or corrupt cache file yields an empty cache rather than an
-	// error, so a broken cache never breaks the caller. The normal
-	// resolve -> persist path then overwrites the unusable bytes; without that
-	// rewrite every later run would bypass the cache and hit the registry.
+	// error; the normal resolve -> persist path then overwrites the unusable
+	// bytes. Genuine storage failures (permissions, I/O) must not be masked as
+	// a cache miss — that would overwrite the file and hide the real fault.
 	if err := fsutil.ReadJSON(filepath.Join(dir, CacheFileName), &data); err != nil {
+		var syntaxErr *json.SyntaxError
+		var typeErr *json.UnmarshalTypeError
+		if !errors.Is(err, os.ErrNotExist) && !errors.As(err, &syntaxErr) && !errors.As(err, &typeErr) {
+			return nil, fmt.Errorf("read package version cache for %q: %w", bridgeID, err)
+		}
 		data.Entries = make(map[string]versionEntry)
 	}
 	if data.Entries == nil {

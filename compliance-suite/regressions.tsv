@@ -180,3 +180,10 @@ internal/renderer/hardening_test.go::TestCustomTemplateStagedOncePerRun	#review	
 internal/templatefuncs/templatefuncs_hardening_test.go::TestSetInitializesNilMap	#review	Set template function panicked on a nil registry-packages map
 internal/appdir/appdir_test.go::TestBaseOverrideConcurrentAccess	#review	baseOverride was written without synchronization and raced under -race
 internal/renderer/hardening_test.go::TestBeforeCommitHookConcurrentAccess	#review	beforeCommitHook test seam was an unsynchronized global and raced with rendering
+internal/bridge/bridge_hardening_test.go::TestParseGitHubRefAllowsSlashInPin	#review	a pinned ref containing a slash was rejected before splitPinRef ran
+internal/bridge/bridge_hardening_test.go::TestCacheSourceMatchesFailsClosedWithoutProof	#review	cache without metadata or a matching remote was treated as an owned bridge
+internal/bridge/bridge_hardening_test.go::TestFinishUpdateChecksPinnedContract	#review	contract gate checked FETCH_HEAD but not the pinned ref that was kept
+internal/bridge/bridge_hardening_test.go::TestRunGitHonoursCommandContext	#review	git children used an unprotected global context without a deadline
+internal/packages/packages_hardening_test.go::TestVersionStoreReportsStorageErrors	#review	every ReadJSON error was masked as a cache miss and the file was overwritten
+internal/packages/packages_hardening_test.go::TestNumericPrefixHandlesBuildMetadataAndOverflow	#review	ignored Atoi errors made 1.2.3+build compare as 1.2.3 and overflow dropped version caps
+internal/bridgechain/chain_test.go::TestWalkDetectsCycleAcrossCaseVariants	#review	case-only path variants hid extends cycles on Windows
