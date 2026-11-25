@@ -33,7 +33,7 @@ func sortEntities(entities []Entity) []Entity {
 	}
 
 	// Initialize the queue with all entities that have no dependencies.
-	ready := make([]string, 0)
+	ready := make([]string, 0, len(entities))
 	for i, e := range entities {
 		if inDegree[i] == 0 {
 			ready = append(ready, e.Name)

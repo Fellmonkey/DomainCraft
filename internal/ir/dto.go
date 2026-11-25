@@ -1,10 +1,18 @@
 package ir
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 )
+
+// cloneField detaches a field's validation slice so mutating a DTO field cannot
+// silently change the entity field it was projected from.
+func cloneField(f Field) Field {
+	f.Validations = slices.Clone(f.Validations)
+	return f
+}
 
 // IsSensitive reports whether the field holds credentials that must never be
 // serialized into a response DTO (currently: a field literally named "password").
@@ -44,10 +52,10 @@ func (e Entity) ReadFields() []Field {
 			continue
 		}
 		if f.IsFeatureField() {
-			feature = append(feature, f)
+			feature = append(feature, cloneField(f))
 			continue
 		}
-		out = append(out, f)
+		out = append(out, cloneField(f))
 	}
 	return append(out, feature...)
 }
@@ -61,7 +69,7 @@ func (e Entity) CreateFields() []Field {
 		if f.IsPrimary || f.IsReadonly || f.IsFeatureField() || f.IsSensitive() {
 			continue
 		}
-		out = append(out, f)
+		out = append(out, cloneField(f))
 	}
 	return out
 }
@@ -78,7 +86,7 @@ func (e Entity) UpdateFields() []Field {
 		if f.IsFeatureField() && !f.IsConcurrencyToken() {
 			continue
 		}
-		out = append(out, f)
+		out = append(out, cloneField(f))
 	}
 	return out
 }
@@ -93,7 +101,7 @@ func (e Entity) PatchFields() []Field {
 	out := make([]Field, 0, len(e.Fields))
 	for _, f := range e.Fields {
 		if f.IsPatchable() || f.IsConcurrencyToken() {
-			out = append(out, f)
+			out = append(out, cloneField(f))
 		}
 	}
 	return out

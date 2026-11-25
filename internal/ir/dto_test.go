@@ -159,6 +159,45 @@ func TestIREntity_PatchFieldsNoVersionWithoutLock(t *testing.T) {
 	}
 }
 
+func TestDTOFieldsDoNotShareValidations(t *testing.T) {
+	t.Parallel()
+	e := entityWithFields(
+		Field{Name: "title", DatabaseType: "string", Validations: []Validation{{Name: "max", Value: "255"}}},
+		Field{Name: "version", DatabaseType: "int", Validations: []Validation{{Name: "min", Value: "1"}}},
+	)
+
+	projections := []struct {
+		name   string
+		fields []Field
+	}{
+		{"read", e.ReadFields()},
+		{"create", e.CreateFields()},
+		{"update", e.UpdateFields()},
+		{"patch", e.PatchFields()},
+	}
+	for _, tc := range projections {
+		t.Run(tc.name, func(t *testing.T) {
+			for i := range tc.fields {
+				if len(tc.fields[i].Validations) > 0 {
+					tc.fields[i].Validations[0].Value = "mutated"
+				}
+			}
+			for _, f := range e.Fields {
+				if len(f.Validations) == 0 {
+					continue
+				}
+				want := "255"
+				if f.Name == "version" {
+					want = "1"
+				}
+				if f.Validations[0].Value != want {
+					t.Errorf("source field %q validation mutated to %q, want %q", f.Name, f.Validations[0].Value, want)
+				}
+			}
+		})
+	}
+}
+
 func names(fields []Field) []string {
 	out := make([]string, len(fields))
 	for i, f := range fields {

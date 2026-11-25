@@ -1,6 +1,8 @@
 package renderer
 
 import (
+	"slices"
+
 	"github.com/DomainCraft/DomainCraft/internal/ir"
 )
 
@@ -160,12 +162,16 @@ func (c RenderContext) Seed() []ir.SeedRecord {
 	if c.Entity != nil {
 		for i := range c.SeedData.Entities {
 			if c.SeedData.Entities[i].Name == c.Entity.Name {
-				return c.SeedData.Entities[i].Records
+				return slices.Clone(c.SeedData.Entities[i].Records)
 			}
 		}
 		return nil
 	}
-	var out []ir.SeedRecord
+	total := 0
+	for i := range c.SeedData.Entities {
+		total += len(c.SeedData.Entities[i].Records)
+	}
+	out := make([]ir.SeedRecord, 0, total)
 	for i := range c.SeedData.Entities {
 		out = append(out, c.SeedData.Entities[i].Records...)
 	}

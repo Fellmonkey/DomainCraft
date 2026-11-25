@@ -149,9 +149,10 @@ type FilterPathSpec struct {
 // "meta", whose key path is open-ended). Output is sorted by path for
 // deterministic rendering.
 func (e Entity) FilterablePaths() []FilterPathSpec {
-	var out []FilterPathSpec
+	filterable := e.FilterableFields()
+	out := make([]FilterPathSpec, 0, len(filterable)+len(e.RelationsOut)+len(e.Fields))
 
-	for _, f := range e.FilterableFields() {
+	for _, f := range filterable {
 		out = append(out, FilterPathSpec{Path: f.Name, Kind: SegmentScalar, Operators: f.FilterOperators()})
 	}
 

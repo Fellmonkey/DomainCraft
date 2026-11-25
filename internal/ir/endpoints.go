@@ -72,35 +72,35 @@ func (e Entity) Endpoints() []Endpoint {
 		{
 			Method: "GET", Path: base, Operation: "list",
 			HasBody: false, SuccessStatus: 200,
-			ErrorStatuses: common, Auth: e.PermissionPlan("read"),
+			ErrorStatuses: slices.Clone(common), Auth: e.PermissionPlan("read"),
 			Paginated: true, Concurrency: false,
 		},
 		{
 			Method: "GET", Path: base + "/{id}", Operation: "get",
 			HasBody: false, SuccessStatus: 200,
-			ErrorStatuses: getErrors, Auth: e.PermissionPlan("read"),
+			ErrorStatuses: slices.Clone(getErrors), Auth: e.PermissionPlan("read"),
 		},
 		{
 			Method: "POST", Path: base, Operation: "create",
 			HasBody: true, SuccessStatus: 201,
-			ErrorStatuses: common, Auth: e.PermissionPlan("create"),
+			ErrorStatuses: slices.Clone(common), Auth: e.PermissionPlan("create"),
 		},
 		{
 			Method: "PUT", Path: base + "/{id}", Operation: "update",
 			HasBody: true, SuccessStatus: 200,
-			ErrorStatuses: updateErrors, Auth: e.PermissionPlan("update"),
+			ErrorStatuses: slices.Clone(updateErrors), Auth: e.PermissionPlan("update"),
 			Concurrency: e.HasOptimisticLock(),
 		},
 		{
 			Method: "PATCH", Path: base + "/{id}", Operation: "patch",
 			HasBody: true, SuccessStatus: 200,
-			ErrorStatuses: updateErrors, Auth: e.PermissionPlan("update"),
+			ErrorStatuses: slices.Clone(updateErrors), Auth: e.PermissionPlan("update"),
 			Concurrency: e.HasOptimisticLock(),
 		},
 		{
 			Method: "DELETE", Path: base + "/{id}", Operation: "delete",
 			HasBody: false, SuccessStatus: 204,
-			ErrorStatuses: getErrors, Auth: e.PermissionPlan("delete"),
+			ErrorStatuses: slices.Clone(getErrors), Auth: e.PermissionPlan("delete"),
 		},
 	}
 	return eps
