@@ -1,3 +1,4 @@
+// Package compliance verifies that the regression table names real checks.
 package compliance
 
 import (

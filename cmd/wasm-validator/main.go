@@ -1,5 +1,6 @@
 //go:build js && wasm
 
+// Package main exposes the Go parser and validator to the browser GUI.
 package main
 
 import (

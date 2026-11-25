@@ -128,8 +128,13 @@ var errUsage = errors.New("usage error")
 
 type usageError struct{ err error }
 
+// Error returns the underlying CLI misuse message.
 func (u usageError) Error() string { return u.err.Error() }
+
+// Unwrap exposes the original error for errors.Is/As inspection.
 func (u usageError) Unwrap() error { return u.err }
+
+// Is marks the error as CLI misuse so main can map it to exit code 2.
 func (u usageError) Is(target error) bool {
 	return target == errUsage
 }

@@ -1,3 +1,4 @@
+// Package main implements the domaincraft CLI entry point.
 package main
 
 import (

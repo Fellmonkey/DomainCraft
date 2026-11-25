@@ -26,6 +26,7 @@ type ValidationError struct {
 	Warning bool // non-fatal hint, not a hard error
 }
 
+// Error formats the entity, optional field and message of one validation error.
 func (e ValidationError) Error() string {
 	if e.Field != "" {
 		return fmt.Sprintf("entity %q field %q: %s", e.Entity, e.Field, e.Message)

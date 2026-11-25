@@ -109,6 +109,7 @@ func (r *Resolver) Resolve(input string) (string, error) {
 // resolution; the renderer fails closed on the same error.
 type missingBridgeConfigError struct{ dir string }
 
+// Error reports the directory lacking bridge.yaml.
 func (e *missingBridgeConfigError) Error() string {
 	return fmt.Sprintf("directory %q does not contain bridge.yaml", e.dir)
 }

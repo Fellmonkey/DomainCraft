@@ -193,26 +193,28 @@ func TestSnakeKebabCase(t *testing.T) {
 	snake := fm["snakecase"].(func(string) string)
 	kebab := fm["kebabcase"].(func(string) string)
 	cases := []struct {
-		in, snake, kebab string
+		name, in, snake, kebab string
 	}{
-		{"FirstName", "first_name", "first-name"},
-		{"HTTPServer", "http_server", "http-server"},
-		{"NoHTTPS", "no_https", "no-https"},
-		{"GO_PATH", "go_path", "go-path"},
-		{"GO PATH", "go_path", "go-path"},
-		{"GO-PATH", "go_path", "go-path"},
-		{"http2xx", "http_2xx", "http-2xx"},
-		{"HTTP20xOK", "http_20x_ok", "http-20x-ok"},
-		{"Duration2m3s", "duration_2m3s", "duration-2m3s"},
-		{"Bld4Floor3rd", "bld4_floor_3rd", "bld4-floor-3rd"},
-		{"IPv4Address", "i_pv4_address", "i-pv4-address"},
+		{"firstName", "FirstName", "first_name", "first-name"},
+		{"httpServer", "HTTPServer", "http_server", "http-server"},
+		{"noHTTPS", "NoHTTPS", "no_https", "no-https"},
+		{"go_path", "GO_PATH", "go_path", "go-path"},
+		{"go path", "GO PATH", "go_path", "go-path"},
+		{"go-path", "GO-PATH", "go_path", "go-path"},
+		{"http2xx", "http2xx", "http_2xx", "http-2xx"},
+		{"HTTP20xOK", "HTTP20xOK", "http_20x_ok", "http-20x-ok"},
+		{"duration2m3s", "Duration2m3s", "duration_2m3s", "duration-2m3s"},
+		{"bld4Floor3rd", "Bld4Floor3rd", "bld4_floor_3rd", "bld4-floor-3rd"},
+		{"IPv4Address", "IPv4Address", "i_pv4_address", "i-pv4-address"},
 	}
 	for _, c := range cases {
-		if got := snake(c.in); got != c.snake {
-			t.Errorf("snakecase(%q) = %q, want %q", c.in, got, c.snake)
-		}
-		if got := kebab(c.in); got != c.kebab {
-			t.Errorf("kebabcase(%q) = %q, want %q", c.in, got, c.kebab)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			if got := snake(c.in); got != c.snake {
+				t.Errorf("snakecase(%q) = %q, want %q", c.in, got, c.snake)
+			}
+			if got := kebab(c.in); got != c.kebab {
+				t.Errorf("kebabcase(%q) = %q, want %q", c.in, got, c.kebab)
+			}
+		})
 	}
 }

@@ -355,8 +355,11 @@ type Relation struct {
 	InverseNavName   string
 	OnDeleteBehavior string
 	IsNullable       bool
-	IsMany           bool
-	RelationType     string
+	// IsMany describes the relation itself, not its inverse collection. For a
+	// many-to-many inverse in RelationsIn it is false; bridges detect that case
+	// through RelationType, not by reading IsMany.
+	IsMany       bool
+	RelationType string
 
 	// PairFieldName is set when a `[many]` relation is reconciled with a single
 	// (FK) relation declared on the target entity: the two declarations describe
