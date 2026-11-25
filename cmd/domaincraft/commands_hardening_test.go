@@ -402,11 +402,14 @@ func TestRunDatabaseMigrationsSanitizesDisplayedCommand(t *testing.T) {
 	if err := runDatabaseMigrations(cfg, t.TempDir(), cmd, log); err != nil {
 		t.Fatalf("runDatabaseMigrations: %v", err)
 	}
-	if n := strings.Count(stdout.String(), "echo SAFE"); n != 1 {
-		t.Fatalf("command was displayed %d times in stdout: stdout=%q stderr=%q", n, stdout.String(), stderr.String())
+	if n := strings.Count(stderr.String(), "echo SAFE"); n != 1 {
+		t.Fatalf("command was displayed %d times in stderr: stdout=%q stderr=%q", n, stdout.String(), stderr.String())
 	}
-	if strings.Contains(stdout.String(), "\x1b") {
-		t.Errorf("raw escape byte reached stdout: %q", stdout.String())
+	if stdout.Len() != 0 {
+		t.Errorf("migration diagnostics leaked into stdout: %q", stdout.String())
+	}
+	if strings.Contains(stderr.String(), "\x1b") {
+		t.Errorf("raw escape byte reached stderr: %q", stderr.String())
 	}
 	for _, injected := range []string{"\x1b[31m", "\x1b]0;", "\x07"} {
 		if strings.Contains(stderr.String(), injected) {
@@ -492,14 +495,15 @@ func TestRunDatabaseMigrationsUsesOutputDir(t *testing.T) {
 	if captured.Dir != outDir {
 		t.Errorf("command Dir = %q, want %q", captured.Dir, outDir)
 	}
-	if captured.Stdout != &stdout || captured.Stderr != &stderr {
-		t.Errorf("child streams = (%v, %v), want (cmd stdout, cmd stderr)", captured.Stdout, captured.Stderr)
+	if captured.Stdout != &stderr || captured.Stderr != &stderr {
+		t.Errorf("child streams = (%v, %v), want both on cmd stderr", captured.Stdout, captured.Stderr)
 	}
-	if n := strings.Count(stdout.String(), "echo harmless"); n != 1 {
-		t.Errorf("command line printed %d times in stdout, want 1: %q", n, stdout.String())
+	if stdout.Len() != 0 {
+		t.Errorf("migration diagnostics leaked into stdout: %q", stdout.String())
 	}
-	if strings.Contains(stderr.String(), "echo harmless") {
-		t.Errorf("command line duplicated in stderr: %q", stderr.String())
+	// The stubbed child produces no output, so only the displayed command remains.
+	if n := strings.Count(stderr.String(), "echo harmless"); n != 1 {
+		t.Errorf("command text appeared %d times in stderr, want 1: %q", n, stderr.String())
 	}
 }
 

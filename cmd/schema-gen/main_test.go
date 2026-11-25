@@ -1,6 +1,32 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/DomainCraft/DomainCraft/internal/specmeta"
+)
+
+func TestSchemaTopLevelContract(t *testing.T) {
+	t.Parallel()
+	schema := buildSchema()
+	for _, key := range []string{"$schema", "$id", "title", "type", "properties", "required", "$defs"} {
+		if _, ok := schema[key]; !ok {
+			t.Errorf("buildSchema() is missing %q", key)
+		}
+	}
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("schema has no properties")
+	}
+	databases, ok := props["database"].(map[string]any)
+	if !ok {
+		t.Fatal("schema has no database property")
+	}
+	values, ok := databases["enum"].([]string)
+	if !ok || len(values) == 0 || values[0] != specmeta.Databases[0] {
+		t.Fatalf("database enum = %v, want specmeta.Databases", values)
+	}
+}
 
 // TestSchemaAllowsExplicitZeros pins the schema side of the zero contract: the
 // parser and validator treat an explicit 0 in these fields as meaningful, so the

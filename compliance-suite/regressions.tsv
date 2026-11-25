@@ -187,3 +187,13 @@ internal/bridge/bridge_hardening_test.go::TestRunGitHonoursCommandContext	#revie
 internal/packages/packages_hardening_test.go::TestVersionStoreReportsStorageErrors	#review	every ReadJSON error was masked as a cache miss and the file was overwritten
 internal/packages/packages_hardening_test.go::TestNumericPrefixHandlesBuildMetadataAndOverflow	#review	ignored Atoi errors made 1.2.3+build compare as 1.2.3 and overflow dropped version caps
 internal/bridgechain/chain_test.go::TestWalkDetectsCycleAcrossCaseVariants	#review	case-only path variants hid extends cycles on Windows
+cmd/domaincraft/commands_infra_test.go::TestBuildStampsOnlyExactTags	#review	local builds stamped the nearest tag onto an untagged commit
+cmd/domaincraft/commands_infra_test.go::TestInvalidBridgeRefIsUsageError	#review	invalid bridge flag values exited 1 while malformed --replace syntax exited 2
+cmd/domaincraft/commands_hardening_test.go::TestRunDatabaseMigrationsSanitizesDisplayedCommand	#review	migration diagnostics were written to stdout and broke piping
+cmd/domaincraft/commands_infra_test.go::TestApplyAddonsWarnsOnUnknownName	#review	unknown --addons values were silently ignored
+cmd/domaincraft/commands_infra_test.go::TestMainPackageHasSingleDocComment	#review	package main had two competing package doc comments
+cmd/domaincraft/commands_infra_test.go::TestToolVersionsLiveInMakefile	#review	tool versions were duplicated between Makefile and CI
+cmd/domaincraft/commands_infra_test.go::TestReleaseUsesSameTestGate	#review	release workflow ran tests without race, shuffle and cache-busting flags
+internal/lexer/lexer_hardening_test.go::FuzzParseFieldString	#review	field definitions from user YAML had no fuzz coverage
+cmd/schema-gen/main_test.go::TestSchemaTopLevelContract	#review	schema generator had no test for its top-level contract
+internal/fsutil/fsutil_hardening_test.go::TestLocalPathWithinRejectsEscape	#review	path-containment helper had no direct escape test

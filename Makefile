@@ -6,16 +6,17 @@ SPEC_OUTPUT ?= spec/domain.schema.json
 GUI_DIR ?= ../domaincraft-studio
 SKILLS_DIR ?= ../domaincraft-skills/domaincraft-core
 GO_CACHE_DIR ?= $(CURDIR)/.gocache
+GOLANGCI_LINT_VERSION ?= v2.15.0
+GOVULNCHECK_VERSION ?= v1.9.0
 
 # Release version stamped into the CLI (and WASM validator) binary.
 ifeq ($(OS),Windows_NT)
-VERSION ?= $(shell git describe --tags --abbrev=0 2>nul || echo dev)
+VERSION ?= $(shell git describe --tags --exact-match 2>nul || echo dev)
 else
-VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo dev)
+VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null || echo dev)
 endif
 
 # Cross-platform file copy used by the spec-distribution targets.
-# Cross-platform copy used by the spec-distribution targets.
 ifeq ($(OS),Windows_NT)
 COPY_CMD = copy /Y "$(subst /,\,$(SPEC_OUTPUT))" "$(subst /,\,$(SKILLS_DIR))\domain.schema.json"
 GUI_CMD = cd /d "$(subst /,\,$(GUI_DIR))" && call npm run generate:types
@@ -28,7 +29,7 @@ export GOCACHE := $(GO_CACHE_DIR)
 # GOTMPDIR is deliberately not set: pointing it inside the repo makes
 # t.TempDir() land under a monorepo root and breaks path-sensitive tests.
 
-.PHONY: help build install run test test-affected contract-test contract-golden-update test-verbose test-coverage lint vet fmt clean install-deps check-tidy dev-watch dev-test-watch cli-validate cli-generate cli-bridges regenerate-spec generate-gui-types copy-spec-skills build-wasm build-wasm-gui
+.PHONY: help build install run test test-affected contract-test contract-golden-update test-verbose test-coverage lint vulncheck vet fmt clean install-deps check-tidy dev-watch dev-test-watch cli-validate cli-generate cli-bridges regenerate-spec generate-gui-types copy-spec-skills build-wasm build-wasm-gui
 
 help:
 	@echo "DomainCraft CLI - Available Commands"
@@ -50,7 +51,8 @@ help:
 	@echo "  make contract-golden-update - Regenerate golden manifests after an intentional output change"
 	@echo "  make test-verbose    - Run tests with verbose output"
 	@echo "  make test-coverage   - Run tests and generate coverage report"
-	@echo "  make lint            - Run golangci-lint v2.15.0 via go run (same gate as CI)"
+	@echo "  make lint            - Run golangci-lint via go run (same gate as CI)"
+	@echo "  make vulncheck       - Run govulncheck via go run"
 	@echo "  make vet             - Run go vet ./..."
 	@echo "  make fmt             - Format code (gofmt)"
 	@echo "  make clean           - Clean build artifacts"
@@ -156,8 +158,12 @@ test-coverage:
 	@echo "Coverage report generated: coverage.html"
 
 lint:
-	@echo "Running golangci-lint v2.15.0..."
-	@go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
+	@echo "Running golangci-lint $(GOLANGCI_LINT_VERSION)..."
+	@go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...
+
+vulncheck:
+	@echo "Running govulncheck $(GOVULNCHECK_VERSION)..."
+	@go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 vet:
 	@echo "Running go vet..."

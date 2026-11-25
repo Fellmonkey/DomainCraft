@@ -94,9 +94,8 @@ jobs:
           git diff --exit-code -- go.mod go.sum
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v8
-        with:
-          version: v2.15.0
+        # Same command as the local gate; the version lives in the Makefile.
+        run: make lint
 
   vuln:
     runs-on: ubuntu-latest
@@ -113,8 +112,8 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Vulnerability scan
-        # Pinned version, not @latest, so the gate is reproducible.
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+        # Pinned in the Makefile, not @latest, so the gate is reproducible.
+        run: make vulncheck
 
   schema-check:
     name: Verify generated schema is up to date

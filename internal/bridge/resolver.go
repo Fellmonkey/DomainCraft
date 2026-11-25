@@ -9,6 +9,24 @@ import (
 	"time"
 )
 
+// ErrInvalidRef marks a bridge reference rejected by validation, so CLI
+// commands can map it to a usage exit code instead of a runtime failure.
+var ErrInvalidRef = errors.New("invalid bridge reference")
+
+type invalidRefError struct{ err error }
+
+func (e invalidRefError) Error() string { return e.err.Error() }
+func (e invalidRefError) Unwrap() error { return e.err }
+
+func (e invalidRefError) Is(target error) bool { return target == ErrInvalidRef }
+
+func asInvalidRef(err error) error {
+	if err == nil {
+		return nil
+	}
+	return invalidRefError{err: err}
+}
+
 // Resolver maps a bridge identifier to a local filesystem path.
 // The identifier can be:
 //   - a local path (directory or file) — used directly
@@ -47,7 +65,7 @@ func (r *Resolver) Resolve(input string) (string, error) {
 	if _, ok := errors.AsType[*missingBridgeConfigError](err); ok {
 		// The path exists but is not a bridge. That is a hard error, never a
 		// registry ID or GitHub shorthand.
-		return "", err
+		return "", asInvalidRef(err)
 	}
 
 	// Path-like inputs ("../x", "./x", "/x", "~/x", "C:\\x") that do not
@@ -55,7 +73,7 @@ func (r *Resolver) Resolve(input string) (string, error) {
 	// must not turn into a clone of github.com/../bridge.git.
 	if looksLikePath(input) {
 		abs, _ := filepath.Abs(input)
-		return "", fmt.Errorf("bridge %q not found: no such local path (tried %q); for GitHub use owner/repo", input, abs)
+		return "", asInvalidRef(fmt.Errorf("bridge %q not found: no such local path (tried %q); for GitHub use owner/repo", input, abs))
 	}
 
 	// 2. Registry ID — check cache, clone if needed.
@@ -68,7 +86,7 @@ func (r *Resolver) Resolve(input string) (string, error) {
 	// rejects dot-led inputs; this keeps step 3 correct on its own too).
 	repo, ref, isOwnerRepo, err := parseGitHubRef(input)
 	if err != nil {
-		return "", err
+		return "", asInvalidRef(err)
 	}
 	if isOwnerRepo {
 		entry := RegistryEntry{
@@ -94,7 +112,7 @@ func (r *Resolver) Resolve(input string) (string, error) {
 		return path, nil
 	}
 
-	return "", fmt.Errorf("bridge %q not found: not a local path, registry ID, or owner/repo", input)
+	return "", asInvalidRef(fmt.Errorf("bridge %q not found: not a local path, registry ID, or owner/repo", input))
 }
 
 // parseGitHubRef splits an `owner/repo@ref` shorthand and validates both parts.

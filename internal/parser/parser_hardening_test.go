@@ -5,6 +5,23 @@ import (
 	"testing"
 )
 
+func FuzzParseRawSchema(f *testing.F) {
+	for _, seed := range []string{
+		"project:\n  name: Test\nentities: {}\n",
+		"project:\n  name: Test\nentities:\n  Item:\n    fields:\n      id: uuid [primary]\n",
+		"entities: [\n",
+		"",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, data string) {
+		schema, err := ParseRawSchema([]byte(data))
+		if err == nil && schema == nil {
+			t.Fatal("ParseRawSchema returned neither a schema nor an error")
+		}
+	})
+}
+
 func TestStrictParsingRejectsStructuralShortcuts(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {

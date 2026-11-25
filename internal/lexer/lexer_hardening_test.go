@@ -5,6 +5,24 @@ import (
 	"testing"
 )
 
+func FuzzParseFieldString(f *testing.F) {
+	for _, seed := range []string{
+		"string [required, max:255]",
+		"uuid [primary",
+		"relation(User) [many, on_delete:cascade]",
+		"array(int) [default:[1, 2]]",
+		"",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, input string) {
+		field, err := New(input).Parse()
+		if err == nil && field == nil {
+			t.Fatalf("Parse(%q) returned neither a field nor an error", input)
+		}
+	})
+}
+
 func TestUnterminatedModifierList(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {

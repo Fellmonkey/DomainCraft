@@ -33,7 +33,7 @@ jobs:
 
       - name: Verify the tagged commit passes tests
         # A tag can be pushed without a preceding green main CI run.
-        run: go test ./...
+        run: go test -race -count=1 -shuffle=on ./...
 
       - name: Build all platforms
         run: |

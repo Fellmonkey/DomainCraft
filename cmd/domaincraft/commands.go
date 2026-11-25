@@ -144,6 +144,15 @@ func asUsageError(err error) error {
 	return usageError{err: err}
 }
 
+// usageOnInvalidBridgeRef maps a rejected bridge reference (a bad flag value)
+// to a usage error, while leaving clone/network failures as runtime errors.
+func usageOnInvalidBridgeRef(err error) error {
+	if err == nil || !errors.Is(err, bridge.ErrInvalidRef) {
+		return err
+	}
+	return asUsageError(err)
+}
+
 // newRootCommandFn is a seam so tests can attach their own error writer to
 // the command tree instead of replacing the process-global os.Stderr.
 var newRootCommandFn = newRootCommand
@@ -304,7 +313,7 @@ func loadAndValidateDomain(opts *cliOptions, cmd *cobra.Command, log *logger.Log
 	if err != nil {
 		return nil, "", err
 	}
-	applyAddons(opts, irProject)
+	applyAddons(opts, irProject, log)
 	return irProject, bridgeName, nil
 }
 
@@ -574,7 +583,7 @@ func resolveBridgeInteractive(opts *cliOptions, log *logger.Logger) (string, str
 			}
 		}
 		resolved, err := resolver.Resolve(opts.bridgePath)
-		return resolved, "", err
+		return resolved, "", usageOnInvalidBridgeRef(err)
 	}
 
 	if opts.nonInteractive || !isTerminal() {
@@ -673,12 +682,12 @@ func resolveChainWithReplacements(opts *cliOptions, entryDir string, reps []repl
 			}
 		}
 		if targetIdx == -1 {
-			return "", nil, fmt.Errorf("no bridge with layer or name %q in chain %v", rep.left, fullChain)
+			return "", nil, asUsageError(fmt.Errorf("no bridge with layer or name %q in chain %v", rep.left, fullChain))
 		}
 		// Resolve replacement bridge.
 		rightPath, err := bridge.ResolveExtendsRef(rep.right, entryDir, resolver)
 		if err != nil {
-			return "", nil, fmt.Errorf("resolve --replace %s=%s: %w", rep.left, rep.right, err)
+			return "", nil, asUsageError(fmt.Errorf("resolve --replace %s=%s: %w", rep.left, rep.right, err))
 		}
 		if abs, err := filepath.Abs(rightPath); err == nil {
 			rightPath = abs
@@ -709,7 +718,7 @@ func resolveChainWithReplacements(opts *cliOptions, entryDir string, reps []repl
 				return "", nil, fmt.Errorf("resolve absolute bridge path %q: %w", d, err)
 			}
 			if slices.ContainsFunc(seenPaths, func(seen string) bool { return bridge.SamePath(seen, abs) }) {
-				return "", nil, fmt.Errorf("bridge `extends` cycle detected at %q", d)
+				return "", nil, asUsageError(fmt.Errorf("bridge `extends` cycle detected at %q", d))
 			}
 			seenPaths = append(seenPaths, abs)
 			layer, _, err := bridgeLayerAndName(d, log)
@@ -718,7 +727,7 @@ func resolveChainWithReplacements(opts *cliOptions, entryDir string, reps []repl
 			}
 			if layer != "" {
 				if prev, ok := seenLayer[layer]; ok {
-					return "", nil, fmt.Errorf("duplicate layer %q: %q and %q", layer, prev, d)
+					return "", nil, asUsageError(fmt.Errorf("duplicate layer %q: %q and %q", layer, prev, d))
 				}
 				seenLayer[layer] = d
 			}
@@ -927,7 +936,7 @@ func generateAdminPanel(opts *cliOptions, cmd *cobra.Command, args []string, irP
 
 	adminPath, err := resolver.Resolve(adminID)
 	if err != nil {
-		return nil, fmt.Errorf("resolve admin bridge %q: %w", adminID, err)
+		return nil, usageOnInvalidBridgeRef(fmt.Errorf("resolve admin bridge %q: %w", adminID, err))
 	}
 
 	log.Info("Rendering admin panel via %s", adminID)
@@ -962,7 +971,9 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 	if cfg == nil || !cfg.Enabled || len(cfg.Commands) == 0 {
 		return nil
 	}
-	out := cmd.OutOrStdout()
+	// Migration progress and child-process output are diagnostics, not
+	// machine-readable data: stdout stays clean for piping.
+	out := cmd.ErrOrStderr()
 	errOut := cmd.ErrOrStderr()
 	// The resolved command lines are printed before they run, so the developer
 	// always sees exactly what will be executed (Phase 3.5 safety). Bridge YAML
@@ -1349,9 +1360,9 @@ func customMark(f snapshot.FileRef) string {
 }
 
 // applyAddons parses the --addons flag into the IR project's Addons set,
-// validating each name against specmeta. Unknown addons are silently ignored so
-// bridges that don't know a given addon simply render their non-addon templates.
-func applyAddons(opts *cliOptions, project *ir.Project) {
+// validating each name against specmeta. Unknown addons are ignored with a
+// warning so a typo is visible instead of looking like a successful opt-in.
+func applyAddons(opts *cliOptions, project *ir.Project, log *logger.Logger) {
 	if strings.TrimSpace(opts.addons) == "" {
 		return
 	}
@@ -1365,6 +1376,10 @@ func applyAddons(opts *cliOptions, project *ir.Project) {
 		}
 		if specmeta.IsAddon(addon) {
 			project.Addons[addon] = true
+			continue
+		}
+		if log != nil {
+			log.Warn("unknown addon %q ignored; valid addons: %s", addon, strings.Join(specmeta.Addons, ", "))
 		}
 	}
 }
