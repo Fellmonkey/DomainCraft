@@ -15,6 +15,8 @@ make install-deps && make build   # → bin/domaincraft
 make test && make lint
 ```
 
+`make test` needs only Go. `make test-affected` additionally needs a working `python3` (or `python`) on `PATH` — the script uses it to walk the affected-package graph. Without it, run `make test`.
+
 **Validate and generate:**
 
 ```bash

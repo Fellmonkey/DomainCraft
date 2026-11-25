@@ -213,7 +213,7 @@ The IR and manifest are saved to `.domaincraft/snapshot.json`. On the next run, 
 
 ## Certification
 
-The compliance suite (`compliance-suite/`) is a hand-written oracle: `kitchen-sink.yaml` (a maximal domain) + `suite.js` (k6 over HTTP). TypeScript ships TCKs in `ts-core/tck/` and `ts-client/tck/`. CI runs their hermetic halves: `tsc --noEmit` and `vitest run` against locally generated artifacts. k6/Docker and dotnet TCKs stay manual — they need a running backend or SDK. See [Certification](https://fellmonkey.github.io/domaincraft-site/docs/guides/certification/).
+The compliance suite (`compliance-suite/`) is a hand-written oracle: `kitchen-sink.yaml` (a maximal domain) + `suite.js` (k6 over HTTP). TypeScript ships TCKs in `ts-core/tck/` and `ts-client/tck/`. CI runs their hermetic halves: `tsc --noEmit` and `vitest run` against locally generated artifacts. It also runs the k6/Docker backend suite and client interop on every scoped PR. Only the dotnet TCK stays manual — it needs a local SDK. See [Certification](https://fellmonkey.github.io/domaincraft-site/docs/guides/certification/).
 
 ---
 
