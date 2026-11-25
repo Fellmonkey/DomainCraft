@@ -44,13 +44,14 @@ const CoreContractVersion = specmeta.ContractVersion
 // every other unreadable value — including a negative one — is a hard error:
 // a malformed manifest must never be silently downgraded to "supported".
 func ParseContractVersion(data []byte) (int, bool, error) {
-	// A truncated body may still be valid YAML (e.g. a scalar or a list), so
-	// require the document to be a mapping before reading the version.
-	var probe any
-	if err := yaml.Unmarshal(data, &probe); err != nil {
+	// Parse once into a node, then decode from it. A truncated body may still
+	// be valid YAML (e.g. a scalar or a list), so require a mapping document
+	// before reading the version.
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return 0, false, fmt.Errorf("parse bridge contract version: %w", err)
 	}
-	if _, ok := probe.(map[string]any); !ok {
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
 		return 0, false, fmt.Errorf("parse bridge contract version: manifest must be a YAML mapping")
 	}
 	// A pointer distinguishes an absent field from an explicit 0, while the
@@ -58,7 +59,7 @@ func ParseContractVersion(data []byte) (int, bool, error) {
 	var cfg struct {
 		ContractVersion *int `yaml:"contract_version"`
 	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := doc.Decode(&cfg); err != nil {
 		return 0, false, fmt.Errorf("parse bridge contract version: %w", err)
 	}
 	if cfg.ContractVersion == nil {
@@ -102,6 +103,12 @@ func shouldApplyContract(contractVersion int) error {
 func remoteContractVersion(entry RegistryEntry, ref string) (int, error) {
 	if ref == "" {
 		ref = "main"
+	}
+	// The ref reaches a URL path before git ever validates it. Reject hostile
+	// path/revision characters here so the contract gate cannot be pointed at a
+	// different manifest than the ref ApplyUpdate later checks out.
+	if err := validatePinRef(ref); err != nil {
+		return 0, fmt.Errorf("invalid contract ref %q: %w", ref, err)
 	}
 	body, err := httpGetBodyFn(fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/bridge.yaml", entry.GitHub, ref))
 	if err != nil {
@@ -331,6 +338,11 @@ func githubAPIHead(entry RegistryEntry) (branch, commit string, err error) {
 	}
 	if repo.DefaultBranch == "" {
 		return "", "", fmt.Errorf("github API: no default branch for %s", entry.GitHub)
+	}
+	// The API response is remote data: validate it before it becomes a URL path
+	// or, later, the branch passed to git fetch.
+	if err := validatePinRef(repo.DefaultBranch); err != nil {
+		return "", "", fmt.Errorf("github API: %w", err)
 	}
 
 	commitBody, err := httpGetBodyFn(fmt.Sprintf("https://api.github.com/repos/%s/commits/%s", entry.GitHub, repo.DefaultBranch))

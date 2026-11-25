@@ -64,6 +64,40 @@ func TestResolveBridgePath(t *testing.T) {
 	}
 }
 
+// TestLoadSourceCacheFollowsContentChanges pins the shared parse cache: a
+// second load of an unchanged manifest reuses the parsed config, while a bridge
+// refreshed mid-command (--update-bridges or a manual edit) is parsed anew.
+func TestLoadSourceCacheFollowsContentChanges(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "bridge.yaml")
+	writeManifest := func(name string) {
+		t.Helper()
+		if err := os.WriteFile(configPath, []byte("name: "+name+"\ncontract_version: 1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	writeManifest("first")
+	for i := range 2 {
+		src, err := loadSource(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if src.config.Name != "first" {
+			t.Fatalf("load %d: name = %q, want first", i, src.config.Name)
+		}
+	}
+
+	writeManifest("second")
+	src, err := loadSource(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src.config.Name != "second" {
+		t.Fatalf("name = %q, want second after the file changed", src.config.Name)
+	}
+}
+
 func TestLoadSourceFailsClosedOnMissingBridgeYaml(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

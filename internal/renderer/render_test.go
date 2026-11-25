@@ -61,6 +61,53 @@ templates:
 	}
 }
 
+// TestRenderTargetPathsUsePerEntityContext guards the target-template fast
+// path: one parsed pattern must still be executed with each entity's context.
+func TestRenderTargetPathsUsePerEntityContext(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	bridgeDir := filepath.Join(tmpDir, "bridge")
+	if err := os.MkdirAll(filepath.Join(bridgeDir, "templates"), 0o755); err != nil {
+		t.Fatalf("mkdir bridge: %v", err)
+	}
+	bridgeYAML := []byte(`name: demo
+output_dir: generated
+templates:
+  - for: entity
+    source: templates/entity.tmpl
+    targets:
+      - "{{ .Entity.Name }}.txt"
+      - "nested/{{ lower .Entity.Name }}.txt"
+`)
+	if err := os.WriteFile(filepath.Join(bridgeDir, "bridge.yaml"), bridgeYAML, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bridgeDir, "templates", "entity.tmpl"), []byte(`{{ .Entity.Name }}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := New(bridgeDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := &ir.Project{
+		Name:     "TestProject",
+		Entities: []ir.Entity{{Name: "User"}, {Name: "Item"}},
+	}
+	written, _, err := r.Render(project, filepath.Join(tmpDir, "out"))
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(written) != 4 {
+		t.Fatalf("got %d files, want 4", len(written))
+	}
+	for _, name := range []string{"User.txt", "Item.txt", "nested/user.txt", "nested/item.txt"} {
+		if _, err := os.Stat(filepath.Join(tmpDir, "out", name)); err != nil {
+			t.Errorf("expected generated file %s: %v", name, err)
+		}
+	}
+}
+
 func TestComposeAttachBases(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()

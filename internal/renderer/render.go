@@ -249,6 +249,17 @@ func (r *Renderer) stageTemplates(s *renderSession) error {
 				return s.fail(err)
 			}
 
+			// A target pattern is static for the spec; only the context changes.
+			// Parse once instead of once per (entity, pattern) pair.
+			targetPatterns := spec.TargetPatterns()
+			targetTemplates := make([]*template.Template, len(targetPatterns))
+			for i, pattern := range targetPatterns {
+				targetTemplates[i], err = template.New("path").Funcs(s.funcMap).Parse(pattern)
+				if err != nil {
+					return s.fail(fmt.Errorf("parse target path %q: %w", pattern, err))
+				}
+			}
+
 			for _, context := range contexts {
 				// Check if this specific context should be rendered based on "When" condition
 				if !r.shouldRenderContext(spec, context) {
@@ -260,8 +271,8 @@ func (r *Renderer) stageTemplates(s *renderSession) error {
 					entityName = context.Entity.Name
 				}
 
-				for _, targetPattern := range spec.TargetPatterns() {
-					renderedTarget, err := renderTemplateString(targetPattern, context, s.funcMap)
+				for _, targetTpl := range targetTemplates {
+					renderedTarget, err := executeTemplateString(targetTpl, context)
 					if err != nil {
 						return s.fail(fmt.Errorf("render target path: %w", err))
 					}

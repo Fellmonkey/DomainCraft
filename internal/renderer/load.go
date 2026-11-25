@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"text/template"
 
 	"github.com/DomainCraft/DomainCraft/internal/bridge"
@@ -111,6 +112,21 @@ func validateWhenConditions(bridgeName string, templates []TemplateSpec) error {
 	return nil
 }
 
+// parsedBridgeSource is the cacheable part of sourceConfig. The bridge path is
+// part of the cache key, so the dir is stored here too.
+type parsedBridgeSource struct {
+	dir              string
+	config           BridgeConfig
+	contractDeclared bool
+}
+
+// parsedSourceCache shares one parsed bridge.yaml between the resolution walk
+// (bridgechain asks for Extends) and the render setup (New + AttachBases asks
+// for the same configs again). The key includes the file bytes: a bridge
+// updated mid-command — by --update-bridges or a manual edit — gets a new key
+// and is parsed again, so a cached config can never go stale.
+var parsedSourceCache sync.Map // map[string]parsedBridgeSource
+
 // loadSource loads a single bridge directory (its bridge.yaml).
 func loadSource(bridgePath string) (sourceConfig, error) {
 	bridgeDir, configPath, err := resolveBridgePath(bridgePath)
@@ -120,6 +136,12 @@ func loadSource(bridgePath string) (sourceConfig, error) {
 	data, err := os.ReadFile(configPath) //nolint:gosec // resolved from validated bridge refs by resolveBridgePath
 	if err != nil {
 		return sourceConfig{}, fmt.Errorf("read bridge config: %w", err)
+	}
+
+	key := bridgeDir + "\x00" + configPath + "\x00" + string(data)
+	if cached, ok := parsedSourceCache.Load(key); ok {
+		src := cached.(parsedBridgeSource)
+		return sourceConfig(src), nil
 	}
 
 	var config BridgeConfig
@@ -147,6 +169,9 @@ func loadSource(bridgePath string) (sourceConfig, error) {
 		return sourceConfig{}, fmt.Errorf("bridge %q: %w", config.Name, err)
 	}
 	config.ContractVersion = contractVersion
+	parsedSourceCache.Store(key, parsedBridgeSource{
+		dir: bridgeDir, config: config, contractDeclared: contractDeclared,
+	})
 	return sourceConfig{dir: bridgeDir, config: config, contractDeclared: contractDeclared}, nil
 }
 

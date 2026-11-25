@@ -151,3 +151,10 @@ internal/packages/ssrf_test.go::TestRegistryClientIgnoresEnvironmentProxy	#5	env
 internal/specmeta/specmeta_test.go::TestJSONReturnsDefensiveCopies	#5	WASM specmeta JSON exposed references to the canonical slices and maps
 internal/ir/build_entities_test.go::TestBuildDetachesSeedFromParsedSchema	#5	IR seed rows aliased ParsedSchema and could be mutated after Build
 internal/renderer/bridgefuncs_test.go::TestMergeTypeMappingsClonesValueTypes	#5	merged type mappings aliased the base bridge value type slice
+internal/packages/cache_test.go::TestResolveVersionCachedRepairsCorruptCache	#review	corrupt packages.json bypassed the cache on every future generation
+cmd/schema-gen/main_test.go::TestSchemaAllowsExplicitZeros	#review	JSON schema rejected explicit zeros the parser and validator accepted
+internal/bridge/update_contract_test.go::TestRemoteContractVersionRejectsUnsafeRef	#review	unvalidated ref was interpolated into the raw-content contract URL
+internal/bridge/update_contract_test.go::TestGithubAPIHeadRejectsUnsafeDefaultBranch	#review	remote default branch was interpolated into the commit probe URL unchecked
+pkg/textutil/textutil_test.go::TestCasingKeepsUnicodeValid	#review	byte-sliced first letter corrupted multi-byte project names
+cmd/domaincraft/commands_admin_test.go::TestGenerateAdminPanelPath	#review	admin bridge resolution and rendering had no CLI coverage
+internal/renderer/load_test.go::TestLoadSourceCacheFollowsContentChanges	#review	shared bridge parse cache could serve a stale manifest after an update

@@ -1,6 +1,7 @@
 package packages
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -326,6 +327,58 @@ func TestLoadCacheIgnoresCorruptFile(t *testing.T) {
 	}
 	if got != "1.0.0" {
 		t.Fatalf("expected fresh resolve for corrupt cache, got %q", got)
+	}
+}
+
+// TestResolveVersionCachedRepairsCorruptCache pins the recovery path: after a
+// corrupt packages.json is discarded, the fresh value must be persisted so the
+// next run resolves from cache instead of contacting the registry again.
+func TestResolveVersionCachedRepairsCorruptCache(t *testing.T) {
+	resetCacheRoot(t)
+
+	dir, err := appdir.CacheDir("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, CacheFileName)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{ not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := 0
+	oldFn := resolveVersionFn
+	resolveVersionFn = func(_, _ string) (string, error) {
+		calls++
+		return "1.0.0", nil
+	}
+	defer func() { resolveVersionFn = oldFn }()
+
+	if _, err := ResolveVersionCached("demo", "https://reg.example/{id}", "demo.pkg"); err != nil {
+		t.Fatalf("first ResolveVersionCached: %v", err)
+	}
+	if _, err := ResolveVersionCached("demo", "https://reg.example/{id}", "demo.pkg"); err != nil {
+		t.Fatalf("second ResolveVersionCached: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("registry consulted %d times, want 1: corrupt cache was not rewritten", calls)
+	}
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored struct {
+		Entries map[string]versionEntry `json:"entries"`
+	}
+	if err := json.Unmarshal(body, &stored); err != nil {
+		t.Fatalf("cache file is still corrupt: %v", err)
+	}
+	key := cacheKey("https://reg.example/{id}", "demo.pkg")
+	if got := stored.Entries[key].Value; got != "1.0.0" {
+		t.Fatalf("cached version = %q, want 1.0.0", got)
 	}
 }
 

@@ -1,6 +1,9 @@
 package textutil
 
-import "testing"
+import (
+	"testing"
+	"unicode/utf8"
+)
 
 func TestPluralize(t *testing.T) {
 	t.Parallel()
@@ -125,6 +128,38 @@ func TestCamelCase(t *testing.T) {
 			got := CamelCase(tt.input)
 			if got != tt.want {
 				t.Errorf("CamelCase(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCasingKeepsUnicodeValid pins the rune boundary: project names are only
+// checked for non-emptiness, so a multi-byte first letter must survive casing
+// instead of becoming U+FFFD in generated identifiers.
+func TestCasingKeepsUnicodeValid(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		input  string
+		pascal string
+		camel  string
+	}{
+		{"cyrillic", "магазин", "Магазин", "магазин"},
+		{"cyrillic snake", "магазин_товары", "МагазинТовары", "магазинТовары"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			pascal := PascalCase(tt.input)
+			camel := CamelCase(tt.input)
+			if pascal != tt.pascal {
+				t.Errorf("PascalCase(%q) = %q, want %q", tt.input, pascal, tt.pascal)
+			}
+			if camel != tt.camel {
+				t.Errorf("CamelCase(%q) = %q, want %q", tt.input, camel, tt.camel)
+			}
+			if !utf8.ValidString(pascal) || !utf8.ValidString(camel) {
+				t.Errorf("casing produced invalid UTF-8: %q / %q", pascal, camel)
 			}
 		})
 	}

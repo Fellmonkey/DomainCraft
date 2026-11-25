@@ -232,15 +232,21 @@ func ComputeDiff(old *Snapshot, project *ir.Project, outputDir string) *Diff {
 			filesByEntity[f.Entity] = append(filesByEntity[f.Entity], f)
 		}
 	}
-	customPathsByEntity := make(map[string][]string, len(filesByEntity))
+	// Stat each entity-scoped file once, not once per diff pass. The custom-file
+	// list is derived from the same existing refs, so renamed/deleted/type/field
+	// passes all share one on-disk snapshot without changing their contents.
+	existingRefsByEntity := make(map[string][]FileRef, len(filesByEntity))
+	existingCustomByEntity := make(map[string][]string, len(filesByEntity))
 	for entityName, files := range filesByEntity {
-		paths := make([]string, 0, len(files))
-		for _, f := range files {
-			if f.Custom {
-				paths = append(paths, f.Path)
+		refs := existingFileRefs(outputDir, files)
+		existingRefsByEntity[entityName] = refs
+		custom := make([]string, 0, len(refs))
+		for _, ref := range refs {
+			if ref.Custom {
+				custom = append(custom, ref.Path)
 			}
 		}
-		customPathsByEntity[entityName] = paths
+		existingCustomByEntity[entityName] = custom
 	}
 
 	// Renamed entities (declared via old_name).
@@ -248,7 +254,7 @@ func ComputeDiff(old *Snapshot, project *ir.Project, outputDir string) *Diff {
 		if _, ok := old.Entities[oldName]; !ok {
 			continue
 		}
-		files := existingFileRefs(outputDir, filesByEntity[oldName])
+		files := existingRefsByEntity[oldName]
 		diff.Renamed = append(diff.Renamed, Rename{OldName: oldName, NewName: newName, Files: files})
 	}
 	slices.SortFunc(diff.Renamed, func(a, b Rename) int { return cmp.Compare(a.OldName, b.OldName) })
@@ -261,7 +267,7 @@ func ComputeDiff(old *Snapshot, project *ir.Project, outputDir string) *Diff {
 		if _, renamed := renamedByOld[oldName]; renamed {
 			continue
 		}
-		files := existingFileRefs(outputDir, filesByEntity[oldName])
+		files := existingRefsByEntity[oldName]
 		diff.Deleted = append(diff.Deleted, DeletedEntity{Name: oldName, Files: files})
 	}
 	slices.SortFunc(diff.Deleted, func(a, b DeletedEntity) int { return cmp.Compare(a.Name, b.Name) })
@@ -280,7 +286,7 @@ func ComputeDiff(old *Snapshot, project *ir.Project, outputDir string) *Diff {
 		for _, f := range newEntity.Fields {
 			newFields[f.Name] = f.DatabaseType
 		}
-		customFiles := existingFilePaths(outputDir, customPathsByEntity[oldName])
+		customFiles := existingCustomByEntity[oldName]
 		for fieldName, oldType := range oldState.Fields {
 			newType, ok := newFields[fieldName]
 			if !ok || oldType == newType {
@@ -315,7 +321,7 @@ func ComputeDiff(old *Snapshot, project *ir.Project, outputDir string) *Diff {
 		if !ok {
 			continue
 		}
-		customFiles := existingFilePaths(outputDir, customPathsByEntity[oldName])
+		customFiles := existingCustomByEntity[oldName]
 		for _, f := range newEntity.Fields {
 			if f.OldName == "" {
 				continue
@@ -454,11 +460,6 @@ func existingFileRefs(outputDir string, files []renderer.RenderedFile) []FileRef
 		refs = append(refs, FileRef{Path: f.Path, Custom: f.Custom})
 	}
 	return refs
-}
-
-// existingFilePaths filters relative paths to those that still exist on disk.
-func existingFilePaths(outputDir string, relPaths []string) []string {
-	return existingItems(outputDir, relPaths, func(rel string) string { return rel })
 }
 
 // RenameRelPath maps an entity-scoped file path to its path after the entity

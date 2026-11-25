@@ -420,11 +420,10 @@ func registerValueFuncs(funcs map[string]any, m *typeMappings, w warner) {
 	}
 }
 
-func renderTemplateString(pattern string, data any, funcMap template.FuncMap) (string, error) {
-	tpl, err := template.New("path").Funcs(funcMap).Parse(pattern)
-	if err != nil {
-		return "", err
-	}
+// executeTemplateString renders an already-parsed template with one context.
+// Target-path patterns are parsed once per spec by the render loop; parsing
+// them for every entity would repeat identical work on the hot render path.
+func executeTemplateString(tpl *template.Template, data any) (string, error) {
 	var builder strings.Builder
 	if err := tpl.Execute(&builder, data); err != nil {
 		return "", err

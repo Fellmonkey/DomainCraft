@@ -125,7 +125,7 @@ func buildSchema() map[string]any {
 				"additionalProperties": false,
 				"properties": map[string]any{
 					"domain": map[string]any{"type": "string", "description": "API domain (e.g. localhost, api.example.com)"},
-					"port":   map[string]any{"type": "integer", "minimum": 1, "maximum": 65535, "description": "Exposed application port (default: 8080)"},
+					"port":   map[string]any{"type": "integer", "minimum": 0, "maximum": 65535, "description": "Exposed application port (default: 8080)"},
 				},
 			},
 			"VersioningConfig": map[string]any{
@@ -144,8 +144,8 @@ func buildSchema() map[string]any {
 				"properties": map[string]any{
 					"enabled":        map[string]any{"type": "boolean", "description": "Enable request rate limiting (default: true)"},
 					"policy":         map[string]any{"type": "string", "enum": specmeta.RateLimitPolicies, "description": "Limiter algorithm (default: fixed)"},
-					"permit_limit":   map[string]any{"type": "integer", "minimum": 1, "description": "Max requests (default: 100)"},
-					"window_seconds": map[string]any{"type": "integer", "minimum": 1, "description": "Window duration in seconds (default: 60)"},
+					"permit_limit":   map[string]any{"type": "integer", "minimum": 0, "description": "Max requests (default: 100)"},
+					"window_seconds": map[string]any{"type": "integer", "minimum": 0, "description": "Window duration in seconds (default: 60)"},
 				},
 			},
 			"PaginationConfig": map[string]any{
@@ -153,8 +153,8 @@ func buildSchema() map[string]any {
 				"type":                 "object",
 				"additionalProperties": false,
 				"properties": map[string]any{
-					"default_page_size": map[string]any{"type": "integer", "minimum": 1, "description": "Default page size (default: 20)"},
-					"max_page_size":     map[string]any{"type": "integer", "minimum": 1, "description": "Hard cap on page size (default: 200)"},
+					"default_page_size": map[string]any{"type": "integer", "minimum": 0, "description": "Default page size (default: 20)"},
+					"max_page_size":     map[string]any{"type": "integer", "minimum": 0, "description": "Hard cap on page size (default: 200)"},
 				},
 			},
 			"InfrastructureConfig": map[string]any{

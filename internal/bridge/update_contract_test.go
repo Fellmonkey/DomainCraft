@@ -105,3 +105,48 @@ func TestRemoteContractVersion(t *testing.T) {
 	}
 	httpGetBodyFn = origGet
 }
+
+// TestRemoteContractVersionRejectsUnsafeRef pins the URL boundary: the ref is
+// interpolated into a raw-content URL before git sees it, so validation must
+// happen first and no HTTP probe may be made for a hostile value.
+func TestRemoteContractVersionRejectsUnsafeRef(t *testing.T) {
+	orig := httpGetBodyFn
+	defer func() { httpGetBodyFn = orig }()
+
+	calls := 0
+	httpGetBodyFn = func(string) ([]byte, error) {
+		calls++
+		return nil, fmt.Errorf("must not probe an unsafe ref")
+	}
+	entry := RegistryEntry{GitHub: "owner/repo"}
+	for _, ref := range []string{"../main", "--upload-pack=sh", "main@{0}", "release%2fmain"} {
+		if _, err := remoteContractVersion(entry, ref); err == nil {
+			t.Errorf("ref %q must be rejected before a URL is built", ref)
+		}
+	}
+	if calls != 0 {
+		t.Errorf("unsafe refs caused %d HTTP probes, want 0", calls)
+	}
+}
+
+// TestGithubAPIHeadRejectsUnsafeDefaultBranch checks that a remote-controlled
+// default_branch cannot redirect the commit probe to another API path.
+func TestGithubAPIHeadRejectsUnsafeDefaultBranch(t *testing.T) {
+	orig := httpGetBodyFn
+	defer func() { httpGetBodyFn = orig }()
+
+	calls := 0
+	httpGetBodyFn = func(url string) ([]byte, error) {
+		calls++
+		if strings.Contains(url, "/commits/") {
+			return nil, fmt.Errorf("commit probe must not run for an unsafe branch: %s", url)
+		}
+		return []byte(`{"default_branch":"../evil"}`), nil
+	}
+	if _, _, err := githubAPIHead(RegistryEntry{GitHub: "owner/repo"}); err == nil {
+		t.Error("unsafe default branch must be rejected")
+	}
+	if calls != 1 {
+		t.Errorf("HTTP calls = %d, want 1 (repo probe only)", calls)
+	}
+}
