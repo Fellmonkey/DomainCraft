@@ -44,7 +44,9 @@ var persistVersionCacheFn = persistVersionCache
 
 // cacheMu serializes the read-modify-write cycle on a cache file. Two bridge
 // layers resolving packages concurrently must not overwrite each other's
-// entries or lose a freshly resolved version.
+// entries or lose a freshly resolved version. It is a single global mutex, so
+// resolution across all bridges is serialized; correctness does not depend on
+// that serialization, and per-bridge locks are a possible future optimization.
 var cacheMu sync.Mutex
 
 // versionStore loads (or initializes) the package-version cache file for a

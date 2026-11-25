@@ -120,12 +120,47 @@ type parsedBridgeSource struct {
 	contractDeclared bool
 }
 
+// maxParsedSourceCacheEntries bounds the parse cache. In a one-shot CLI it
+// lives for one run, but a long-lived host edits bridge.yaml repeatedly and
+// would otherwise accumulate one key per edit.
+const maxParsedSourceCacheEntries = 64
+
 // parsedSourceCache shares one parsed bridge.yaml between the resolution walk
 // (bridgechain asks for Extends) and the render setup (New + AttachBases asks
 // for the same configs again). The key includes the file bytes: a bridge
 // updated mid-command — by --update-bridges or a manual edit — gets a new key
 // and is parsed again, so a cached config can never go stale.
 var parsedSourceCache sync.Map // map[string]parsedBridgeSource
+
+// parsedSourceCacheMu makes the cap check + clear + store atomic. Loads stay
+// lock-free through sync.Map: a concurrent load can only cause an extra parse,
+// never a wrong config.
+var parsedSourceCacheMu sync.Mutex
+
+// storeParsedSource inserts into the parse cache, clearing it once the cap is
+// reached. Clearing is safe: the key includes the bridge path and the full
+// config bytes, so an entry is only ever reused for an identical manifest. No
+// correctness depends on older entries — evicting them just makes the next
+// identical load re-parse once.
+func storeParsedSource(key string, src parsedBridgeSource) {
+	parsedSourceCacheMu.Lock()
+	defer parsedSourceCacheMu.Unlock()
+
+	n := 0
+	parsedSourceCache.Range(func(_, _ any) bool {
+		n++
+		// Range stops when f returns false; keep walking until the cap is
+		// reached so n becomes the current entry count (capped at the limit).
+		return n < maxParsedSourceCacheEntries
+	})
+	if n >= maxParsedSourceCacheEntries {
+		parsedSourceCache.Range(func(k, _ any) bool {
+			parsedSourceCache.Delete(k)
+			return true
+		})
+	}
+	parsedSourceCache.Store(key, src)
+}
 
 // loadSource loads a single bridge directory (its bridge.yaml).
 func loadSource(bridgePath string) (sourceConfig, error) {
@@ -169,7 +204,7 @@ func loadSource(bridgePath string) (sourceConfig, error) {
 		return sourceConfig{}, fmt.Errorf("bridge %q: %w", config.Name, err)
 	}
 	config.ContractVersion = contractVersion
-	parsedSourceCache.Store(key, parsedBridgeSource{
+	storeParsedSource(key, parsedBridgeSource{
 		dir: bridgeDir, config: config, contractDeclared: contractDeclared,
 	})
 	return sourceConfig{dir: bridgeDir, config: config, contractDeclared: contractDeclared}, nil

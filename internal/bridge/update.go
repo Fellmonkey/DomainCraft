@@ -158,7 +158,11 @@ func CheckForUpdate(entry RegistryEntry, interval time.Duration) (*Update, error
 	// Record the attempt regardless of outcome so the freshness gate applies
 	// even while offline (otherwise every run would wait on a timeout).
 	meta.LastCheckedAt = now
-	if werr := WriteMeta(entry, meta); werr != nil && err == nil {
+	werr := WriteMeta(entry, meta)
+	if err != nil && werr != nil {
+		return nil, errors.Join(err, fmt.Errorf("record bridge update check: %w", werr))
+	}
+	if werr != nil {
 		return nil, werr
 	}
 

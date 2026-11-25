@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -103,6 +104,36 @@ func TestLoadSourceFailsClosedOnMissingBridgeYaml(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := loadSource(dir); err == nil || !strings.Contains(err.Error(), "does not contain bridge.yaml") {
 		t.Fatalf("loadSource on a directory without bridge.yaml = %v, want a hard error naming bridge.yaml", err)
+	}
+}
+
+// TestParsedSourceCacheEvictsOldEntries pins the bound on the shared parse
+// cache: more inserts than the cap leave at most cap entries. The cache is
+// package-global, so this test must not run in parallel with other loadSource
+// users.
+func TestParsedSourceCacheEvictsOldEntries(t *testing.T) {
+	clearCache := func() {
+		parsedSourceCache.Range(func(k, _ any) bool {
+			parsedSourceCache.Delete(k)
+			return true
+		})
+	}
+	t.Cleanup(clearCache)
+	clearCache()
+
+	inserts := maxParsedSourceCacheEntries + 10
+	for i := range inserts {
+		storeParsedSource("evict-probe-"+strconv.Itoa(i), parsedBridgeSource{})
+	}
+
+	n := 0
+	parsedSourceCache.Range(func(_, _ any) bool {
+		n++
+		return true
+	})
+	if n > maxParsedSourceCacheEntries {
+		t.Fatalf("cache has %d entries after %d inserts, want at most %d",
+			n, inserts, maxParsedSourceCacheEntries)
 	}
 }
 

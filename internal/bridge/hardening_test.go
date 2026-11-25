@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -477,5 +478,53 @@ func TestApplyUpdateJoinsFastPathFailureWithCloneFailure(t *testing.T) {
 	}
 	if fetch >= 0 && clone >= 0 && fetch > clone {
 		t.Errorf("error = %q, want the original fetch failure before the cleanup failure", msg)
+	}
+}
+
+// R3: when the remote probe and the freshness write both fail, both causes must
+// reach the caller. Dropping the write error left the timestamp unpersisted, so
+// every later run paid the probe timeout again with no diagnostic.
+func TestCheckForUpdateJoinsCacheWriteFailure(t *testing.T) {
+	// No t.Parallel: the cache base and httpGetBodyFn are package globals.
+	root := t.TempDir()
+	appdir.SetBaseForTesting(root)
+	t.Cleanup(func() { appdir.SetBaseForTesting("") })
+
+	entry := cacheEntry("joined-write-failure", "owner/joined-write-failure")
+	if err := WriteMeta(entry, &CacheMeta{
+		ID: entry.ID, Source: entry.GitHub, Version: "1.0.0", Branch: "main",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	probeErr := errors.New("probe offline")
+	originalGet := httpGetBodyFn
+	t.Cleanup(func() { httpGetBodyFn = originalGet })
+	httpGetBodyFn = func(string) ([]byte, error) {
+		// Metadata has already been read; break the cache dir before WriteMeta
+		// so the freshness write fails without a symlink or permission trick.
+		dir := CachePath(entry)
+		if err := os.RemoveAll(dir); err != nil {
+			t.Fatalf("remove cache dir: %v", err)
+		}
+		if err := os.WriteFile(dir, []byte("not a directory"), 0o644); err != nil {
+			t.Fatalf("replace cache dir with a file: %v", err)
+		}
+		return nil, probeErr
+	}
+
+	_, err := CheckForUpdate(entry, 0)
+	if err == nil {
+		t.Fatal("CheckForUpdate hid both the probe and metadata-write failures")
+	}
+	if !errors.Is(err, probeErr) {
+		t.Errorf("error = %q, want the probe failure to stay inspectable", err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "record bridge update check") {
+		t.Errorf("error = %q, want the cache-write context", msg)
+	}
+	if !strings.Contains(msg, probeErr.Error()) {
+		t.Errorf("error = %q, want the network failure context", msg)
 	}
 }
