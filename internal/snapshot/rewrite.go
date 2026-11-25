@@ -224,11 +224,12 @@ func RewriteFile(outputDir, relPath string, transforms ...func([]byte) []byte) (
 	if len(transforms) == 0 {
 		return false, nil
 	}
-	abs, err := safeRelPath(outputDir, relPath)
+	root, rel, err := openRootFor(outputDir, relPath)
 	if err != nil {
 		return false, err
 	}
-	data, err := os.ReadFile(abs) //nolint:gosec // abs passed safeRelPath validation
+	defer func() { _ = root.Close() }()
+	data, err := root.ReadFile(rel)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
@@ -242,7 +243,7 @@ func RewriteFile(outputDir, relPath string, transforms ...func([]byte) []byte) (
 	if string(out) == string(data) {
 		return false, nil
 	}
-	if err := fsutil.AtomicWrite(abs, out); err != nil {
+	if err := fsutil.AtomicWriteRoot(root, rel, out); err != nil {
 		return false, err
 	}
 	return true, nil

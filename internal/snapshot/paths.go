@@ -53,3 +53,30 @@ func safeRelPath(outputDir, relPath string) (string, error) {
 	}
 	return abs, nil
 }
+
+// openRootFor validates relPath against outputDir and returns a root confined
+// to that directory plus the OS-form path relative to it. Mutating operations
+// must use the returned root so a component replaced by a symlink after the
+// lexical and symlink checks cannot redirect the write or delete.
+func openRootFor(outputDir, relPath string) (*os.Root, string, error) {
+	abs, err := safeRelPath(outputDir, relPath)
+	if err != nil {
+		return nil, "", err
+	}
+	absOutput, err := filepath.Abs(outputDir)
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve output dir %q: %w", outputDir, err)
+	}
+	if err := fsutil.RefuseSymlinks(absOutput, abs); err != nil {
+		return nil, "", err
+	}
+	rel, err := filepath.Rel(absOutput, abs)
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve path %q: %w", relPath, err)
+	}
+	root, err := os.OpenRoot(absOutput)
+	if err != nil {
+		return nil, "", fmt.Errorf("open output root %q: %w", outputDir, err)
+	}
+	return root, rel, nil
+}

@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -61,7 +62,28 @@ func WriteMeta(entry RegistryEntry, meta *CacheMeta) error {
 	if meta == nil {
 		return fmt.Errorf("cannot write nil cache metadata")
 	}
-	return fsutil.WriteJSON(MetaPath(entry), meta)
+	path := MetaPath(entry)
+	parent := filepath.Dir(path)
+	if err := os.MkdirAll(parent, 0o755); err != nil { //nolint:gosec // bridge cache dirs must stay readable across CLI runs
+		return err
+	}
+	if err := fsutil.RefuseSymlinks(parent, path); err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(parent)
+	if err != nil {
+		return fmt.Errorf("open cache root for %q: %w", entry.ID, err)
+	}
+	defer func() { _ = root.Close() }()
+	rel, err := filepath.Rel(parent, path)
+	if err != nil {
+		return fmt.Errorf("resolve cache metadata path %q: %w", path, err)
+	}
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal cache metadata for %q: %w", entry.ID, err)
+	}
+	return fsutil.AtomicWriteRoot(root, rel, data)
 }
 
 // ensureMeta returns the cache metadata for a cached bridge, synthesizing it

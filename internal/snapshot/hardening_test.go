@@ -228,3 +228,51 @@ func TestSnapshotJSONHasNoTimestamp(t *testing.T) {
 		t.Errorf("two saves of the same model differ:\nfirst:  %s\nsecond: %s", data, otherData)
 	}
 }
+
+// The mutation helpers must refuse symlinks even when the link stays inside
+// outputDir: os.Root confines the operation, RefuseSymlinks rejects the link.
+func TestDeleteFileRefusesInternalSymlink(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	realDir := filepath.Join(root, "real")
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	target := filepath.Join(realDir, "Product.cs")
+	if err := os.WriteFile(target, []byte("keep"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	if err := os.Symlink(realDir, filepath.Join(root, "link")); err != nil {
+		t.Skipf("symlinks unavailable on this host: %v", err)
+	}
+	if err := DeleteFile(root, "link/Product.cs"); err == nil {
+		t.Fatal("DeleteFile followed a symlink inside outputDir")
+	}
+	data, err := os.ReadFile(target)
+	if err != nil || string(data) != "keep" {
+		t.Errorf("DeleteFile removed the symlink target: data=%q err=%v", data, err)
+	}
+}
+
+func TestRenameEntityFileRefusesBrokenSymlinkDestination(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	source := filepath.Join(root, "ProductService.cs")
+	if err := os.WriteFile(source, []byte("custom"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	dest := filepath.Join(root, "ItemService.cs")
+	if err := os.Symlink(filepath.Join(root, "missing-target"), dest); err != nil {
+		t.Skipf("symlinks unavailable on this host: %v", err)
+	}
+	_, renamed, err := RenameEntityFile(root, "ProductService.cs", "Product", "Item")
+	if err == nil {
+		t.Fatal("RenameEntityFile accepted a symlink as destination")
+	}
+	if renamed {
+		t.Error("rename reported success despite the symlink destination")
+	}
+	if _, err := os.Stat(source); err != nil {
+		t.Errorf("source was moved despite the symlink destination: %v", err)
+	}
+}

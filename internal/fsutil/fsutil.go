@@ -4,6 +4,7 @@
 package fsutil
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -130,6 +131,46 @@ func AtomicWrite(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmpName, path)
+}
+
+// AtomicWriteRoot writes data to name relative to root via a temp file and a
+// rename, so a crash mid-write cannot leave a truncated file behind. Unlike
+// AtomicWrite, every operation is confined to root: a symlink planted between
+// validation and commit can redirect neither the temp file nor the rename.
+func AtomicWriteRoot(root *os.Root, name string, data []byte) error {
+	dir := filepath.Dir(name)
+	if err := root.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+
+	mode := os.FileMode(0o600)
+	if info, err := root.Lstat(name); err == nil {
+		if info.Mode()&os.ModeSymlink == 0 {
+			mode = info.Mode().Perm()
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	tmp := name + ".tmp-" + rand.Text()
+	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Remove(tmp) }() // no-op once the rename succeeds
+
+	if err := f.Chmod(mode); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return root.Rename(tmp, name)
 }
 
 // WriteJSON marshals v as indented JSON and writes it to path atomically.

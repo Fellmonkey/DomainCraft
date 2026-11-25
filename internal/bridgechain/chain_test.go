@@ -65,6 +65,23 @@ func TestWalkDetectsCycle(t *testing.T) {
 	}
 }
 
+func TestWalkFailsWhenAbsFails(t *testing.T) {
+	root := t.TempDir()
+	base := writeBridge(t, filepath.Join(root, "base"), "")
+
+	original := absPathFn
+	t.Cleanup(func() { absPathFn = original })
+	absPathFn = func(string) (string, error) { return "", os.ErrPermission }
+
+	_, err := Walk(base, root, testResolver(), nil)
+	if err == nil {
+		t.Fatal("Walk accepted a bridge path it could not make absolute")
+	}
+	if !strings.Contains(err.Error(), "resolve absolute bridge path") {
+		t.Errorf("err = %v, want the absolute-path failure context", err)
+	}
+}
+
 func TestWalkMissingLocalPathIsHardError(t *testing.T) {
 	root := t.TempDir()
 	missing := filepath.Join(root, "missing-bridge")

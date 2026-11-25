@@ -890,7 +890,7 @@ func TestReplaceScaffoldedFileKeepsSourceOnRemoveFailure(t *testing.T) {
 
 	original := removeFileFn
 	t.Cleanup(func() { removeFileFn = original })
-	removeFileFn = func(string) error { return fmt.Errorf("remove failed") }
+	removeFileFn = func(*os.Root, string) error { return fmt.Errorf("remove failed") }
 
 	transform := func(b []byte) []byte {
 		return []byte(strings.ReplaceAll(string(b), "Product", "Item"))

@@ -136,3 +136,7 @@ cmd/domaincraft/commands_hardening_test.go::TestUsageErrorsExitTwo	#5	bad flags,
 internal/renderer/enum_array_test.go::TestTSCoreRendersEnumArrayType	#5	generated TypeScript enum arrays were empty because the core dropped its array syntax fallback and the bridge declared no array_format
 internal/snapshot/snapshot_test.go::TestReplaceScaffoldedFileKeepsSourceOnRemoveFailure	#5	--prune deleted the scaffolded custom file before rename and lost both copies when rename failed
 internal/snapshot/snapshot_test.go::TestReplaceScaffoldedFileSucceeds	#5	scaffolded custom file replacement never committed the developer content atomically
+internal/snapshot/hardening_test.go::TestDeleteFileRefusesInternalSymlink	#5	--prune deleted through a symlink that stayed inside outputDir
+internal/snapshot/hardening_test.go::TestRenameEntityFileRefusesBrokenSymlinkDestination	#5	any stat error on the rename destination was treated as "file does not exist"
+internal/bridgechain/chain_test.go::TestWalkFailsWhenAbsFails	#5	a failed Abs left a relative key in the extends cycle detector
+internal/fsutil/fsutil_test.go::TestAtomicWriteRootRefusesSymlinkEscape	#5	a symlink planted in a cache path redirected writes outside the cache

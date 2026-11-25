@@ -12,6 +12,10 @@ import (
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
 )
 
+// absPathFn is a seam for testing the failure path: a failed Abs must not
+// silently leave a relative key in the cycle-detection set.
+var absPathFn = filepath.Abs
+
 // Walk resolves ref relative to fromDir and follows `extends` to the deepest
 // base. It returns absolute paths top-first: the resolved bridge first, then
 // its bases. Absolute paths make cycle detection path-based, not textual.
@@ -23,9 +27,11 @@ func Walk(ref, fromDir string, resolver *bridge.Resolver, log *logger.Logger) ([
 		if err != nil {
 			return nil, fmt.Errorf("resolve bridge `extends: %s`: %w", ref, err)
 		}
-		if abs, err := filepath.Abs(path); err == nil {
-			path = abs
+		abs, err := absPathFn(path)
+		if err != nil {
+			return nil, fmt.Errorf("resolve absolute bridge path %q: %w", path, err)
 		}
+		path = abs
 		if visited[path] {
 			return nil, fmt.Errorf("bridge `extends` cycle detected at %q", ref)
 		}

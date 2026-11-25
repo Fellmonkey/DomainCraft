@@ -58,6 +58,14 @@ func TryMaterializeEmbedded(entry RegistryEntry, opts *EnsureOptions) (bool, err
 // root into the destination directory, preserving relative paths. Every target
 // component is checked for symlinks before it is written.
 func writeFSDir(fsys fs.FS, root, dst string) error {
+	// os.Root confines every write to dst. RefuseSymlinks still rejects links
+	// that stay inside the cache; Root additionally closes the window between
+	// the check and the commit if a component is replaced concurrently.
+	dir, err := os.OpenRoot(dst)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
 	return fs.WalkDir(fsys, root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -68,17 +76,18 @@ func writeFSDir(fsys fs.FS, root, dst string) error {
 		if err := refuseSymlinks(dst, target); err != nil {
 			return err
 		}
+		name := filepath.FromSlash(rel)
+		if name == "" {
+			return nil
+		}
 		if d.IsDir() {
-			return os.MkdirAll(target, 0o755) //nolint:gosec // bridge cache dirs must stay readable across CLI runs
+			return dir.MkdirAll(name, 0o755)
 		}
 		data, err := fs.ReadFile(fsys, path)
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil { //nolint:gosec // bridge cache dirs must stay readable across CLI runs
-			return err
-		}
-		return os.WriteFile(target, data, 0o644) //nolint:gosec // bridge templates are source files read by other users/tools
+		return fsutil.AtomicWriteRoot(dir, name, data)
 	})
 }
 

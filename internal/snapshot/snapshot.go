@@ -12,6 +12,7 @@ package snapshot
 import (
 	"cmp"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -473,11 +474,12 @@ func RenameRelPath(relPath, oldName, newName string) string {
 
 // DeleteFile removes an entity-scoped file (path relative to outputDir).
 func DeleteFile(outputDir, relPath string) error {
-	abs, err := safeRelPath(outputDir, relPath)
+	root, rel, err := openRootFor(outputDir, relPath)
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(abs); err != nil {
+	defer func() { _ = root.Close() }()
+	if err := root.Remove(rel); err != nil {
 		return fmt.Errorf("remove %s: %w", relPath, err)
 	}
 	return nil
@@ -492,28 +494,32 @@ func RenameEntityFile(outputDir, relPath, oldName, newName string) (newRel strin
 	if newRel == relPath {
 		return newRel, false, nil
 	}
-	abs, err := safeRelPath(outputDir, relPath)
+	srcRoot, srcRel, err := openRootFor(outputDir, relPath)
 	if err != nil {
 		return newRel, false, err
 	}
-	newAbs, err := safeRelPath(outputDir, newRel)
+	defer func() { _ = srcRoot.Close() }()
+	dstRoot, dstRel, err := openRootFor(outputDir, newRel)
 	if err != nil {
 		return newRel, false, err
 	}
-	if _, err := os.Stat(newAbs); err == nil {
+	defer func() { _ = dstRoot.Close() }()
+	if _, err := dstRoot.Lstat(dstRel); err == nil {
 		return newRel, false, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return newRel, false, fmt.Errorf("check destination %s: %w", newRel, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(newAbs), 0o755); err != nil { //nolint:gosec // generated project dirs must stay world-readable
+	if err := dstRoot.MkdirAll(filepath.Dir(dstRel), 0o755); err != nil {
 		return newRel, false, fmt.Errorf("create parent dir for %s: %w", newRel, err)
 	}
-	if err := os.Rename(abs, newAbs); err != nil {
+	if err := srcRoot.Rename(srcRel, dstRel); err != nil {
 		return newRel, false, fmt.Errorf("rename %s to %s: %w", relPath, newRel, err)
 	}
 	return newRel, true, nil
 }
 
 // removeFileFn is a seam for testing the failure path of ReplaceScaffoldedFile.
-var removeFileFn = os.Remove
+var removeFileFn = func(root *os.Root, name string) error { return root.Remove(name) }
 
 // ReplaceScaffoldedFile replaces a scaffolded custom file at destRel with the
 // developer's existing custom file at sourceRel, applying transforms to its
@@ -522,25 +528,17 @@ var removeFileFn = os.Remove
 // A failed source removal is reported: the destination is already correct and
 // the developer can remove the leftover manually.
 func ReplaceScaffoldedFile(outputDir, sourceRel, destRel string, transforms ...func([]byte) []byte) error {
-	src, err := safeRelPath(outputDir, sourceRel)
+	srcRoot, srcRel, err := openRootFor(outputDir, sourceRel)
 	if err != nil {
 		return err
 	}
-	dst, err := safeRelPath(outputDir, destRel)
+	defer func() { _ = srcRoot.Close() }()
+	dstRoot, dstRel, err := openRootFor(outputDir, destRel)
 	if err != nil {
 		return err
 	}
-	absOutput, err := filepath.Abs(outputDir)
-	if err != nil {
-		return fmt.Errorf("resolve output dir %q: %w", outputDir, err)
-	}
-	if err := fsutil.RefuseSymlinks(absOutput, src); err != nil {
-		return err
-	}
-	if err := fsutil.RefuseSymlinks(absOutput, dst); err != nil {
-		return err
-	}
-	data, err := os.ReadFile(src) //nolint:gosec // src passed safeRelPath and RefuseSymlinks validation
+	defer func() { _ = dstRoot.Close() }()
+	data, err := srcRoot.ReadFile(srcRel)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", sourceRel, err)
 	}
@@ -548,10 +546,10 @@ func ReplaceScaffoldedFile(outputDir, sourceRel, destRel string, transforms ...f
 	for _, transform := range transforms {
 		out = transform(out)
 	}
-	if err := fsutil.AtomicWrite(dst, out); err != nil {
+	if err := fsutil.AtomicWriteRoot(dstRoot, dstRel, out); err != nil {
 		return fmt.Errorf("write %s: %w", destRel, err)
 	}
-	if err := removeFileFn(src); err != nil {
+	if err := removeFileFn(srcRoot, srcRel); err != nil {
 		return fmt.Errorf("remove replaced %s: %w", sourceRel, err)
 	}
 	return nil

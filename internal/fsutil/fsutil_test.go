@@ -261,3 +261,22 @@ func TestRefuseSymlinksCachedRechecksNewlyCreatedComponent(t *testing.T) {
 		t.Errorf("cached check = %v, want %q", got, want)
 	}
 }
+
+func TestAtomicWriteRootRefusesSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Skipf("symlinks unavailable on this host: %v", err)
+	}
+	dir, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatalf("OpenRoot: %v", err)
+	}
+	defer func() { _ = dir.Close() }()
+	if err := AtomicWriteRoot(dir, filepath.Join("escape", "victim.txt"), []byte("bad")); err == nil {
+		t.Fatal("AtomicWriteRoot followed a symlink outside the root")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "victim.txt")); !os.IsNotExist(err) {
+		t.Errorf("file appeared outside the root: err = %v", err)
+	}
+}
