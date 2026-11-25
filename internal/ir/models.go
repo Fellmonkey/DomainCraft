@@ -268,6 +268,17 @@ func (f Field) ColumnName() string {
 	return textutil.ToDatabaseColumnName(f.Name)
 }
 
+// OldColumnName returns the previous column name of a renamed field. It is the
+// single source of truth for the migration report and the migration plan: a
+// missing OldDatabaseColumnName falls back to the canonical snake_case of the
+// declared old_name, the same way ColumnName treats the current field name.
+func (f Field) OldColumnName() string {
+	if f.OldDatabaseColumnName != "" {
+		return f.OldDatabaseColumnName
+	}
+	return textutil.ToDatabaseColumnName(f.OldName)
+}
+
 // HasFeature returns true if the entity has the named feature enabled.
 func (e Entity) HasFeature(name string) bool {
 	if e.Features != nil {

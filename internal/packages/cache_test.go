@@ -328,3 +328,36 @@ func TestLoadCacheIgnoresCorruptFile(t *testing.T) {
 		t.Fatalf("expected fresh resolve for corrupt cache, got %q", got)
 	}
 }
+
+func TestResolveVersionCachedDoesNotHoldLockDuringResolve(t *testing.T) {
+	resetCacheRoot(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = resolveVersionCached("slow", "key-a", func() (string, error) {
+			close(started)
+			<-release
+			return "1.0.0", nil
+		})
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first resolver did not start")
+	}
+
+	fastDone := make(chan struct{})
+	go func() {
+		defer close(fastDone)
+		_, _ = resolveVersionCached("slow", "key-b", func() (string, error) { return "2.0.0", nil })
+	}()
+	select {
+	case <-fastDone:
+	case <-time.After(2 * time.Second):
+		t.Error("second resolution was blocked by the first registry lookup")
+	}
+	close(release)
+	<-done
+}

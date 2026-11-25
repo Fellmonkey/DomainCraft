@@ -168,7 +168,7 @@ func TestBuildResolvesPrimitiveTypes(t *testing.T) {
 	}
 }
 
-//relationPKCycleSchema builds a model where each entity's primary key is a
+// relationPKCycleSchema builds a model where each entity's primary key is a
 // relation to the other entity. Before the cycle guard this made Build recurse
 // through resolveDatabaseType until the process died with a stack overflow.
 func relationPKCycleSchema(t *testing.T) *parser.ParsedSchema {
@@ -1030,5 +1030,35 @@ func TestBuildWithoutAuthYieldsNilAuth(t *testing.T) {
 	}
 	if projectIR.Auth != nil {
 		t.Errorf("auth = %+v, want nil when no auth block is declared", projectIR.Auth)
+	}
+}
+
+func TestBuildDetachesSeedFromParsedSchema(t *testing.T) {
+	t.Parallel()
+	seedRow := map[string]any{"id": "11111111-1111-4111-8111-111111111111"}
+	schema := &parser.ParsedSchema{
+		Project:     parser.ProjectConfig{Name: "Test"},
+		Database:    "postgresql",
+		EntityOrder: []string{"Item"},
+		Entities: map[string]*parser.ParsedEntity{
+			"Item": {
+				Name:       "Item",
+				NamePlural: "Items",
+				FieldOrder: []string{"id"},
+				Fields: map[string]*parser.ParsedField{
+					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
+				},
+				Seed: []map[string]any{seedRow},
+			},
+		},
+	}
+
+	projectIR, err := Build(schema)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	seedRow["id"] = "mutated"
+	if got := projectIR.Entities[0].Seed[0]["id"]; got != "11111111-1111-4111-8111-111111111111" {
+		t.Errorf("IR seed followed a mutation of ParsedSchema: %v", got)
 	}
 }

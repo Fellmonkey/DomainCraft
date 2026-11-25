@@ -11,6 +11,19 @@ import (
 	"github.com/DomainCraft/DomainCraft/pkg/textutil"
 )
 
+// copySeed detaches the IR from ParsedSchema: a caller mutating seed rows after
+// Build must not silently change the contract templates render from.
+func copySeed(rows []map[string]any) []map[string]any {
+	if rows == nil {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, maps.Clone(row))
+	}
+	return out
+}
+
 // oldDatabaseColumnName returns the snake_case DB column name of a field's
 // old_name hint (previous field name), or "" when the field has no rename hint.
 func oldDatabaseColumnName(field *parser.ParsedField) string {
@@ -104,7 +117,7 @@ func Build(schema *parser.ParsedSchema) (*Project, error) {
 			RelationsOut: make([]Relation, 0),
 			RelationsIn:  make([]Relation, 0),
 			Indexes:      make([]Index, 0, len(sourceEntity.Indexes)),
-			Seed:         sourceEntity.Seed,
+			Seed:         copySeed(sourceEntity.Seed),
 			Permissions:  convertPermissions(sourceEntity.Permissions),
 		}
 

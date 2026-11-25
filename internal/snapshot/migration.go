@@ -155,10 +155,7 @@ func diffColumns(plan *ir.MigrationPlan, oldState EntityState, e *ir.Entity) {
 	slices.Sort(renamedFields)
 	for _, fieldName := range renamedFields {
 		f := newFieldByName[fieldName]
-		oldColumn := f.OldDatabaseColumnName
-		if oldColumn == "" {
-			oldColumn = textutil.ToDatabaseColumnName(f.OldName)
-		}
+		oldColumn := f.OldColumnName()
 		newColumn := f.ColumnName()
 		plan.Operations = append(plan.Operations, ir.MigrationOp{
 			Kind:      ir.OpRenameColumn,

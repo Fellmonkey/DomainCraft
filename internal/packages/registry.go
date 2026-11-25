@@ -28,6 +28,10 @@ var registryClient = newRegistryClient()
 // loopback, a private network or the cloud metadata address.
 func newRegistryClient() *http.Client {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
+	// The dialer checks the resolved address. An environment proxy would make
+	// it check the proxy instead of the host behind CONNECT, so never use one
+	// for registry lookups.
+	tr.Proxy = nil
 	tr.DialContext = restrictedRegistryDialer
 	return &http.Client{
 		Timeout:   5 * time.Second,

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"text/template"
@@ -120,7 +121,7 @@ func mergeTypeMappings(base, overlay *typeMappings) *typeMappings {
 		ArrayFormat:    cmp.Or(overlay.ArrayFormat, base.ArrayFormat),
 		NullableFormat: cmp.Or(overlay.NullableFormat, base.NullableFormat),
 		EnumNullable:   overlay.EnumNullable || base.EnumNullable,
-		ValueTypes:     overlay.ValueTypes,
+		ValueTypes:     slices.Clone(overlay.ValueTypes),
 		Literals:       mergeMaps(base.Literals, overlay.Literals),
 		Array: ArrayLiteralSpec{
 			Open:  cmp.Or(overlay.Array.Open, base.Array.Open),
@@ -129,7 +130,7 @@ func mergeTypeMappings(base, overlay *typeMappings) *typeMappings {
 		},
 	}
 	if len(out.ValueTypes) == 0 {
-		out.ValueTypes = base.ValueTypes
+		out.ValueTypes = slices.Clone(base.ValueTypes)
 	}
 	return out
 }

@@ -402,6 +402,16 @@ func TestMergeTypeMappingsAllFields(t *testing.T) {
 	}
 }
 
+func TestMergeTypeMappingsClonesValueTypes(t *testing.T) {
+	t.Parallel()
+	base := &typeMappings{ValueTypes: []string{"BaseId"}}
+	merged := mergeTypeMappings(base, &typeMappings{})
+	merged.ValueTypes[0] = "Mutated"
+	if base.ValueTypes[0] != "BaseId" {
+		t.Errorf("merged mapping aliased the base value types: %v", base.ValueTypes)
+	}
+}
+
 func TestBuildBridgeFuncsWarnsOncePerMissingSpec(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer

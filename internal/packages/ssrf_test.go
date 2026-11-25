@@ -202,3 +202,13 @@ func TestFetchVersionsUsesCommandContext(t *testing.T) {
 		t.Fatal("ResolveVersion ignored the cancelled command context")
 	}
 }
+
+func TestRegistryClientIgnoresEnvironmentProxy(t *testing.T) {
+	tr, ok := registryClient.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("registry transport = %T, want *http.Transport", registryClient.Transport)
+	}
+	if tr.Proxy != nil {
+		t.Errorf("registry transport has a proxy function; dial-time SSRF checks would see the proxy host")
+	}
+}

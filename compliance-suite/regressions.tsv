@@ -145,3 +145,9 @@ cmd/domaincraft/commands_notify_test.go::TestNoticeClientHasShortTimeout	#5	auto
 cmd/domaincraft/commands_notify_test.go::TestCachedLatestCoreVersionSurfacesCacheWriteFailure	#5	failed update-check cache write was silently discarded
 pkg/logger/logger_test.go::TestNewWritesDiagnosticsToStderr	#5	default logger wrote diagnostics into the data stream
 internal/renderer/bridgefuncs_test.go::TestBuildBridgeFuncsWarnsOncePerMissingSpec	#5	missing type-mapping spec warned once per field instead of once per render
+internal/packages/cache_test.go::TestResolveVersionCachedDoesNotHoldLockDuringResolve	#5	cache mutex was held across a registry HTTP lookup and serialized all layers
+internal/ir/models_test.go::TestFieldOldColumnNameFallsBackToOldName	#5	field rename report and migration plan derived old column names through different rules
+internal/packages/ssrf_test.go::TestRegistryClientIgnoresEnvironmentProxy	#5	environment proxy hid the real destination from dial-time SSRF checks
+internal/specmeta/specmeta_test.go::TestJSONReturnsDefensiveCopies	#5	WASM specmeta JSON exposed references to the canonical slices and maps
+internal/ir/build_entities_test.go::TestBuildDetachesSeedFromParsedSchema	#5	IR seed rows aliased ParsedSchema and could be mutated after Build
+internal/renderer/bridgefuncs_test.go::TestMergeTypeMappingsClonesValueTypes	#5	merged type mappings aliased the base bridge value type slice

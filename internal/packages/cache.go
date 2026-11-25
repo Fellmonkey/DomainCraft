@@ -95,18 +95,20 @@ func persistVersionCache(bridgeID string, entries map[string]versionEntry) error
 // seam, but the lock/store/TTL/resolve/persist sequence lives here once.
 func resolveVersionCached(bridgeID, key string, resolve func() (string, error)) (string, error) {
 	cacheMu.Lock()
-	defer cacheMu.Unlock()
-
 	entries, err := versionStore(bridgeID)
 	if err != nil {
+		cacheMu.Unlock()
 		// Cache directory unusable — resolve uncached rather than fail.
 		return resolve()
 	}
-
 	if e, ok := entries[key]; ok && e.Value != "" && time.Since(e.StoredAt) <= DefaultCacheTTL {
+		cacheMu.Unlock()
 		return e.Value, nil
 	}
+	cacheMu.Unlock()
 
+	// A registry lookup can take seconds. Do not hold the cache lock across it:
+	// other layers must keep resolving while one upstream is slow.
 	version, err := resolve()
 	if err != nil {
 		return "", err
@@ -115,6 +117,16 @@ func resolveVersionCached(bridgeID, key string, resolve func() (string, error)) 
 		return "", nil
 	}
 
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	// Another goroutine may have resolved and stored this key meanwhile.
+	entries, err = versionStore(bridgeID)
+	if err != nil {
+		return version, fmt.Errorf("reread package version cache for %q: %w", bridgeID, err)
+	}
+	if e, ok := entries[key]; ok && e.Value != "" && time.Since(e.StoredAt) <= DefaultCacheTTL {
+		return e.Value, nil
+	}
 	entries[key] = versionEntry{Value: version, StoredAt: time.Now()}
 	if err := persistVersionCacheFn(bridgeID, entries); err != nil {
 		// The version is real: a broken cache must not turn a successful

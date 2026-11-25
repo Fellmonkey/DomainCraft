@@ -620,10 +620,10 @@ func TestArrayDeclarationRequiresClosingParen(t *testing.T) {
 func TestIsSingleBackRelationField(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name                  string
-		isRelation, isMany    bool
+		name                   string
+		isRelation, isMany     bool
 		targetName, sourceName string
-		want                  bool
+		want                   bool
 	}{
 		{name: "single FK back", isRelation: true, targetName: "Order", sourceName: "Order", want: true},
 		{name: "many is not a back FK", isRelation: true, isMany: true, targetName: "Order", sourceName: "Order"},
@@ -700,5 +700,23 @@ func TestIsIdentifierRune(t *testing.T) {
 				t.Errorf("IsIdentifierRune(%q) = %v, want %v", c.in, got, c.want)
 			}
 		})
+	}
+}
+
+func TestJSONReturnsDefensiveCopies(t *testing.T) {
+	t.Parallel()
+	before := len(PrimitiveFieldTypes)
+	out := JSON()
+	list := out["primitiveFieldTypes"].([]string)
+	list[0] = "mutated"
+	if PrimitiveFieldTypes[0] == "mutated" || len(PrimitiveFieldTypes) != before {
+		t.Fatal("mutating JSON() changed the canonical primitive field types")
+	}
+	defs := out["featureFieldDefs"].(map[string]FeatureFieldDef)
+	for key := range defs {
+		delete(defs, key)
+	}
+	if len(FeatureFieldDefs) == 0 {
+		t.Fatal("mutating JSON() emptied the canonical feature field defs")
 	}
 }

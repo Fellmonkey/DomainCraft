@@ -333,7 +333,7 @@ func ComputeDiff(old *Snapshot, project *ir.Project, outputDir string) *Diff {
 				Entity:      newName,
 				OldField:    f.OldName,
 				NewField:    f.Name,
-				OldColumn:   f.OldDatabaseColumnName,
+				OldColumn:   f.OldColumnName(),
 				NewColumn:   f.DatabaseColumnName,
 				OldType:     oldFieldType,
 				NewType:     f.DatabaseType,

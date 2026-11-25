@@ -205,3 +205,15 @@ func TestEagerLoadNavigation(t *testing.T) {
 		t.Errorf("single FK navigation = %q, want Customer", got)
 	}
 }
+
+func TestFieldOldColumnNameFallsBackToOldName(t *testing.T) {
+	t.Parallel()
+	f := Field{Name: "price", OldName: "oldPrice", DatabaseType: "decimal"}
+	if got := f.OldColumnName(); got != "old_price" {
+		t.Errorf("OldColumnName() = %q, want the snake_case of old_name", got)
+	}
+	f.OldDatabaseColumnName = "legacy_price"
+	if got := f.OldColumnName(); got != "legacy_price" {
+		t.Errorf("OldColumnName() = %q, want the declared old column", got)
+	}
+}
