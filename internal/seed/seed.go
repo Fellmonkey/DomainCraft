@@ -13,6 +13,7 @@ package seed
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -138,6 +139,20 @@ func primaryKey(entity *ir.Entity) *ir.Field {
 func valueFor(field ir.Field, project *ir.Project, generated map[string][]any, counter *int, record int) any {
 	// Default value wins when the model declares one (and it's not a function).
 	if field.DefaultValue != "" && !field.DefaultIsFunc {
+		// The lexer stores `default:[a, b]` as a raw string. Parse it with the
+		// same specmeta helper the validator uses, then coerce each element
+		// with the array's inner type instead of treating the whole literal as
+		// one scalar (which coerceValue would turn into an empty slice).
+		if specmeta.IsArrayType(field.DatabaseType) &&
+			strings.HasPrefix(field.DefaultValue, "[") && strings.HasSuffix(field.DefaultValue, "]") {
+			inner := specmeta.ParseArrayInner(field.DatabaseType)
+			elements := specmeta.SplitArrayDefault(field.DefaultValue)
+			out := make([]any, 0, len(elements))
+			for _, element := range elements {
+				out = append(out, coerceValue(element, inner))
+			}
+			return out
+		}
 		return coerceValue(field.DefaultValue, field.DatabaseType)
 	}
 
@@ -257,6 +272,32 @@ func stringValue(field ir.Field, record int) string {
 	return v
 }
 
+// stepExclusive moves one representable unit away from an exclusive bound.
+// Only int64 and float64 reach this helper: clampNumericBounds is instantiated
+// by intValue (int64) and floatValue (float64) alone. An int64 at MaxInt64 or
+// MinInt64 has no next value, so adding/subtracting one would wrap to the
+// opposite end; keep the bound instead. Float64 has no integer wraparound.
+func stepExclusive[T ~int64 | ~float64](v T, delta int) T {
+	switch n := any(v).(type) {
+	case int64:
+		if delta > 0 {
+			if n == math.MaxInt64 {
+				return v
+			}
+			return T(n + 1)
+		}
+		if n == math.MinInt64 {
+			return v
+		}
+		return T(n - 1)
+	default: // float64
+		if delta > 0 {
+			return v + T(1)
+		}
+		return v - T(1)
+	}
+}
+
 // clampNumericBounds applies the normalized min_value/max_value rules to a
 // numeric mock value. An exclusive bound steps one unit past the bound; an
 // inclusive bound lands on it. Rules are applied in their normalized order,
@@ -270,11 +311,11 @@ func clampNumericBounds[T ~int64 | ~float64](v T, rules []ir.ValidationRule, par
 		}
 		switch {
 		case r.Kind == "min_value" && r.Exclusive && v <= n:
-			v = n + 1
+			v = stepExclusive(n, 1)
 		case r.Kind == "min_value" && v < n:
 			v = n
 		case r.Kind == "max_value" && r.Exclusive && v >= n:
-			v = n - 1
+			v = stepExclusive(n, -1)
 		case r.Kind == "max_value" && v > n:
 			v = n
 		}

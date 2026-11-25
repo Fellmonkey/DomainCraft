@@ -125,8 +125,11 @@ var StringFlagValidationModifiers = []string{"email", "url", "ipv4"}
 // IndexTypes lists the supported database index types.
 var IndexTypes = []string{"btree", "hash", "gist", "gin", "brin"}
 
-// CacheProviders lists the supported cache providers.
-var CacheProviders = []string{"redis", "memcached", "in-memory"}
+// CacheProviders lists the supported cache providers. It is the same vocabulary
+// as InfraCacheStores: project.cache.provider and
+// project.infrastructure.cache.store accept exactly the same values, so the two
+// names share one backing slice and cannot drift apart.
+var CacheProviders = InfraCacheStores
 
 // MultiTenancyModes lists the supported multi-tenancy modes.
 var MultiTenancyModes = []string{"column", "schema", "database"}
@@ -169,30 +172,32 @@ func EffectiveContractVersion(declared int) int {
 }
 
 var (
-	primitiveSet            map[string]bool
-	numericSet              map[string]bool
-	integralSet             map[string]bool
-	floatSet                map[string]bool
-	stringSet               map[string]bool
-	booleanSet              map[string]bool
-	fieldTypeSet            map[string]bool
-	onDeleteSet             map[string]bool
-	featureSet              map[string]bool
-	indexTypeSet            map[string]bool
-	cacheProviderSet        map[string]bool
-	multiTenancyModeSet     map[string]bool
-	rateLimitPolicySet      map[string]bool
-	permissionKeySet        map[string]bool
-	numericValidationModSet map[string]bool
-	sortDirectionSet        map[string]bool
-	databaseSet             map[string]bool
-	apiStyleSet             map[string]bool
-	authTypeSet             map[string]bool
-	addonSet                map[string]bool
-	infraQueueSet           map[string]bool
-	infraCacheStoreSet      map[string]bool
-	infraSecretStoreSet     map[string]bool
-	infraStoreSet           map[string]bool
+	primitiveSet               map[string]bool
+	numericSet                 map[string]bool
+	integralSet                map[string]bool
+	floatSet                   map[string]bool
+	stringSet                  map[string]bool
+	booleanSet                 map[string]bool
+	fieldTypeSet               map[string]bool
+	onDeleteSet                map[string]bool
+	featureSet                 map[string]bool
+	indexTypeSet               map[string]bool
+	cacheProviderSet           map[string]bool
+	multiTenancyModeSet        map[string]bool
+	rateLimitPolicySet         map[string]bool
+	permissionKeySet           map[string]bool
+	numericValidationModSet    map[string]bool
+	stringOnlyValidationModSet map[string]bool
+	stringFlagValidationModSet map[string]bool
+	sortDirectionSet           map[string]bool
+	databaseSet                map[string]bool
+	apiStyleSet                map[string]bool
+	authTypeSet                map[string]bool
+	addonSet                   map[string]bool
+	infraQueueSet              map[string]bool
+	infraCacheStoreSet         map[string]bool
+	infraSecretStoreSet        map[string]bool
+	infraStoreSet              map[string]bool
 )
 
 func init() {
@@ -211,6 +216,8 @@ func init() {
 	rateLimitPolicySet = SliceToSet(RateLimitPolicies)
 	permissionKeySet = SliceToSet(PermissionKeys)
 	numericValidationModSet = SliceToSet(NumericValidationModifiers)
+	stringOnlyValidationModSet = SliceToSet(StringOnlyValidationModifiers)
+	stringFlagValidationModSet = SliceToSet(StringFlagValidationModifiers)
 	sortDirectionSet = SliceToSet(SortDirections)
 	databaseSet = SliceToSet(Databases)
 	apiStyleSet = SliceToSet(APIStyles)
@@ -292,18 +299,17 @@ func IsInfraSecretStore(value string) bool { return infraSecretStoreSet[value] }
 func IsInfraStore(value string) bool { return infraStoreSet[value] }
 
 // IsStringValidationModifier reports whether mod applies to string fields. It
-// reads the slice directly so extending the spec needs no lexer change.
-func IsStringValidationModifier(mod string) bool { return slices.Contains(StringValidationModifiers, mod) }
+// reads the slice directly so callers can extend the spec at runtime (the lexer
+// test does) without rebuilding a precomputed set.
+func IsStringValidationModifier(mod string) bool {
+	return slices.Contains(StringValidationModifiers, mod)
+}
 
 // IsStringOnlyValidationModifier reports whether mod is invalid on numeric fields.
-func IsStringOnlyValidationModifier(mod string) bool {
-	return slices.Contains(StringOnlyValidationModifiers, mod)
-}
+func IsStringOnlyValidationModifier(mod string) bool { return stringOnlyValidationModSet[mod] }
 
 // IsStringFlagValidationModifier reports whether mod is a bare string flag.
-func IsStringFlagValidationModifier(mod string) bool {
-	return slices.Contains(StringFlagValidationModifiers, mod)
-}
+func IsStringFlagValidationModifier(mod string) bool { return stringFlagValidationModSet[mod] }
 
 // IsNumericValidationModifier reports whether mod applies to numeric fields.
 func IsNumericValidationModifier(mod string) bool { return numericValidationModSet[mod] }
@@ -330,6 +336,25 @@ func ParseArrayInner(dbType string) string {
 		return dbType
 	}
 	return strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(dbType), FieldTypeArray+"("), ")")
+}
+
+// SplitArrayDefault splits an array literal into its elements. A scalar is
+// returned as a single element; an unclosed literal fails closed as one element
+// so the type checker can reject it. Shared by validation and seed generation
+// so both paths parse a bracketed default the same way.
+func SplitArrayDefault(defaultVal string) []string {
+	if !strings.HasPrefix(defaultVal, "[") || !strings.HasSuffix(defaultVal, "]") {
+		return []string{defaultVal}
+	}
+	inner := strings.TrimSpace(defaultVal[1 : len(defaultVal)-1])
+	if inner == "" {
+		return nil
+	}
+	parts := strings.Split(inner, ",")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	return parts
 }
 
 // IsSingleBackRelationField reports whether a single relation points from a

@@ -1,6 +1,7 @@
 package seed
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -62,6 +63,49 @@ func TestGenerateBasicTypes(t *testing.T) {
 	}
 	if _, ok := vals["payload"].(string); !ok {
 		t.Errorf("payload should be a JSON string, got %T", vals["payload"])
+	}
+}
+
+func TestGenerateHonorsArrayDefaults(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		dbType     string
+		defaultVal string
+		want       []any
+	}{
+		{name: "string elements", dbType: "array(string)", defaultVal: "[alpha, beta]", want: []any{"alpha", "beta"}},
+		{name: "int elements", dbType: "array(int)", defaultVal: "[1, 2]", want: []any{int64(1), int64(2)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			project := &ir.Project{
+				Entities: []ir.Entity{
+					{
+						Name: "Tagged",
+						Fields: []ir.Field{
+							{Name: "id", DatabaseType: "uuid", IsPrimary: true},
+							{Name: "tags", DatabaseType: tt.dbType, DefaultValue: tt.defaultVal},
+						},
+					},
+				},
+			}
+			ds := Generate(project, Options{CountPerEntity: 1})
+			got := ds.Entities[0].Records[0].Fields[1].Value
+			arr, ok := got.([]any)
+			if !ok {
+				t.Fatalf("tags = %#v, want []any", got)
+			}
+			if len(arr) != len(tt.want) {
+				t.Fatalf("tags = %#v, want %#v", arr, tt.want)
+			}
+			for i := range tt.want {
+				if arr[i] != tt.want[i] {
+					t.Fatalf("tags[%d] = %#v, want %#v (full value %#v)", i, arr[i], tt.want[i], arr)
+				}
+			}
+		})
 	}
 }
 
@@ -267,6 +311,10 @@ func TestGenerateRespectsExclusiveBounds(t *testing.T) {
 		{name: "decimal exclusive max steps below bound", dbType: "decimal", validations: []ir.Validation{{Name: "lt", Value: "1.5"}}, want: float64(0.5)},
 		{name: "float inclusive min holds bound", dbType: "float", validations: []ir.Validation{{Name: "gte", Value: "1.5"}}, want: float64(1.5)},
 		{name: "decimal inclusive max holds bound", dbType: "decimal", validations: []ir.Validation{{Name: "lte", Value: "1.5"}}, want: float64(1.5)},
+		{name: "int exclusive min at MaxInt64 saturates", dbType: "int", validations: []ir.Validation{{Name: "gt", Value: "9223372036854775807"}}, want: int64(math.MaxInt64)},
+		{name: "bigint exclusive min at MaxInt64 saturates", dbType: "bigint", validations: []ir.Validation{{Name: "gt", Value: "9223372036854775807"}}, want: int64(math.MaxInt64)},
+		{name: "int exclusive max at MinInt64 saturates", dbType: "int", validations: []ir.Validation{{Name: "lt", Value: "-9223372036854775808"}}, want: int64(math.MinInt64)},
+		{name: "bigint exclusive max at MinInt64 saturates", dbType: "bigint", validations: []ir.Validation{{Name: "lt", Value: "-9223372036854775808"}}, want: int64(math.MinInt64)},
 	}
 
 	for _, tt := range tests {

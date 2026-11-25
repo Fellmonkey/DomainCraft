@@ -882,24 +882,6 @@ func (v *Validator) validateFieldDefault(entityName, fieldName string, field *pa
 	return errs
 }
 
-// splitArrayDefault splits an array literal into its elements. A scalar is
-// returned as a single element; an unclosed literal fails closed as one element
-// so the type checker can reject it.
-func splitArrayDefault(defaultVal string) []string {
-	if !strings.HasPrefix(defaultVal, "[") || !strings.HasSuffix(defaultVal, "]") {
-		return []string{defaultVal}
-	}
-	inner := strings.TrimSpace(defaultVal[1 : len(defaultVal)-1])
-	if inner == "" {
-		return nil
-	}
-	parts := strings.Split(inner, ",")
-	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
-	}
-	return parts
-}
-
 // validateDefaultValue checks one scalar default, or every element of an array
 // default, against the field's element type. Numeric defaults must parse as a
 // number — the legacy true/false values no longer slip through.
@@ -908,7 +890,7 @@ func validateDefaultValue(entityName, fieldName, ftype, defaultVal string) []Val
 	inner := specmeta.ParseArrayInner(ftype)
 	values := []string{defaultVal}
 	if specmeta.IsArrayType(ftype) {
-		values = splitArrayDefault(defaultVal)
+		values = specmeta.SplitArrayDefault(defaultVal)
 	}
 
 	for _, value := range values {
@@ -982,7 +964,8 @@ func validateContradictoryRanges(entityName, fieldName string, field *parser.Par
 		return f, true
 	}
 
-	if isString || isNumeric {
+	if isString {
+		// String min/max are length bounds; keep their dedicated diagnostic.
 		minVal, hasMin := getFloat("min")
 		maxVal, hasMax := getFloat("max")
 		if hasMin && hasMax && minVal > maxVal {
@@ -1019,11 +1002,19 @@ func validateContradictoryRanges(entityName, fieldName string, field *parser.Par
 		if value, ok := getFloat("gt"); ok {
 			addLower(bound{name: "gt", value: value, strict: true})
 		}
+		// Numeric min/max are value bounds (IR maps them to min_value/max_value),
+		// so they belong in the same effective-range check as gte/lte and gt/lt.
+		if value, ok := getFloat("min"); ok {
+			addLower(bound{name: "min", value: value})
+		}
 		if value, ok := getFloat("lte"); ok {
 			addUpper(bound{name: "lte", value: value})
 		}
 		if value, ok := getFloat("lt"); ok {
 			addUpper(bound{name: "lt", value: value, strict: true})
+		}
+		if value, ok := getFloat("max"); ok {
+			addUpper(bound{name: "max", value: value})
 		}
 		if lower != nil && upper != nil &&
 			(lower.value > upper.value || (lower.value == upper.value && (lower.strict || upper.strict))) {
@@ -1176,6 +1167,18 @@ func (v *Validator) validateSeedEntry(entityName string, entity *parser.ParsedEn
 	return errs
 }
 
+// isNativeNumeric reports whether value has one of the numeric types YAML
+// decoding produces. Shared by the integral and float seed checks so the
+// accepted Go shapes cannot drift apart.
+func isNativeNumeric(value any) bool {
+	switch value.(type) {
+	case int, int32, int64, float32, float64:
+		return true
+	default:
+		return false
+	}
+}
+
 // isFractionalFloat reports whether a numeric seed value is a float with a
 // fractional part. Integral fields cannot hold such a value: the seed generator
 // would truncate it (1.9 -> 1) without warning.
@@ -1209,12 +1212,6 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 		}
 	case specmeta.IsIntegralType(ftype):
 		switch n := seedValue.(type) {
-		case int, int32, int64, float32, float64:
-			// A fractional float would be silently truncated by the seed generator.
-			if isFractionalFloat(n) {
-				errs = append(errs, invalidf(entityName, fieldName,
-					"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
-			}
 		case string:
 			// A string must parse; otherwise seed coercion silently yields 0.
 			if _, err := strconv.ParseInt(n, 10, 64); err != nil {
@@ -1222,21 +1219,30 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 					"seed entry %d: value %q is not a valid %s", entryIdx, n, ftype))
 			}
 		default:
-			errs = append(errs, invalidf(entityName, fieldName,
-				"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
+			if !isNativeNumeric(n) {
+				errs = append(errs, invalidf(entityName, fieldName,
+					"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
+				break
+			}
+			// A fractional float would be silently truncated by the seed generator.
+			if isFractionalFloat(n) {
+				errs = append(errs, invalidf(entityName, fieldName,
+					"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
+			}
 		}
 	case specmeta.IsFloatType(ftype):
 		switch n := seedValue.(type) {
-		case int, int32, int64, float32, float64:
-			// numeric OK
 		case string:
 			if _, err := strconv.ParseFloat(n, 64); err != nil {
 				errs = append(errs, invalidf(entityName, fieldName,
 					"seed entry %d: value %q is not a valid %s", entryIdx, n, ftype))
 			}
 		default:
-			errs = append(errs, invalidf(entityName, fieldName,
-				"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
+			// Other native numeric types are fine; anything else is not a seed number.
+			if !isNativeNumeric(n) {
+				errs = append(errs, invalidf(entityName, fieldName,
+					"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
+			}
 		}
 	case ftype == specmeta.FieldTypeBoolean:
 		switch v := seedValue.(type) {
@@ -1280,7 +1286,7 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 				"seed entry %d: value %q is not a valid datetime (expected ISO 8601 format, e.g. 2024-01-15T10:30:00Z)", entryIdx,
 				s))
 		}
-	case ftype == specmeta.FieldTypeJSON || ftype == specmeta.FieldTypeJSONB:
+	case specmeta.FieldKind(ftype) == "json":
 		// JSON values can be any valid JSON — accept any type.
 		// String values are validated as parseable JSON.
 		if s, ok := seedValue.(string); ok {
@@ -1337,6 +1343,8 @@ func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx
 	return errs
 }
 
+// isValidDate is shared by default-value and seed validation. Each caller
+// builds its own diagnostic, so the message stays out of the helper.
 func isValidDate(s string) bool {
 	t, err := time.Parse("2006-01-02", s)
 	return err == nil && t.Year() >= 1970 && t.Year() <= 2100
@@ -1349,6 +1357,8 @@ func isValidJSONArray(s string) bool {
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
+// isValidUUID is shared by default-value and seed validation; each caller
+// keeps its own diagnostic text.
 func isValidUUID(s string) bool {
 	return uuidPattern.MatchString(s)
 }
@@ -1362,6 +1372,8 @@ var datetimePatterns = []string{
 	"2006-01-02",
 }
 
+// isValidDatetime is shared by default-value and seed validation; each caller
+// keeps its own diagnostic text.
 func isValidDatetime(s string) bool {
 	for _, pattern := range datetimePatterns {
 		if t, err := time.Parse(pattern, s); err == nil && t.Year() >= 1970 && t.Year() <= 2100 {

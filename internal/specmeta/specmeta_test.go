@@ -172,6 +172,46 @@ func TestIsCacheProvider(t *testing.T) {
 	}
 }
 
+func TestCacheProvidersShareInfraCacheStores(t *testing.T) {
+	t.Parallel()
+	if len(CacheProviders) != len(InfraCacheStores) || len(CacheProviders) == 0 {
+		t.Fatalf("cache vocabularies differ in length: %d vs %d", len(CacheProviders), len(InfraCacheStores))
+	}
+	for i := range CacheProviders {
+		if CacheProviders[i] != InfraCacheStores[i] {
+			t.Errorf("CacheProviders[%d] = %q, InfraCacheStores[%d] = %q", i, CacheProviders[i], i, InfraCacheStores[i])
+		}
+	}
+	// Both names must share one backing slice, not two copies that can drift.
+	if &CacheProviders[0] != &InfraCacheStores[0] {
+		t.Error("CacheProviders and InfraCacheStores do not share the same backing slice")
+	}
+}
+
+func TestStringModifierPredicatesMatchSlices(t *testing.T) {
+	t.Parallel()
+	for _, mod := range StringValidationModifiers {
+		if !IsStringValidationModifier(mod) {
+			t.Errorf("IsStringValidationModifier(%q) = false, want true", mod)
+		}
+	}
+	for _, mod := range StringOnlyValidationModifiers {
+		if !IsStringOnlyValidationModifier(mod) {
+			t.Errorf("IsStringOnlyValidationModifier(%q) = false, want true", mod)
+		}
+	}
+	for _, mod := range StringFlagValidationModifiers {
+		if !IsStringFlagValidationModifier(mod) {
+			t.Errorf("IsStringFlagValidationModifier(%q) = false, want true", mod)
+		}
+	}
+	for _, mod := range []string{"gte", "lte", "unknown", ""} {
+		if IsStringOnlyValidationModifier(mod) || IsStringFlagValidationModifier(mod) {
+			t.Errorf("numeric/unknown modifier %q must not be a string-only or string flag modifier", mod)
+		}
+	}
+}
+
 func TestIsMultiTenancyMode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

@@ -120,6 +120,65 @@ func yamlMergeKeyNames(value *yaml.Node) []string {
 	return names
 }
 
+// fieldDefPair is one field name together with its definition node, as
+// contributed by a YAML merge ("<<") in an entity's `fields` mapping.
+type fieldDefPair struct {
+	name  string
+	value *yaml.Node
+}
+
+// yamlMergeFieldPairs walks a YAML merge value using the same alias/sequence/
+// mapping handling style as yamlMergeKeyNames, but keeps both the key and the
+// value node so each merged field definition can be decoded into a string.
+// A merge value may be a mapping, an alias to a mapping, or a sequence of such
+// nodes; nested merge keys are resolved recursively. Duplicate names keep the
+// first occurrence (earlier entries in a sequence win), matching YAML merge
+// semantics. A value that resolves to anything but a mapping is an error.
+func yamlMergeFieldPairs(value *yaml.Node, mergeKey *yaml.Node) ([]fieldDefPair, error) {
+	var pairs []fieldDefPair
+	seen := make(map[string]bool)
+	var collect func(*yaml.Node) error
+	collect = func(node *yaml.Node) error {
+		switch node.Kind {
+		case yaml.AliasNode:
+			if node.Alias == nil {
+				return fmt.Errorf("line %d: '<<' in fields resolves to an undefined alias", mergeKey.Line)
+			}
+			return collect(node.Alias)
+		case yaml.SequenceNode:
+			for _, item := range node.Content {
+				if err := collect(item); err != nil {
+					return err
+				}
+			}
+			return nil
+		case yaml.MappingNode:
+			for i := 0; i < len(node.Content)-1; i += 2 {
+				key, val := node.Content[i], node.Content[i+1]
+				if key.Value == "<<" && key.Tag != "!!str" {
+					if err := collect(val); err != nil {
+						return err
+					}
+					continue
+				}
+				if seen[key.Value] {
+					continue
+				}
+				seen[key.Value] = true
+				pairs = append(pairs, fieldDefPair{name: key.Value, value: val})
+			}
+			return nil
+		default:
+			return fmt.Errorf("line %d: '<<' in fields must be a mapping or a sequence of mappings, got %s",
+				mergeKey.Line, strings.ToLower(strings.TrimPrefix(node.ShortTag(), "!!")))
+		}
+	}
+	if err := collect(value); err != nil {
+		return nil, err
+	}
+	return pairs, nil
+}
+
 // rejectUnknownMergeKeys applies the same strict key check to keys contributed
 // by a YAML merge ("<<") as to keys written directly in the block.
 func rejectUnknownMergeKeys(value *yaml.Node, valid map[string]bool, errFn func(string) error) error {
@@ -330,20 +389,68 @@ func (e *RawEntity) UnmarshalYAML(value *yaml.Node) error {
 			if valNode.Kind != yaml.MappingNode {
 				return fmt.Errorf("line %d: fields must be a mapping of field name to definition", valNode.Line)
 			}
-			e.Fields = make(map[string]string)
-			e.FieldOrder = make([]string, 0, len(valNode.Content)/2)
-			for j := 0; j < len(valNode.Content)-1; j += 2 {
-				fKey := valNode.Content[j].Value
-				if _, dup := e.Fields[fKey]; dup {
-					return fmt.Errorf("duplicate field %q in entity fields", fKey)
+			// `fields` stays a mapping of field name → definition string. An
+			// unquoted `<<` merges fields from an alias to a mapping or from a
+			// sequence of such mappings/aliases; a quoted `"<<"` is an ordinary
+			// field name and is not a merge.
+			//
+			// Ordering rule: merged fields come first, in merge order (for a
+			// sequence the earlier entry wins on duplicate names), followed by
+			// the entity's own declared fields. A direct field overrides a
+			// merged definition but keeps the merged position, so generated
+			// field order stays stable when a definition is customized locally.
+			fields := make(map[string]string)
+			order := make([]string, 0, len(valNode.Content)/2)
+			merged := make(map[string]bool)
+			addField := func(name string, defNode *yaml.Node, fromMerge bool) error {
+				var def string
+				if err := defNode.Decode(&def); err != nil {
+					return fmt.Errorf("field %q: %w", name, err)
 				}
-				var fVal string
-				if err := valNode.Content[j+1].Decode(&fVal); err != nil {
-					return fmt.Errorf("field %q: %w", fKey, err)
+				if _, exists := fields[name]; exists {
+					if fromMerge {
+						return nil // first occurrence wins
+					}
+					if !merged[name] {
+						return fmt.Errorf("duplicate field %q in entity fields", name)
+					}
+					fields[name] = def // explicit field wins, position is unchanged
+					merged[name] = false
+					return nil
 				}
-				e.Fields[fKey] = fVal
-				e.FieldOrder = append(e.FieldOrder, fKey)
+				fields[name] = def
+				merged[name] = fromMerge
+				order = append(order, name)
+				return nil
 			}
+			// Two passes: merges always contribute their fields before the
+			// entity's own fields, regardless of where `<<` appears in YAML.
+			for j := 0; j < len(valNode.Content)-1; j += 2 {
+				key, val := valNode.Content[j], valNode.Content[j+1]
+				if key.Value != "<<" || key.Tag == "!!str" {
+					continue
+				}
+				pairs, err := yamlMergeFieldPairs(val, key)
+				if err != nil {
+					return err
+				}
+				for _, pair := range pairs {
+					if err := addField(pair.name, pair.value, true); err != nil {
+						return err
+					}
+				}
+			}
+			for j := 0; j < len(valNode.Content)-1; j += 2 {
+				key, val := valNode.Content[j], valNode.Content[j+1]
+				if key.Value == "<<" && key.Tag != "!!str" {
+					continue
+				}
+				if err := addField(key.Value, val, false); err != nil {
+					return err
+				}
+			}
+			e.Fields = fields
+			e.FieldOrder = order
 		case "indexes":
 			if err := valNode.Decode(&e.Indexes); err != nil {
 				return err

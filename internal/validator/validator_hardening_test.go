@@ -98,8 +98,13 @@ func TestContradictoryRangePairs(t *testing.T) {
 		{name: "gte greater than lte", def: "int [gte:10, lte:2]", wantErr: true},
 		{name: "gt equal to lt", def: "int [gt:2, lt:2]", wantErr: true},
 		{name: "numeric min greater than max", def: "int [min:10, max:2]", wantErr: true},
+		{name: "numeric min greater than lte", def: "int [min:100, lte:10]", wantErr: true},
+		{name: "gte greater than numeric max", def: "int [gte:100, max:10]", wantErr: true},
+		{name: "gt equal to numeric max", def: "int [gt:5, max:5]", wantErr: true},
 		{name: "gte equal to lte is valid", def: "int [gte:2, lte:2]"},
 		{name: "numeric min below max is valid", def: "int [min:1, max:10]"},
+		{name: "numeric min below lte is valid", def: "int [min:1, lte:10]"},
+		{name: "gte equal to numeric max is valid", def: "int [gte:2, max:2]"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
