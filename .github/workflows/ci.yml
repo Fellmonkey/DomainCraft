@@ -69,7 +69,7 @@ jobs:
         run: go test -race -count=1 -shuffle=on ./...
 
       - name: Integration tests
-        run: go test -tags=integration -count=1 ./internal/bridge
+        run: go test -race -count=1 -shuffle=on -tags=integration ./internal/bridge
 
   lint:
     runs-on: ubuntu-latest

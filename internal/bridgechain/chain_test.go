@@ -30,6 +30,7 @@ func testResolver() *bridge.Resolver {
 }
 
 func TestWalkResolvesExtendsChainTopFirst(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	base := writeBridge(t, filepath.Join(root, "base"), "")
 	mid := writeBridge(t, filepath.Join(root, "mid"), base)
@@ -54,6 +55,7 @@ func TestWalkResolvesExtendsChainTopFirst(t *testing.T) {
 }
 
 func TestWalkDetectsCycle(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	a := writeBridge(t, filepath.Join(root, "a"), "")
 	b := writeBridge(t, filepath.Join(root, "b"), a)
@@ -83,6 +85,7 @@ func TestWalkFailsWhenAbsFails(t *testing.T) {
 }
 
 func TestWalkMissingLocalPathIsHardError(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	missing := filepath.Join(root, "missing-bridge")
 

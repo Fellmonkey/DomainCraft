@@ -10,17 +10,18 @@ import (
 
 func TestVersionFlag(t *testing.T) {
 	cmd := newRootCommand()
-	output := &bytes.Buffer{}
-	cmd.SetOut(output)
-	cmd.SetErr(output)
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
 	cmd.SetArgs([]string{"--version"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("--version failed: %v", err)
 	}
 
-	if !strings.Contains(output.String(), "version") {
-		t.Fatalf("expected version in output, got %q", output.String())
+	if !strings.Contains(stdout.String(), "version") {
+		t.Fatalf("expected version on stdout, got %q", stdout.String())
 	}
 }
 
@@ -41,16 +42,21 @@ entities:
 	}
 
 	cmd := newRootCommand()
-	output := &bytes.Buffer{}
-	cmd.SetOut(output)
-	cmd.SetErr(output)
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
 	cmd.SetArgs([]string{"validate", "--domain", domainPath})
 
 	if err := cmd.Execute(); err != nil {
-		t.Fatalf("validate command failed: %v\noutput: %s", err, output.String())
+		t.Fatalf("validate command failed: %v\nstderr: %s", err, stderr.String())
 	}
-	if !strings.Contains(output.String(), "Schema valid") {
-		t.Fatalf("expected 'Schema valid' in output, got: %s", output.String())
+	// The CLI logger writes progress and diagnostics to stderr; stdout stays data-only.
+	if !strings.Contains(stderr.String(), "Schema valid") {
+		t.Fatalf("expected 'Schema valid' on stderr, got: %s", stderr.String())
+	}
+	if strings.Contains(stdout.String(), "Schema valid") {
+		t.Fatalf("diagnostics must not leak to stdout, got: %s", stdout.String())
 	}
 }
 
@@ -75,9 +81,10 @@ entities:
 	}
 
 	cmd := newRootCommand()
-	output := &bytes.Buffer{}
-	cmd.SetOut(output)
-	cmd.SetErr(output)
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
 	cmd.SetArgs([]string{"generate", "--domain", domainPath, "--bridge", bridgeDir, "--output", outputDirPath})
 
 	// Should fail because bridge doesn't exist

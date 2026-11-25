@@ -28,7 +28,7 @@ export GOCACHE := $(GO_CACHE_DIR)
 # GOTMPDIR is deliberately not set: pointing it inside the repo makes
 # t.TempDir() land under a monorepo root and breaks path-sensitive tests.
 
-.PHONY: help build install run test test-affected test-verbose test-coverage lint vet fmt clean install-deps check-tidy cli-validate cli-generate cli-bridges regenerate-spec generate-gui-types copy-spec-skills build-wasm build-wasm-gui
+.PHONY: help build install run test test-affected contract-test contract-golden-update test-verbose test-coverage lint vet fmt clean install-deps check-tidy dev-watch dev-test-watch cli-validate cli-generate cli-bridges regenerate-spec generate-gui-types copy-spec-skills build-wasm build-wasm-gui
 
 help:
 	@echo "DomainCraft CLI - Available Commands"
@@ -46,6 +46,8 @@ help:
 	@echo "  make build-wasm-gui  - Build WASM and copy to domaincraft-studio/public/wasm/"
 	@echo "  make test            - Run all tests (test cache disabled)"
 	@echo "  make test-affected   - Run tests for packages touched by uncommitted changes"
+	@echo "  make contract-test   - Run contract tests (golden output + determinism)"
+	@echo "  make contract-golden-update - Regenerate golden manifests after an intentional output change"
 	@echo "  make test-verbose    - Run tests with verbose output"
 	@echo "  make test-coverage   - Run tests and generate coverage report"
 	@echo "  make lint            - Run golangci-lint v2.15.0 via go run (same gate as CI)"
@@ -54,6 +56,8 @@ help:
 	@echo "  make clean           - Clean build artifacts"
 	@echo "  make install-deps    - Download dependencies (go mod download)"
 	@echo "  make check-tidy      - Fail if go mod tidy would change go.mod/go.sum"
+	@echo "  make dev-watch       - Rebuild/run on file changes (requires entr)"
+	@echo "  make dev-test-watch  - Run tests on file changes (requires entr)"
 
 install-deps:
 	@echo "Downloading dependencies..."
