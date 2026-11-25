@@ -154,7 +154,7 @@ backend_up() {
   local target="$1" out url
   generate "$target"
   out="$(output_dir "$target")"
-  url="http://localhost:$(field "$target" port 9000)$(field "$target" health_path /health/ready)"
+  url="http://127.0.0.1:$(field "$target" port 9000)$(field "$target" health_path /health/ready)"
   echo "backend-up: $out, waiting for $url" >&2
   (
     cd "$out"
@@ -183,7 +183,8 @@ PY
     dir="$(field "$item" tck_dir)"; script="$(field "$item" script)"; bridge="$(field "$item" bridge)"
     echo "interop: $script in $dir" >&2
     go run ./cmd/domaincraft generate --domain "$DOMAIN" --bridge "$bridge" --output "$dir/generated" --non-interactive
-    (cd "$dir" && npm ci --no-audit --no-fund && API_URL="http://localhost:${port}" npm run "$script")
+    # IPv4 literal matches the Docker-published port; no resolver ambiguity.
+    (cd "$dir" && npm ci --no-audit --no-fund && API_URL="http://127.0.0.1:${port}" npm run "$script")
     echo "::notice::interop $(field "$item" id) passed"
   done
 }

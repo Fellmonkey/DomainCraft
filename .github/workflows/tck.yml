@@ -77,10 +77,13 @@ jobs:
       - uses: grafana/setup-k6-action@v1
       - name: Generate and start backend
         run: bash compliance-suite/tck.sh backend-up '${{ toJSON(matrix.target) }}'
-      - name: Run k6 certification suite
-        run: k6 run -e API_URL="http://localhost:${{ matrix.target.port || 9000 }}" ./compliance-suite/suite.js
+      # Interop runs first: suite.js deliberately ends by exhausting the
+      # 400-request/60s rate window, which makes a later client see 429 with
+      # Retry-After: 60 and stall in the generated client's retry loop.
       - name: Client interop against the same backend
         run: bash compliance-suite/tck.sh interop '${{ toJSON(matrix.target) }}'
+      - name: Run k6 certification suite
+        run: k6 run -e API_URL="http://127.0.0.1:${{ matrix.target.port || 9000 }}" ./compliance-suite/suite.js
       - name: Dump logs on failure
         if: failure()
         run: bash compliance-suite/tck.sh logs '${{ toJSON(matrix.target) }}'

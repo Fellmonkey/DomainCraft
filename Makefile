@@ -6,7 +6,6 @@ SPEC_OUTPUT ?= spec/domain.schema.json
 GUI_DIR ?= ../domaincraft-studio
 SKILLS_DIR ?= ../domaincraft-skills/domaincraft-core
 GO_CACHE_DIR ?= $(CURDIR)/.gocache
-GO_TMP_DIR ?= $(CURDIR)/bin
 
 # Release version stamped into the CLI (and WASM validator) binary.
 ifeq ($(OS),Windows_NT)
@@ -26,9 +25,10 @@ GUI_CMD = cd $(GUI_DIR) && npm run generate:types
 endif
 
 export GOCACHE := $(GO_CACHE_DIR)
-export GOTMPDIR := $(GO_TMP_DIR)
+# GOTMPDIR is deliberately not set: pointing it inside the repo makes
+# t.TempDir() land under a monorepo root and breaks path-sensitive tests.
 
-.PHONY: help build install run test test-verbose test-coverage lint vet fmt clean install-deps check-tidy cli-validate cli-generate cli-bridges regenerate-spec generate-gui-types copy-spec-skills build-wasm build-wasm-gui
+.PHONY: help build install run test test-affected test-verbose test-coverage lint vet fmt clean install-deps check-tidy cli-validate cli-generate cli-bridges regenerate-spec generate-gui-types copy-spec-skills build-wasm build-wasm-gui
 
 help:
 	@echo "DomainCraft CLI - Available Commands"
@@ -44,7 +44,8 @@ help:
 	@echo "  make copy-spec-skills - Copy regenerated schema to domaincraft-skills/domaincraft-core"
 	@echo "  make build-wasm      - Build WASM validator binary (GOOS=js GOARCH=wasm)"
 	@echo "  make build-wasm-gui  - Build WASM and copy to domaincraft-studio/public/wasm/"
-	@echo "  make test            - Run all tests"
+	@echo "  make test            - Run all tests (test cache disabled)"
+	@echo "  make test-affected   - Run tests for packages touched by uncommitted changes"
 	@echo "  make test-verbose    - Run tests with verbose output"
 	@echo "  make test-coverage   - Run tests and generate coverage report"
 	@echo "  make lint            - Run golangci-lint v2.15.0 via go run (same gate as CI)"
@@ -121,9 +122,15 @@ else
 	@echo "Copied schema to $(SKILLS_DIR)/domain.schema.json"
 endif
 
+# -count=1: hashing the embedded bridges tree (3454 files) for the test cache
+# costs ~25s on Windows, more than the tests themselves (~7s).
 test:
 	@echo "Running tests..."
-	@go test ./...
+	@go test -count=1 ./...
+
+# Run only packages affected by uncommitted changes and their dependents.
+test-affected:
+	@bash scripts/test-impact.sh
 
 # Contract tests (Phase 2): golden output + determinism for bundled bridges.
 contract-test:
@@ -135,7 +142,7 @@ contract-golden-update:
 
 test-verbose:
 	@echo "Running tests (verbose)..."
-	@go test -v ./...
+	@go test -v -count=1 ./...
 
 test-coverage:
 	@echo "Running tests with coverage..."

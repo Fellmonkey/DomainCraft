@@ -48,13 +48,17 @@ describe.skipIf(!ENABLED)("interop: ts-client ↔ certified backend", () => {
   let adminId = "";
   let adminToken = "";
 
+  // 10 attempts * (2s fetch timeout + 1s pause) fit in the hook budget.
+  // The bound also stops a 429 + long Retry-After from hanging the suite.
   beforeAll(async () => {
     // Wait briefly for the backend to become healthy (CI may start it in the
     // same step; a standalone run points at an already-running compose).
     let ready = false;
-    for (let i = 0; i < 30 && !ready; i++) {
+    for (let i = 0; i < 10 && !ready; i++) {
       try {
-        const res = await fetch(`${API_URL}/health/ready`);
+        const res = await fetch(`${API_URL}/health/ready`, {
+          signal: AbortSignal.timeout(2000),
+        });
         ready = res.ok;
       } catch {
         // backend not listening yet
@@ -87,7 +91,7 @@ describe.skipIf(!ENABLED)("interop: ts-client ↔ certified backend", () => {
 
     const me = await api<User>("api/user/me");
     adminId = me.id;
-  });
+  }, 60_000);
 
   afterAll(() => {
     setToken(null);

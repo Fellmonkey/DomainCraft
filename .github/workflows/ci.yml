@@ -21,6 +21,9 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# Independent gates run in parallel. On a local 16-core machine the sequential
+# steps cost ~13s lint + ~8s govulncheck + ~23s race tests; one job serialized
+# all of them.
 jobs:
   test:
     timeout-minutes: 30
@@ -30,6 +33,47 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
 
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.4'
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build
+        run: go build ./cmd/domaincraft
+
+      - name: Build WASM validator (js/wasm smoke)
+        # The validator entry point is build-tagged js&&wasm, so the native
+        # build above cannot see parser/validator/lexer/specmeta breakage.
+        # Cross-compile to a temp path: no .wasm artifact is committed here.
+        # The committed GUI binary is refreshed by hand with make build-wasm-gui.
+        shell: bash
+        run: GOOS=js GOARCH=wasm go build -o "$RUNNER_TEMP/validate.wasm" ./cmd/wasm-validator
+
+      - name: Test
+        # Shuffles order because suites mutate package-global seams.
+        # CI must never skip the bundled-bridge contract gate via local opt-out.
+        # -count=1 keeps the result deterministic; on this repo the test cache
+        # costs more to hash (~25s of embedded bridge files) than to rebuild.
+        # Step-level env works on both bash and PowerShell runners.
+        env:
+          DOMAINCRAFT_LOCAL_DEV: ""
+        run: go test -race -count=1 -shuffle=on ./...
+
+      - name: Integration tests
+        run: go test -tags=integration -count=1 ./internal/bridge
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -54,30 +98,23 @@ jobs:
         with:
           version: v2.15.0
 
+  vuln:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.4'
+          cache: true
+          cache-dependency-path: go.sum
+
       - name: Vulnerability scan
         # Pinned version, not @latest, so the gate is reproducible.
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
-
-      - name: Build
-        run: go build ./cmd/domaincraft
-
-      - name: Build WASM validator (js/wasm smoke)
-        # The validator entry point is build-tagged js&&wasm, so the native
-        # build above cannot see parser/validator/lexer/specmeta breakage.
-        # Cross-compile to a temp path: no .wasm artifact is committed here.
-        # The committed GUI binary is refreshed by hand with make build-wasm-gui.
-        shell: bash
-        run: GOOS=js GOARCH=wasm go build -o "$RUNNER_TEMP/validate.wasm" ./cmd/wasm-validator
-
-      - name: Test
-        # Shuffles order because suites mutate package-global seams.
-        # CI must never skip the bundled-bridge contract gate via local opt-out.
-        run: |
-          unset DOMAINCRAFT_LOCAL_DEV
-          go test -race -count=1 -shuffle=on ./...
-
-      - name: Integration tests
-        run: go test -tags=integration ./internal/bridge
 
   schema-check:
     name: Verify generated schema is up to date
