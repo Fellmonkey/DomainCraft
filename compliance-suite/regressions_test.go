@@ -15,8 +15,8 @@ import (
 // must be non-empty and unique. A `file::TestX` name must still point at
 // an existing test file that defines TestX with at least one assertion, so a
 // removed, renamed or emptied check cannot silently pass. This is the
-// enforcement for the rule "every bug fix adds its check here; a removed name
-// is an error".
+// enforcement for the rule "one row per test file; a removed check name is an
+// error".
 func TestRegressionsTable(t *testing.T) {
 	data, err := os.ReadFile("regressions.tsv")
 	if err != nil {
@@ -154,15 +154,17 @@ func TestWithAssert(t *testing.T) {
 		defined   bool
 		hasAssert bool
 	}{
-		{"TestEmptyBody", true, false},
-		{"TestNoAssert", true, false},
-		{"TestWithAssert", true, true},
-		{"TestMissing", false, false},
+		{name: "TestEmptyBody", defined: true, hasAssert: false},
+		{name: "TestNoAssert", defined: true, hasAssert: false},
+		{name: "TestWithAssert", defined: true, hasAssert: true},
+		{name: "TestMissing", defined: false, hasAssert: false},
 	} {
-		defined, hasAssert := regressionFuncHasAssert(string(data), tc.name)
-		if defined != tc.defined || hasAssert != tc.hasAssert {
-			t.Errorf("regressionFuncHasAssert(%q) = (%v, %v), want (%v, %v)", tc.name, defined, hasAssert, tc.defined, tc.hasAssert)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			defined, hasAssert := regressionFuncHasAssert(string(data), tc.name)
+			if defined != tc.defined || hasAssert != tc.hasAssert {
+				t.Errorf("regressionFuncHasAssert(%q) = (%v, %v), want (%v, %v)", tc.name, defined, hasAssert, tc.defined, tc.hasAssert)
+			}
+		})
 	}
 }
 

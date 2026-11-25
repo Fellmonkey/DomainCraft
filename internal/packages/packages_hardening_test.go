@@ -28,17 +28,20 @@ func TestVersionStoreReportsStorageErrors(t *testing.T) {
 func TestNumericPrefixHandlesBuildMetadataAndOverflow(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
+		name      string
 		component string
 		want      int
 	}{
-		{component: "3+build", want: 3},
-		{component: "12", want: 12},
-		{component: "abc", want: 0},
-		{component: "999999999999999999999999", want: math.MaxInt},
+		{name: "build metadata", component: "3+build", want: 3},
+		{name: "plain number", component: "12", want: 12},
+		{name: "non-numeric", component: "abc", want: 0},
+		{name: "overflow", component: "999999999999999999999999", want: math.MaxInt},
 	} {
-		if got := numericPrefix(c.component); got != c.want {
-			t.Errorf("numericPrefix(%q) = %d, want %d", c.component, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			if got := numericPrefix(c.component); got != c.want {
+				t.Errorf("numericPrefix(%q) = %d, want %d", c.component, got, c.want)
+			}
+		})
 	}
 }
 

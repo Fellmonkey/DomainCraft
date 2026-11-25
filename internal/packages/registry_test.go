@@ -115,21 +115,24 @@ func TestResolveVersionForFrameworkRespectsTargetFramework(t *testing.T) {
 	defer srv.Close()
 
 	for _, tc := range []struct {
+		name      string
 		framework string
 		want      string
 	}{
-		{"net10.0", "10.0.0"},
-		{"net11.0", "11.0.0"},
-		{"netstandard2.0", "11.0.0"},
-		{"", "11.0.0"},
+		{name: "net10 target", framework: "net10.0", want: "10.0.0"},
+		{name: "net11 target", framework: "net11.0", want: "11.0.0"},
+		{name: "netstandard", framework: "netstandard2.0", want: "11.0.0"},
+		{name: "empty framework", framework: "", want: "11.0.0"},
 	} {
-		got, err := ResolveVersionForFramework(srv.URL+"/{id}/index.json", "Microsoft.EntityFrameworkCore", tc.framework)
-		if err != nil {
-			t.Fatalf("framework %q: %v", tc.framework, err)
-		}
-		if got != tc.want {
-			t.Errorf("framework %q: version = %q, want %q", tc.framework, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ResolveVersionForFramework(srv.URL+"/{id}/index.json", "Microsoft.EntityFrameworkCore", tc.framework)
+			if err != nil {
+				t.Fatalf("framework %q: %v", tc.framework, err)
+			}
+			if got != tc.want {
+				t.Errorf("framework %q: version = %q, want %q", tc.framework, got, tc.want)
+			}
+		})
 	}
 }
 

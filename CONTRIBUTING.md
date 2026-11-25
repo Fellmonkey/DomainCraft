@@ -21,13 +21,15 @@ make test && make lint
 
 ```bash
 make cli-validate DOMAIN=examples/domain.yaml
-make cli-generate DOMAIN=examples/domain.yaml BRIDGE=../domaincraft-bridge-csharp-rest OUTPUT=/tmp/out
+make cli-generate DOMAIN=examples/domain.yaml BRIDGE=csharp-rest OUTPUT=/tmp/out
 # direct:
 go run ./cmd/domaincraft validate --domain domain.yaml
 go run ./cmd/domaincraft generate --domain domain.yaml --bridge ../my-bridge --output ./out
 # swap a layer without forking:
-go run ./cmd/domaincraft generate --domain domain.yaml --bridge ../domaincraft-bridge-csharp-rest --replace persistence=../my-dapper --output ./out
+go run ./cmd/domaincraft generate --domain domain.yaml --bridge csharp-rest --replace persistence=../my-dapper --output ./out
 ```
+
+Sibling `domaincraft-bridge-*` directories are legacy mirrors of the old standalone repos — they are not part of a fresh monorepo clone.
 
 `--bridge` accepts a local path, a registry ID (`csharp-rest`, `ts-core`) or `owner/repo`. `--replace` accepts `layer=bridgeRef` or `bridgeId=bridgeRef` (repeatable). Create a starter `domain.yaml` by hand or in [Studio](https://fellmonkey.github.io/domaincraft-studio/) — an example is `examples/domain.yaml`.
 

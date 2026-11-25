@@ -77,6 +77,12 @@ build: install-deps
 
 install: build
 	@echo "Installing domaincraft..."
+ifeq ($(OS),Windows_NT)
+	@cmd /c "if not exist %LOCALAPPDATA%\DomainCraft mkdir %LOCALAPPDATA%\DomainCraft"
+	@cmd /c "copy /Y bin\domaincraft %LOCALAPPDATA%\DomainCraft\domaincraft.exe >nul"
+	@echo "Installed to %LOCALAPPDATA%\DomainCraft\domaincraft.exe"
+	@echo "Make sure %LOCALAPPDATA%\DomainCraft is in your PATH"
+else
 	@if [ -d "/usr/local/bin" ] && [ -w "/usr/local/bin" ]; then \
 		cp bin/domaincraft /usr/local/bin/domaincraft; \
 		echo "Installed to /usr/local/bin/domaincraft"; \
@@ -90,6 +96,7 @@ install: build
 		echo "Installed to $$HOME/.local/bin/domaincraft"; \
 		echo "Make sure ~/.local/bin is in your PATH"; \
 	fi
+endif
 
 run: build
 	@echo "Running domaincraft with example domain.yaml..."
@@ -136,7 +143,11 @@ test:
 
 # Run only packages affected by uncommitted changes and their dependents.
 test-affected:
+ifeq ($(OS),Windows_NT)
+	@echo "test-affected requires Git Bash with bash and python3 on PATH. Install Git Bash, then run 'make test-affected' from a Git Bash shell."
+else
 	@bash scripts/test-impact.sh
+endif
 
 # Contract tests (Phase 2): golden output + determinism for bundled bridges.
 contract-test:
@@ -174,18 +185,33 @@ fmt:
 	@go fmt ./...
 
 clean:
+ifeq ($(OS),Windows_NT)
+	@echo "Cleaning build artifacts..."
+	@cmd /c "if exist bin rmdir /S /Q bin"
+	@cmd /c "if exist coverage.out del /Q coverage.out"
+	@cmd /c "if exist coverage.html del /Q coverage.html"
+else
 	@echo "Cleaning build artifacts..."
 	@rm -rf bin/
 	@rm -f coverage.out coverage.html
+endif
 
 # Development targets
 dev-watch:
+ifeq ($(OS),Windows_NT)
+	@echo "dev-watch requires Git Bash + entr. Install both, then run 'make dev-watch' from a Git Bash shell."
+else
 	@echo "Watching for changes (requires entr)..."
 	@find . -name "*.go" | entr -r make run
+endif
 
 dev-test-watch:
+ifeq ($(OS),Windows_NT)
+	@echo "dev-test-watch requires Git Bash + entr. Install both, then run 'make dev-test-watch' from a Git Bash shell."
+else
 	@echo "Watching for changes and running tests..."
 	@find . -name "*.go" | entr -r make test-verbose
+endif
 
 # WASM targets
 WASM_OUTPUT ?= bin/validate.wasm
