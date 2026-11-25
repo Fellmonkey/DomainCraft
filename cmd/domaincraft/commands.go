@@ -321,6 +321,7 @@ func loadAndValidateDomain(opts *cliOptions, cmd *cobra.Command, log *logger.Log
 // through the same validation, rendering and migration pipeline.
 func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
 	log := commandLogger(cmd)
+	ctx := newCommandContext(opts, cmd, log)
 
 	irProject, bridgeName, err := loadAndValidateDomain(opts, cmd, log, func() (string, error) {
 		resolvedPath, name, err := resolveBridgeInteractive(opts, log)
@@ -395,20 +396,20 @@ func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
 	log.Success("Generated %d file(s) into %s", len(writtenFiles), opts.outputDir)
 
 	// --- Admin panel generation ---
-	adminManifest, err := generateAdminPanel(opts, cmd, args, irProject, seedData, mockDataset, log)
+	adminManifest, err := generateAdminPanel(ctx, args, irProject, seedData, mockDataset)
 	if err != nil {
 		return err
 	}
 	manifest = append(manifest, adminManifest...)
 
 	// --- Migration actions: clean up orphaned / renamed files ---
-	applied, err := applySchemaMigrations(opts, migrationDiff, manifest, log, cmd)
+	applied, err := applySchemaMigrations(ctx, migrationDiff, manifest)
 	if err != nil {
 		return err
 	}
 
 	// --- Database migrations ---
-	if err := runBridgeDatabaseMigrations(opts, cmd, log, migrationDiff, chainHasCommunity, applied, rendererInstance.MigrationConfig()); err != nil {
+	if err := runBridgeDatabaseMigrations(ctx, migrationDiff, chainHasCommunity, applied, rendererInstance.MigrationConfig()); err != nil {
 		return err
 	}
 
@@ -554,6 +555,19 @@ func newBridgesCmd(opts *cliOptions) *cobra.Command {
 }
 
 // --- helpers ---
+
+// commandContext groups the three values threaded through the generation
+// pipeline's helper steps: parsed flags, the command (for stdio) and its
+// logger. runGenerate creates one and passes it by pointer.
+type commandContext struct {
+	opts *cliOptions
+	cmd  *cobra.Command
+	log  *logger.Logger
+}
+
+func newCommandContext(opts *cliOptions, cmd *cobra.Command, log *logger.Logger) *commandContext {
+	return &commandContext{opts: opts, cmd: cmd, log: log}
+}
 
 // newBridgeResolver builds a resolver with the CLI's bridge cache/update options.
 func newBridgeResolver(opts *cliOptions, log *logger.Logger) *bridge.Resolver {
@@ -857,21 +871,21 @@ func bridgeUpdateNotice(entryID string, _ *bridge.Update) string {
 // explicit --migrate still needs --allow-bridge-commands consent. A failure is
 // hard with --migrate and best-effort under --prune (the container can apply
 // pending migrations at startup).
-func runBridgeDatabaseMigrations(opts *cliOptions, cmd *cobra.Command, log *logger.Logger, diff *snapshot.Diff, chainHasCommunity, applied bool, cfg *renderer.MigrationConfig) error {
-	autoMigrate := opts.prune && diff.HasSchemaChanges()
+func runBridgeDatabaseMigrations(ctx *commandContext, diff *snapshot.Diff, chainHasCommunity, applied bool, cfg *renderer.MigrationConfig) error {
+	autoMigrate := ctx.opts.prune && diff.HasSchemaChanges()
 	if autoMigrate && chainHasCommunity {
-		log.Warn("community bridge(s) in the resolved chain — not auto-running database migrations; use --migrate explicitly")
+		ctx.log.Warn("community bridge(s) in the resolved chain — not auto-running database migrations; use --migrate explicitly")
 		autoMigrate = false
 	}
-	shouldMigrate := opts.migrate || autoMigrate
+	shouldMigrate := ctx.opts.migrate || autoMigrate
 	if !applied || !shouldMigrate || cfg == nil || !cfg.Enabled {
 		return nil
 	}
-	if !bridgeCommandsAllowed(chainHasCommunity, opts.allowBridgeCommands) {
+	if !bridgeCommandsAllowed(chainHasCommunity, ctx.opts.allowBridgeCommands) {
 		return fmt.Errorf("community bridge(s) declared database migrations; re-run with --allow-bridge-commands to execute them")
 	}
-	if err := runDatabaseMigrations(cfg, opts.outputDir, cmd, log); err != nil {
-		if opts.migrate {
+	if err := runDatabaseMigrations(cfg, ctx.opts.outputDir, ctx.cmd, ctx.log); err != nil {
+		if ctx.opts.migrate {
 			// Explicit --migrate: a failed migration is a hard error.
 			return err
 		}
@@ -879,8 +893,8 @@ func runBridgeDatabaseMigrations(opts *cliOptions, cmd *cobra.Command, log *logg
 		// workflow the API container applies pending migrations at startup
 		// (Database:SchemaMode=migrate → MigrateAsync), so a host without
 		// the dotnet SDK or an unreachable database must not abort generation.
-		log.Warn("Database migration was not applied by --prune: %v", err)
-		log.Warn("In docker, set Database:SchemaMode=migrate — the container applies pending migrations on startup.")
+		ctx.log.Warn("Database migration was not applied by --prune: %v", err)
+		ctx.log.Warn("In docker, set Database:SchemaMode=migrate — the container applies pending migrations on startup.")
 	}
 	return nil
 }
@@ -888,7 +902,7 @@ func runBridgeDatabaseMigrations(opts *cliOptions, cmd *cobra.Command, log *logg
 // applySchemaMigrations cleans up files orphaned by removed or renamed
 // entities. Files written by this run are never touched. It reports whether
 // all actions were applied: deferred cleanup keeps the previous snapshot.
-func applySchemaMigrations(opts *cliOptions, diff *snapshot.Diff, manifest []renderer.RenderedFile, log *logger.Logger, cmd *cobra.Command) (bool, error) {
+func applySchemaMigrations(ctx *commandContext, diff *snapshot.Diff, manifest []renderer.RenderedFile) (bool, error) {
 	// Files written from this run must never be touched by cleanup.
 	fresh := make(map[string]bool)
 	for _, f := range manifest {
@@ -896,63 +910,59 @@ func applySchemaMigrations(opts *cliOptions, diff *snapshot.Diff, manifest []ren
 			fresh[f.Path] = true
 		}
 	}
-	return applyMigrationActions(opts, diff, fresh, log, cmd)
+	return applyMigrationActions(ctx.opts, diff, fresh, ctx.log, ctx.cmd)
 }
 
 // generateAdminPanel handles the optional --admin flag and renders the panel
 // into the output directory. It returns the extra file manifest entries; an
 // empty manifest means no panel was requested.
-func generateAdminPanel(opts *cliOptions, cmd *cobra.Command, args []string, irProject *ir.Project, seedData, mockDataset *ir.SeedDataset, log *logger.Logger) ([]renderer.RenderedFile, error) {
+func generateAdminPanel(ctx *commandContext, args []string, irProject *ir.Project, seedData, mockDataset *ir.SeedDataset) ([]renderer.RenderedFile, error) {
 	// pflag's NoOptDefVal makes `--admin <id>` stop consuming the next
 	// argument (it lands in args), so reclaim it here. This keeps both
 	// `--admin <path>` and `--admin=<path>` working while `--admin` alone
 	// still means the default admin-alpine bridge. Any other positional
 	// argument is rejected by cobra.MaximumNArgs(1) / the check below.
 	if len(args) > 0 {
-		if !cmd.Flags().Changed("admin") || opts.adminBridge != "admin-alpine" {
+		if !ctx.cmd.Flags().Changed("admin") || ctx.opts.adminBridge != "admin-alpine" {
 			return nil, asUsageError(fmt.Errorf("unexpected positional argument %q: use --admin <bridge-id>", args[0]))
 		}
-		opts.adminBridge = args[0]
+		ctx.opts.adminBridge = args[0]
 	}
-	if opts.adminBridge == "" && !cmd.Flags().Changed("admin") && !opts.nonInteractive && isTerminal() {
+	if ctx.opts.adminBridge == "" && !ctx.cmd.Flags().Changed("admin") && !ctx.opts.nonInteractive && isTerminal() {
 		generate, err := interactive.PromptGenerateAdmin()
 		if err != nil {
 			return nil, fmt.Errorf("prompt for admin panel: %w", err)
 		}
 		if generate {
-			opts.adminBridge = "admin-alpine"
+			ctx.opts.adminBridge = "admin-alpine"
 		}
 	}
-	if opts.adminBridge == "" {
+	if ctx.opts.adminBridge == "" {
 		return nil, nil
 	}
 
-	resolver := bridge.NewResolver(bridge.Default()).WithEnsureOptions(bridgeEnsureOptions(opts, log))
-
-	adminID := opts.adminBridge
-	if adminID == "" {
-		adminID = "admin-alpine"
-	}
+	resolver := newBridgeResolver(ctx.opts, ctx.log)
+	adminID := ctx.opts.adminBridge
 
 	adminPath, err := resolver.Resolve(adminID)
 	if err != nil {
 		return nil, usageOnInvalidBridgeRef(fmt.Errorf("resolve admin bridge %q: %w", adminID, err))
 	}
 
-	log.Info("Rendering admin panel via %s", adminID)
-	adminRenderer, err := renderer.New(adminPath, log)
+	ctx.log.Info("Rendering admin panel via %s", adminID)
+	adminRenderer, err := renderer.New(adminPath, ctx.log)
 	if err != nil {
 		return nil, err
 	}
 	adminRenderer.SetSeedData(seedData)
 	adminRenderer.SetMockData(mockDataset)
 
-	adminFiles, adminManifest, err := adminRenderer.Render(irProject, opts.outputDir)
+	adminFiles, adminManifest, err := adminRenderer.Render(irProject, ctx.opts.outputDir)
 	if err != nil {
 		return nil, err
 	}
 
-	log.Success("Generated %d admin file(s)", len(adminFiles))
+	ctx.log.Success("Generated %d admin file(s)", len(adminFiles))
 	return adminManifest, nil
 }
 
@@ -1087,6 +1097,17 @@ type migrationContext struct {
 	out   io.Writer // stdout: orphan lists are command data, progress goes to log
 }
 
+// record handles a cleanup failure: --prune wraps it for the caller to join,
+// other modes warn and continue. This keeps the single-failure contract in one
+// place so every cleanup handler behaves the same way.
+func (mc *migrationContext) record(err error, what string) error {
+	if mc.opts.prune {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	mc.log.Warn("could not %s: %v", what, err)
+	return nil
+}
+
 // cleanupDeferred reports whether a run must keep cleanup pending: non-interactive
 // (or no TTY) without --prune. The previous snapshot stays on disk so a later
 // --prune run can still find the orphaned files.
@@ -1113,7 +1134,7 @@ func applyMigrationActions(opts *cliOptions, diff *snapshot.Diff, fresh map[stri
 	if diff == nil || diff.IsEmpty() {
 		return true, nil
 	}
-	mc := migrationContext{opts: opts, fresh: fresh, log: log, out: cmd.OutOrStdout()}
+	mc := &migrationContext{opts: opts, fresh: fresh, log: log, out: cmd.OutOrStdout()}
 	var failures []error
 
 	// In --prune mode the tool owns the whole cleanup, so it also rewrites
@@ -1129,9 +1150,7 @@ func applyMigrationActions(opts *cliOptions, diff *snapshot.Diff, fresh map[stri
 				}
 				rewrote, err := snapshot.RewriteFile(opts.outputDir, rel, snapshot.NamespaceTransform(diff.NamespaceRename))
 				if err != nil {
-					// Under --prune the error is returned and printed once by
-					// Execute(); a Warn here would print the same failure twice.
-					failures = append(failures, fmt.Errorf("rewrite namespace in %s: %w", rel, err))
+					failures = append(failures, mc.record(err, fmt.Sprintf("rewrite namespace in %s", rel)))
 					continue
 				}
 				if rewrote {
@@ -1146,7 +1165,7 @@ func applyMigrationActions(opts *cliOptions, diff *snapshot.Diff, fresh map[stri
 				}
 				rewrote, err := snapshot.RewriteFile(opts.outputDir, rel, snapshot.FieldTransform(fr))
 				if err != nil {
-					failures = append(failures, fmt.Errorf("rewrite field references in %s: %w", rel, err))
+					failures = append(failures, mc.record(err, fmt.Sprintf("rewrite field references in %s", rel)))
 					continue
 				}
 				if rewrote {
@@ -1223,7 +1242,7 @@ func chooseMigrationFiles(opts *cliOptions, files []snapshot.FileRef, prompt fun
 // about custom files of a removed entity. Returns false when cleanup was
 // deferred (non-interactive without --prune). Under --prune, delete failures are
 // returned so the snapshot is not advanced past an unrecoverable cleanup.
-func handleDeletedEntity(mc migrationContext, del snapshot.DeletedEntity) (bool, error) {
+func handleDeletedEntity(mc *migrationContext, del snapshot.DeletedEntity) (bool, error) {
 	if cleanupDeferred(mc.opts) {
 		mc.log.Warn("Entity %q was removed from domain.yaml — orphaned files kept (re-run with --prune to delete):", del.Name)
 		for _, f := range del.Files {
@@ -1244,11 +1263,7 @@ func handleDeletedEntity(mc migrationContext, del snapshot.DeletedEntity) (bool,
 			continue
 		}
 		if err := snapshot.DeleteFile(mc.opts.outputDir, f.Path); err != nil {
-			if mc.opts.prune {
-				failures = append(failures, fmt.Errorf("delete %s: %w", f.Path, err))
-			} else {
-				mc.log.Warn("could not delete %s: %v", f.Path, err)
-			}
+			failures = append(failures, mc.record(err, fmt.Sprintf("delete %s", f.Path)))
 			continue
 		}
 		mc.log.Info("deleted %s", f.Path)
@@ -1264,7 +1279,7 @@ func handleDeletedEntity(mc migrationContext, del snapshot.DeletedEntity) (bool,
 // the renamed files' contents are rewritten too (entity, namespace and field
 // identifiers), so the developer-owned file keeps compiling after the rename.
 // Returns false when cleanup was deferred (non-interactive without --prune).
-func handleRename(mc migrationContext, ren snapshot.Rename, d *snapshot.Diff) (bool, error) {
+func handleRename(mc *migrationContext, ren snapshot.Rename, d *snapshot.Diff) (bool, error) {
 	if cleanupDeferred(mc.opts) {
 		mc.log.Warn("Entity %q was renamed to %q — files kept (re-run with --prune to rename):", ren.OldName, ren.NewName)
 		for _, f := range ren.Files {
@@ -1295,11 +1310,7 @@ func handleRename(mc migrationContext, ren snapshot.Rename, d *snapshot.Diff) (b
 				// either copy, and poisoned snapshot paths stay inside outputDir.
 				transforms := snapshot.RenameTransforms(ren.OldName, ren.NewName, d)
 				if err := snapshot.ReplaceScaffoldedFile(mc.opts.outputDir, f.Path, newRel, transforms...); err != nil {
-					if mc.opts.prune {
-						failures = append(failures, fmt.Errorf("replace scaffolded %s: %w", newRel, err))
-					} else {
-						mc.log.Warn("could not replace scaffolded %s: %v", newRel, err)
-					}
+					failures = append(failures, mc.record(err, fmt.Sprintf("replace scaffolded %s", newRel)))
 					continue
 				}
 				mc.log.Info("renamed %s -> %s (content updated)", f.Path, newRel)
@@ -1307,20 +1318,14 @@ func handleRename(mc migrationContext, ren snapshot.Rename, d *snapshot.Diff) (b
 			}
 			newRel, renamed, err := snapshot.RenameEntityFile(mc.opts.outputDir, f.Path, ren.OldName, ren.NewName)
 			if err != nil {
-				if mc.opts.prune {
-					failures = append(failures, fmt.Errorf("rename %s: %w", f.Path, err))
-				} else {
-					mc.log.Warn("could not rename %s: %v", f.Path, err)
-				}
+				failures = append(failures, mc.record(err, fmt.Sprintf("rename %s", f.Path)))
 				continue
 			}
 			if renamed {
 				if rewrote, rerr := snapshot.RewriteFile(mc.opts.outputDir, newRel, snapshot.RenameTransforms(ren.OldName, ren.NewName, d)...); rerr != nil {
-					if mc.opts.prune {
-						failures = append(failures, fmt.Errorf("rewrite content of %s: %w", newRel, rerr))
-					} else {
-						mc.log.Warn("could not rewrite content of %s: %v", newRel, rerr)
-					}
+					// No early continue: the rename itself succeeded, so the
+					// final Info line still reports it.
+					failures = append(failures, mc.record(rerr, fmt.Sprintf("rewrite content of %s", newRel)))
 				} else if rewrote {
 					mc.log.Info("renamed %s -> %s (content updated)", f.Path, newRel)
 					continue
@@ -1331,11 +1336,7 @@ func handleRename(mc migrationContext, ren snapshot.Rename, d *snapshot.Diff) (b
 		}
 		// Generated files have been regenerated under the new name — remove the stale copy.
 		if err := snapshot.DeleteFile(mc.opts.outputDir, f.Path); err != nil {
-			if mc.opts.prune {
-				failures = append(failures, fmt.Errorf("delete stale generated file %s: %w", f.Path, err))
-			} else {
-				mc.log.Warn("could not delete stale generated file %s: %v", f.Path, err)
-			}
+			failures = append(failures, mc.record(err, fmt.Sprintf("delete stale generated file %s", f.Path)))
 			continue
 		}
 		mc.log.Info("removed stale generated file %s", f.Path)

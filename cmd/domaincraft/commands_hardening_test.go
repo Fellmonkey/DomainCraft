@@ -99,7 +99,7 @@ func TestMigrationCleanupDeferredOnTTYWhenNonInteractive(t *testing.T) {
 		var fileOut bytes.Buffer
 
 		mc := migrationContext{opts: opts, fresh: map[string]bool{}, log: log, out: &fileOut}
-		applied, err := handleDeletedEntity(mc, snapshotDeleted(rel))
+		applied, err := handleDeletedEntity(&mc, snapshotDeleted(rel))
 		if err != nil || applied {
 			t.Fatalf("handleDeletedEntity = %v, %v; want false, nil", applied, err)
 		}
@@ -127,7 +127,7 @@ func TestMigrationCleanupDeferredOnTTYWhenNonInteractive(t *testing.T) {
 		var fileOut bytes.Buffer
 
 		mc := migrationContext{opts: opts, fresh: map[string]bool{}, log: log, out: &fileOut}
-		applied, err := handleRename(mc, snapshotRename(rel), nil)
+		applied, err := handleRename(&mc, snapshotRename(rel), nil)
 		if err != nil || applied {
 			t.Fatalf("handleRename = %v, %v; want false, nil", applied, err)
 		}
@@ -183,7 +183,7 @@ func TestPruneRejectsScaffoldReplaceEscape(t *testing.T) {
 			NewName: "New",
 			Files:   []snapshot.FileRef{{Path: oldRel, Custom: true}},
 		}
-		applied, err := handleRename(mc, ren, &snapshot.Diff{})
+		applied, err := handleRename(&mc, ren, &snapshot.Diff{})
 		if applied || err == nil {
 			t.Fatalf("handleRename = %v, %v; want a hard error under --prune", applied, err)
 		}
