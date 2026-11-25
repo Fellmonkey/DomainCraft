@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DomainCraft/DomainCraft/internal/bridge"
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
 )
 
@@ -202,12 +203,15 @@ func (tr *contextCheckingTransport) RoundTrip(req *http.Request) (*http.Response
 }
 
 func TestHTTPGetBodyUsesCommandContext(t *testing.T) {
-	oldClient, oldCtx := httpClient, commandCtx
-	t.Cleanup(func() { httpClient, commandCtx = oldClient, oldCtx })
+	oldClient, oldCtx := httpClient, bridge.CommandContext()
+	t.Cleanup(func() {
+		httpClient = oldClient
+		bridge.SetCommandContext(oldCtx)
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	commandCtx = ctx
+	bridge.SetCommandContext(ctx)
 	transport := &contextCheckingTransport{}
 	httpClient = &http.Client{Transport: transport}
 

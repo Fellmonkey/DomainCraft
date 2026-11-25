@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/DomainCraft/DomainCraft/internal/appdir"
+	"github.com/DomainCraft/DomainCraft/internal/bridge"
 	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 	"github.com/DomainCraft/DomainCraft/internal/netutil"
 	"github.com/DomainCraft/DomainCraft/internal/packages"
@@ -252,7 +253,7 @@ func decodeRelease(body []byte) (*githubRelease, error) {
 // latestReleaseForNotice probes the same endpoint with the short-lived client.
 // It is a seam so tests can drive the notice path without a network.
 var latestReleaseForNoticeFn = func() (*githubRelease, error) {
-	body, err := netutil.BoundedGet(commandCtx, noticeClient, releasesLatestURL, maxResponseBody, validateReleaseRedirect)
+	body, err := netutil.BoundedGet(bridge.CommandContext(), noticeClient, releasesLatestURL, maxResponseBody, validateReleaseRedirect)
 	if err != nil {
 		return nil, err
 	}
@@ -399,12 +400,12 @@ func validateReleaseRedirect(u *url.URL) error {
 	return err
 }
 
-// httpGetBody performs a GET bound to commandCtx and returns the response body,
+// httpGetBody performs a GET bound to bridge.CommandContext() and returns the response body,
 // capping it at maxResponseBody bytes. The shared helper owns the status check,
 // cap and redaction; this package supplies the client, context and redirect
 // policy.
 func httpGetBody(rawURL string) ([]byte, error) {
-	return netutil.BoundedGet(commandCtx, httpClient, rawURL, maxResponseBody, validateReleaseRedirect)
+	return netutil.BoundedGet(bridge.CommandContext(), httpClient, rawURL, maxResponseBody, validateReleaseRedirect)
 }
 
 // readResponseBody reads at most maxResponseBody+1 bytes so an oversized

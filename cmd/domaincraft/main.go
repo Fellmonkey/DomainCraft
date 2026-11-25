@@ -20,7 +20,7 @@ func main() {
 func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	commandCtx = ctx
+	// One holder for every cancellable child: git, probes and migrations.
 	bridge.SetCommandContext(ctx)
 	if err := Execute(); err != nil {
 		if errors.Is(err, errUsage) {

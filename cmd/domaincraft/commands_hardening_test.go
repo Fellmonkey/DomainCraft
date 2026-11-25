@@ -288,12 +288,13 @@ func TestPruneCleanupErrorPrintedOnce(t *testing.T) {
 // TestUsageErrorsExitTwo separates CLI misuse (exit 2) from runtime failures
 // (exit 1) while keeping the error itself printed exactly once.
 func TestUsageErrorsExitTwo(t *testing.T) {
-	oldArgs, oldVersion, oldCtx, oldNewRoot := os.Args, version, commandCtx, newRootCommandFn
+	oldArgs, oldVersion, oldCtx, oldNewRoot := os.Args, version, bridge.CommandContext(), newRootCommandFn
 	version = "dev"
 	// run() cancels the context it installs via its deferred stop(); restore
-	// the package-level context so later tests keep a live one.
+	// the shared command context so later tests keep a live one.
 	t.Cleanup(func() {
-		os.Args, version, commandCtx, newRootCommandFn = oldArgs, oldVersion, oldCtx, oldNewRoot
+		os.Args, version, newRootCommandFn = oldArgs, oldVersion, oldNewRoot
+		bridge.SetCommandContext(oldCtx)
 	})
 
 	domainPath := filepath.Join(t.TempDir(), "domain.yaml")
@@ -502,15 +503,15 @@ func TestRunDatabaseMigrationsUsesOutputDir(t *testing.T) {
 	}
 }
 
-// TestRunDatabaseMigrationsRespectsCommandContext checks that the global
-// commandCtx is handed to the child and that a canceled context prevents the
-// process from starting at all.
+// TestRunDatabaseMigrationsRespectsCommandContext checks that the shared
+// command context is handed to the child and that a canceled context prevents
+// the process from starting at all.
 func TestRunDatabaseMigrationsRespectsCommandContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	oldCtx := commandCtx
-	commandCtx = ctx
-	t.Cleanup(func() { commandCtx = oldCtx })
+	oldCtx := bridge.CommandContext()
+	bridge.SetCommandContext(ctx)
+	t.Cleanup(func() { bridge.SetCommandContext(oldCtx) })
 
 	var seenCtx context.Context
 	var captured *exec.Cmd
@@ -532,7 +533,7 @@ func TestRunDatabaseMigrationsRespectsCommandContext(t *testing.T) {
 		t.Fatal("runDatabaseMigrations succeeded with a canceled context")
 	}
 	if seenCtx != ctx {
-		t.Errorf("command received context %v, want the canceled commandCtx", seenCtx)
+		t.Errorf("command received context %v, want the canceled command context", seenCtx)
 	}
 	if captured == nil || captured.Process != nil {
 		t.Fatalf("child process was started with a canceled context: %+v", captured)

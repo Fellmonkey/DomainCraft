@@ -15,7 +15,6 @@ package main
 
 import (
 	"cmp"
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +26,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/DomainCraft/DomainCraft/internal/bridge"
@@ -74,9 +74,6 @@ func newCLIOptions() *cliOptions {
 }
 
 var (
-	// commandCtx is cancelled on interrupt so child processes are not orphaned.
-	commandCtx = context.Background()
-
 	// isTerminal is a seam for testing prompt gating without a real TTY.
 	isTerminal = interactive.IsTerminal
 
@@ -474,8 +471,36 @@ func newBridgesCmd(opts *cliOptions) *cobra.Command {
 				strings.Repeat("-", 40),
 			)
 
-			for _, e := range entries {
-				st := e.Status(opts.checkUpdates)
+			// --check-updates probes every cached bridge over HTTP. Run the
+			// probes with bounded concurrency, then print in registry order so
+			// the output stays deterministic.
+			type statusRow struct {
+				entry  bridge.RegistryEntry
+				status bridge.Status
+			}
+			rows := make([]statusRow, len(entries))
+			if opts.checkUpdates {
+				const maxConcurrentProbes = 4
+				sem := make(chan struct{}, maxConcurrentProbes)
+				var wg sync.WaitGroup
+				for i, e := range entries {
+					wg.Add(1)
+					go func(i int, e bridge.RegistryEntry) {
+						defer wg.Done()
+						sem <- struct{}{}
+						defer func() { <-sem }()
+						rows[i] = statusRow{e, e.Status(true)}
+					}(i, e)
+				}
+				wg.Wait()
+			} else {
+				for i, e := range entries {
+					rows[i] = statusRow{e, e.Status(false)}
+				}
+			}
+
+			for _, row := range rows {
+				e, st := row.entry, row.status
 				source := "remote"
 				switch {
 				case st.Embedded && st.Cached:
@@ -955,7 +980,7 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 			shell = "sh"
 			argv = []string{"-c", command}
 		}
-		c := execCommandFn(commandCtx, shell, argv...)
+		c := execCommandFn(bridge.CommandContext(), shell, argv...)
 		c.Dir = outDir
 		c.Stdout = out
 		c.Stderr = errOut
