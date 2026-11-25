@@ -27,5 +27,9 @@ types:
   "array(json)": "unknown[]"
   "array(jsonb)": "unknown[]"
 
+# Array types not in `types` above (enum arrays, future primitives) use this
+# bridge-owned format. The core never substitutes a language default.
+array_format: "%s[]"
+
 # Nullability is handled in the templates (response -> `| null`, request -> `?`),
 # so no nullable_format / enum_nullable wrapping is applied.

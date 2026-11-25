@@ -353,18 +353,31 @@ func TestRenderContext_PrimaryKey(t *testing.T) {
 	}
 }
 
-// The core must not bake in a language-specific TFM (net10.0) when a project
-// declares no platform: package resolution stays unconstrained.
+// The core must not bake in a language-specific TFM: the project declares its
+// platform, otherwise the bridge chain declares it in bridge.yaml.
 func TestResolvePackagesHasNoLanguageSpecificFrameworkDefault(t *testing.T) {
 	t.Parallel()
-	if got := targetFramework(nil); got != "" {
+	r := &Renderer{}
+	if got := r.targetFramework(nil); got != "" {
 		t.Errorf("targetFramework(nil) = %q, want empty (no core-side default)", got)
 	}
-	if got := targetFramework(&ir.Project{}); got != "" {
+	if got := r.targetFramework(&ir.Project{}); got != "" {
 		t.Errorf("targetFramework(empty project) = %q, want empty (no core-side default)", got)
 	}
-	if got := targetFramework(&ir.Project{Platform: "net11.0"}); got != "net11.0" {
+	if got := r.targetFramework(&ir.Project{Platform: "net11.0"}); got != "net11.0" {
 		t.Errorf("targetFramework(net11.0) = %q, want the declared platform", got)
+	}
+
+	bridge := &Renderer{sources: []sourceConfig{
+		{config: BridgeConfig{TargetFramework: "net10.0"}}, // base
+		{config: BridgeConfig{}},                            // adapter, silent
+	}}
+	if got := bridge.targetFramework(&ir.Project{}); got != "net10.0" {
+		t.Errorf("targetFramework() = %q, want the bridge-declared net10.0", got)
+	}
+	// Project platform wins over the bridge declaration.
+	if got := bridge.targetFramework(&ir.Project{Platform: "net11.0"}); got != "net11.0" {
+		t.Errorf("targetFramework() = %q, want the project platform", got)
 	}
 }
 

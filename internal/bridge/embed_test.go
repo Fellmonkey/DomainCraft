@@ -83,9 +83,15 @@ func TestEmbeddedBridgesMatchTree(t *testing.T) {
 			return err
 		}
 		if d.IsDir() {
+			// Generated TCK output and snapshots are runtime artifacts: they
+			// may exist on disk but not in the compiled embed (or vice versa).
 			switch d.Name() {
-			case "bin", "obj", "node_modules", ".git":
+			case "bin", "obj", "node_modules", ".git", ".domaincraft":
 				return fs.SkipDir
+			case "generated":
+				if filepath.Base(filepath.Dir(path)) == "tck" {
+					return fs.SkipDir
+				}
 			}
 			return nil
 		}
@@ -102,10 +108,15 @@ func TestEmbeddedBridgesMatchTree(t *testing.T) {
 		}
 		if d.IsDir() {
 			// Local build artifacts are not part of the source tree and go:embed
-			// does not include them either.
+			// does not include them either. TCK output and .domaincraft snapshots
+			// are runtime artifacts for the same reason.
 			switch d.Name() {
-			case "bin", "obj", "node_modules", ".git":
+			case "bin", "obj", "node_modules", ".git", ".domaincraft":
 				return filepath.SkipDir
+			case "generated":
+				if filepath.Base(filepath.Dir(path)) == "tck" {
+					return filepath.SkipDir
+				}
 			}
 			return nil
 		}

@@ -127,8 +127,9 @@ internal/renderer/contract_test.go::TestLoadSourceRejectsNegativeContractVersion
 internal/bridge/resolver_test.go::TestResolveExtendsRelativeToAdapterDir	#5	relative extends resolved against CWD instead of the adapter directory
 internal/bridge/hardening_test.go::TestHTTPProbeRejectsRedirectBeforeFetch	#5	update probe fetched a redirected host before checking the target
 internal/renderer/bridgefuncs_test.go::TestBuildBridgeFuncsRequiresLiteralSpecs	#5	core substituted C# and UI syntax when a bridge omitted literal specs
-internal/renderer/render_test.go::TestResolvePackagesHasNoLanguageSpecificFrameworkDefault	#5	core hardcoded net10.0 as the package-resolution framework default
+internal/renderer/render_test.go::TestResolvePackagesHasNoLanguageSpecificFrameworkDefault	#5	core hardcoded net10.0 as the package-resolution framework default; removing it left C# bridges resolving net11.0 packages for net10.0 projects
 cmd/domaincraft/commands_hardening_test.go::TestPruneRejectsScaffoldReplaceEscape	#5	scaffold replacement under --prune deleted a file outside outputDir via a symlink
 cmd/domaincraft/commands_update_security_test.go::TestReplaceExecutableUsesSameVolumeTemp	#5	update binary was downloaded to the OS temp dir so rename into the executable directory failed with EXDEV
 cmd/domaincraft/commands_hardening_test.go::TestPruneCleanupErrorPrintedOnce	#5	failed namespace rewrite under --prune was warned about and then printed again as Error
 cmd/domaincraft/commands_hardening_test.go::TestUsageErrorsExitTwo	#5	bad flags, bad arguments and missing --bridge exited with code 1 instead of 2
+internal/renderer/enum_array_test.go::TestTSCoreRendersEnumArrayType	#5	generated TypeScript enum arrays were empty because the core dropped its array syntax fallback and the bridge declared no array_format

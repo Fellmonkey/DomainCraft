@@ -523,17 +523,23 @@ func (r *Renderer) shouldRenderContext(spec TemplateSpec, context RenderContext)
 // When the renderer is composed (extends chain), registry_packages from all
 // bridges are merged base-first so inner layers can declare their own
 // dependencies; the adapter's values win on conflicts.
-// targetFramework returns the project's declared platform. An absent platform
-// leaves package version selection unconstrained — the core has no TFM default.
-func targetFramework(project *ir.Project) string {
-	if project == nil {
-		return ""
+// targetFramework returns the project's declared platform, then the framework
+// declared by the bridge chain (adapter first, base later). An absent framework
+// leaves version selection unconstrained — the core bakes in no TFM.
+func (r *Renderer) targetFramework(project *ir.Project) string {
+	if project != nil && project.Platform != "" {
+		return project.Platform
 	}
-	return project.Platform
+	for _, src := range slices.Backward(r.sources) {
+		if fw := src.config.TargetFramework; fw != "" {
+			return fw
+		}
+	}
+	return ""
 }
 
 func (r *Renderer) resolvePackages(project *ir.Project) map[string]string {
-	framework := targetFramework(project)
+	framework := r.targetFramework(project)
 
 	// Merge registry_packages from all sources in the chain (base-first,
 	// adapter wins on conflicts — consistent with type_mappings merge).

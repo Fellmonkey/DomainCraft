@@ -16,6 +16,7 @@ type BridgeConfig struct {
 	Helpers          string            `yaml:"helpers"`           // Optional shared template file with named templates
 	RegistryURL      string            `yaml:"registry_url"`      // URL template for package registry ({id} = lowercase package ID)
 	RegistryPackages map[string]string `yaml:"registry_packages"` // logical key -> registry package ID (used with registry_url)
+	TargetFramework  string            `yaml:"target_framework"`  // Language-specific TFM for package version resolution (e.g. net10.0); declared by the bridge, never defaulted by the core
 	Templates        []TemplateSpec    `yaml:"templates"`
 	Delimiters       []string          `yaml:"delimiters"` // Optional custom delimiters [left, right], default ["{{", "}}"]
 	Migrations       *MigrationConfig  `yaml:"migrations"` // Optional database migration commands run by `domaincraft generate --migrate`
