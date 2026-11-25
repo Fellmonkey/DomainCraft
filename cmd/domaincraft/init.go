@@ -62,7 +62,7 @@ func scenarioTemplate(id string) (string, bool) {
 func renderScenario(id, name string) (string, error) {
 	tmpl, ok := scenarioTemplate(id)
 	if !ok {
-		return "", fmt.Errorf("unknown scenario %q: use shop, saas, crm or blog", id)
+		return "", asUsageError(fmt.Errorf("unknown scenario %q: use shop, saas, crm or blog", id))
 	}
 	escaped := strings.ReplaceAll(name, "'", "''")
 	return strings.ReplaceAll(tmpl, "{{PROJECT_NAME}}", escaped), nil
@@ -95,7 +95,7 @@ func newInitCmd(opts *cliOptions) *cobra.Command {
 			selected := scenarioFlag
 			if selected == "" {
 				if opts.nonInteractive || !isTerminal() {
-					return fmt.Errorf("--scenario is required in non-interactive mode (shop|saas|crm|blog)")
+					return asUsageError(fmt.Errorf("--scenario is required in non-interactive mode (shop|saas|crm|blog)"))
 				}
 				options := make([]interactive.Option, 0, len(scenarios))
 				for _, s := range scenarios {
@@ -119,7 +119,7 @@ func newInitCmd(opts *cliOptions) *cobra.Command {
 
 			_, statErr := os.Stat(opts.domainFile)
 			if statErr == nil && !force {
-				return fmt.Errorf("%s already exists; use --force to overwrite", opts.domainFile)
+				return asUsageError(fmt.Errorf("%s already exists; use --force to overwrite", opts.domainFile))
 			}
 			if statErr != nil && !os.IsNotExist(statErr) {
 				return fmt.Errorf("check %s: %w", opts.domainFile, statErr)

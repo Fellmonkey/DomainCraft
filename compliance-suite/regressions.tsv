@@ -140,3 +140,8 @@ internal/snapshot/hardening_test.go::TestDeleteFileRefusesInternalSymlink	#5	--p
 internal/snapshot/hardening_test.go::TestRenameEntityFileRefusesBrokenSymlinkDestination	#5	any stat error on the rename destination was treated as "file does not exist"
 internal/bridgechain/chain_test.go::TestWalkFailsWhenAbsFails	#5	a failed Abs left a relative key in the extends cycle detector
 internal/fsutil/fsutil_test.go::TestAtomicWriteRootRefusesSymlinkEscape	#5	a symlink planted in a cache path redirected writes outside the cache
+cmd/domaincraft/commands_hardening_test.go::TestRunDatabaseMigrationsUsesOutputDir	#5	child migration diagnostics and command lines were mixed into stdout
+cmd/domaincraft/commands_notify_test.go::TestNoticeClientHasShortTimeout	#5	automatic update notice used the 120s download timeout on every command
+cmd/domaincraft/commands_notify_test.go::TestCachedLatestCoreVersionSurfacesCacheWriteFailure	#5	failed update-check cache write was silently discarded
+pkg/logger/logger_test.go::TestNewWritesDiagnosticsToStderr	#5	default logger wrote diagnostics into the data stream
+internal/renderer/bridgefuncs_test.go::TestBuildBridgeFuncsWarnsOncePerMissingSpec	#5	missing type-mapping spec warned once per field instead of once per render

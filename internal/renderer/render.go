@@ -80,6 +80,19 @@ func safeOutputPathCached(outputDir, renderedTarget string, verified map[string]
 // Tests using it must not run in parallel.
 var beforeCommitHook func()
 
+// failWithTempCleanup closes and removes a staged temp file, joining any
+// cleanup failure to the primary error so a leftover file cannot go unnoticed.
+func failWithTempCleanup(err error, tmp *os.File, path string) error {
+	cleanup := []error{err}
+	if cerr := tmp.Close(); cerr != nil {
+		cleanup = append(cleanup, cerr)
+	}
+	if rerr := os.Remove(path); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+		cleanup = append(cleanup, rerr)
+	}
+	return errors.Join(cleanup...)
+}
+
 // stagedWrite is a fully rendered file held in a temp file next to its target.
 // backup is the rename-aside path of the previous target, created only at
 // commit time; existed=false means the target was created by this run.
@@ -310,17 +323,15 @@ func (r *Renderer) stageTemplates(s *renderSession) error {
 					tmpPath := tmp.Name()
 					// CreateTemp uses 0600; generated files stay readable as before.
 					if err := tmp.Chmod(mode); err != nil {
-						_ = tmp.Close()
-						_ = os.Remove(tmpPath)
-						return s.fail(fmt.Errorf("set mode on temp output %s: %w", tmpPath, err))
+						return s.fail(failWithTempCleanup(fmt.Errorf("set mode on temp output %s: %w", tmpPath, err), tmp, tmpPath))
 					}
 					if err := parsedTemplate.Execute(tmp, context); err != nil {
-						_ = tmp.Close()
-						_ = os.Remove(tmpPath)
-						return s.fail(fmt.Errorf("execute template: %w", err))
+						return s.fail(failWithTempCleanup(fmt.Errorf("execute template: %w", err), tmp, tmpPath))
 					}
 					if err := tmp.Close(); err != nil {
-						_ = os.Remove(tmpPath)
+						if rerr := os.Remove(tmpPath); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+							return s.fail(errors.Join(fmt.Errorf("close temp output %s: %w", tmpPath, err), rerr))
+						}
 						return s.fail(fmt.Errorf("close temp output %s: %w", tmpPath, err))
 					}
 					s.staged = append(s.staged, stagedWrite{
@@ -396,7 +407,7 @@ func (r *Renderer) cleanupBackups(s *renderSession) {
 // the staged files and restores any output files that were already replaced.
 func (r *Renderer) Render(project *ir.Project, outputDir string) ([]string, []RenderedFile, error) {
 	if project == nil {
-		return nil, nil, errors.New("IR project is nil")
+		return nil, nil, errors.New("ir project is nil")
 	}
 	if outputDir == "" {
 		outputDir = r.config().OutputDir

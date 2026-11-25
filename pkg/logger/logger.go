@@ -13,10 +13,11 @@ type Logger struct {
 	useColors bool
 }
 
-// New creates a Logger that writes to stdout with colors enabled.
+// New creates a Logger that writes to stderr with colors enabled. Diagnostics
+// must never share stdout with machine-readable command output.
 func New() *Logger {
 	return &Logger{
-		writer:    os.Stdout,
+		writer:    os.Stderr,
 		useColors: true,
 	}
 }

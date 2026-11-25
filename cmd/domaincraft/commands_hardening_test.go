@@ -270,7 +270,7 @@ func TestPruneCleanupErrorPrintedOnce(t *testing.T) {
 	if applied || err == nil {
 		t.Fatalf("applyMigrationActions = %v, %v; want a hard error", applied, err)
 	}
-	reportCommandError(err)
+	reportCommandError(w, err)
 	_ = w.Close()
 	out, err := io.ReadAll(r)
 	if err != nil {
@@ -288,11 +288,13 @@ func TestPruneCleanupErrorPrintedOnce(t *testing.T) {
 // TestUsageErrorsExitTwo separates CLI misuse (exit 2) from runtime failures
 // (exit 1) while keeping the error itself printed exactly once.
 func TestUsageErrorsExitTwo(t *testing.T) {
-	oldArgs, oldStderr, oldVersion, oldCtx := os.Args, os.Stderr, version, commandCtx
+	oldArgs, oldVersion, oldCtx, oldNewRoot := os.Args, version, commandCtx, newRootCommandFn
 	version = "dev"
 	// run() cancels the context it installs via its deferred stop(); restore
 	// the package-level context so later tests keep a live one.
-	t.Cleanup(func() { os.Args, os.Stderr, version, commandCtx = oldArgs, oldStderr, oldVersion, oldCtx })
+	t.Cleanup(func() {
+		os.Args, version, commandCtx, newRootCommandFn = oldArgs, oldVersion, oldCtx, oldNewRoot
+	})
 
 	domainPath := filepath.Join(t.TempDir(), "domain.yaml")
 	if err := os.WriteFile(domainPath, []byte(`project:
@@ -306,12 +308,19 @@ entities:
 		t.Fatal(err)
 	}
 
+	initPath := filepath.Join(t.TempDir(), "domain.yaml")
+	if err := os.WriteFile(initPath, []byte("project:\n  name: Existing\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	bridgeDir := pruneBridge(t, "")
 	cases := []struct {
 		name string
 		args []string
 		want int
 	}{
+		{"init missing scenario", []string{"domaincraft", "init", "--non-interactive", "--domain", filepath.Join(t.TempDir(), "missing.yaml")}, 2},
+		{"init unknown scenario", []string{"domaincraft", "init", "--scenario", "nope", "--domain", filepath.Join(t.TempDir(), "other.yaml")}, 2},
+		{"init existing file", []string{"domaincraft", "init", "--scenario", "shop", "--domain", initPath}, 2},
 		{"unknown flag", []string{"domaincraft", "validate", "--bogus"}, 2},
 		{"too many arguments", []string{"domaincraft", "validate", "a", "b"}, 2},
 		{"unknown command", []string{"domaincraft", "nope"}, 2},
@@ -326,7 +335,12 @@ entities:
 			if err != nil {
 				t.Fatal(err)
 			}
-			os.Args, os.Stderr = tc.args, f
+			os.Args = tc.args
+			newRootCommandFn = func() *cobra.Command {
+				root := newRootCommand()
+				root.SetErr(f)
+				return root
+			}
 			got := run()
 			_ = f.Close()
 			if got != tc.want {
@@ -387,8 +401,8 @@ func TestRunDatabaseMigrationsSanitizesDisplayedCommand(t *testing.T) {
 	if err := runDatabaseMigrations(cfg, t.TempDir(), cmd, log); err != nil {
 		t.Fatalf("runDatabaseMigrations: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "echo SAFE") || !strings.Contains(stderr.String(), "echo SAFE") {
-		t.Fatalf("command was not displayed: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	if n := strings.Count(stdout.String(), "echo SAFE"); n != 1 {
+		t.Fatalf("command was displayed %d times in stdout: stdout=%q stderr=%q", n, stdout.String(), stderr.String())
 	}
 	if strings.Contains(stdout.String(), "\x1b") {
 		t.Errorf("raw escape byte reached stdout: %q", stdout.String())
@@ -476,6 +490,15 @@ func TestRunDatabaseMigrationsUsesOutputDir(t *testing.T) {
 	}
 	if captured.Dir != outDir {
 		t.Errorf("command Dir = %q, want %q", captured.Dir, outDir)
+	}
+	if captured.Stdout != &stdout || captured.Stderr != &stderr {
+		t.Errorf("child streams = (%v, %v), want (cmd stdout, cmd stderr)", captured.Stdout, captured.Stderr)
+	}
+	if n := strings.Count(stdout.String(), "echo harmless"); n != 1 {
+		t.Errorf("command line printed %d times in stdout, want 1: %q", n, stdout.String())
+	}
+	if strings.Contains(stderr.String(), "echo harmless") {
+		t.Errorf("command line duplicated in stderr: %q", stderr.String())
 	}
 }
 
@@ -718,15 +741,19 @@ entities:
 }
 
 func TestExecutePrintsErrorOnce(t *testing.T) {
-	oldArgs, oldStderr := os.Args, os.Stderr
+	oldArgs, oldNewRoot := os.Args, newRootCommandFn
 	os.Args = []string{"domaincraft", "validate", "--domain", filepath.Join(t.TempDir(), "missing.yaml")}
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.Stderr = w
+	newRootCommandFn = func() *cobra.Command {
+		root := newRootCommand()
+		root.SetErr(w)
+		return root
+	}
 	t.Cleanup(func() {
-		os.Args, os.Stderr = oldArgs, oldStderr
+		os.Args, newRootCommandFn = oldArgs, oldNewRoot
 		_ = w.Close()
 		_ = r.Close()
 	})

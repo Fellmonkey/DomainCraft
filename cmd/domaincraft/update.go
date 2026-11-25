@@ -46,8 +46,17 @@ var releaseHosts = map[string]bool{
 	"release-assets.githubusercontent.com": true,
 }
 
-// httpClient is the HTTP client used by update checks and binary downloads.
+// httpClient is the HTTP client used by release checks and binary downloads.
 var httpClient = &http.Client{Timeout: 120 * time.Second}
+
+// noticeClient bounds the automatic "new version available" probe. It shares
+// the release transport and redirect policy but must never make an unrelated
+// command wait for a download-sized timeout.
+var noticeClient = &http.Client{
+	Timeout:       2 * time.Second,
+	Transport:     httpClient.Transport,
+	CheckRedirect: httpClient.CheckRedirect,
+}
 
 // httpGetBodyFn is the HTTP GET used by the core update flow. It is a variable
 // so tests can substitute a fake and exercise the GitHub code paths offline.
@@ -115,27 +124,31 @@ func cachedLatestCoreVersion() (string, error) {
 		}
 	}
 
-	rel, err := latestRelease()
+	rel, err := latestReleaseForNoticeFn()
 	if err != nil {
 		// Record the attempt as well: an offline or blackholed network must not
-		// make every later invocation wait for the full HTTP timeout again.
-		writeUpdateCheckCache(cacheDir, cachePath, updateCheckCache{CheckedAt: time.Now()})
+		// make every later invocation wait for another HTTP timeout again.
+		if werr := writeUpdateCheckCache(cacheDir, cachePath, updateCheckCache{CheckedAt: time.Now()}); werr != nil {
+			return "", errors.Join(err, fmt.Errorf("cache update check: %w", werr))
+		}
 		return "", err
 	}
 	latest := strings.TrimPrefix(rel.TagName, "v")
-	writeUpdateCheckCache(cacheDir, cachePath, updateCheckCache{CheckedAt: time.Now(), Latest: latest})
+	if err := writeUpdateCheckCache(cacheDir, cachePath, updateCheckCache{CheckedAt: time.Now(), Latest: latest}); err != nil {
+		return "", fmt.Errorf("cache update check: %w", err)
+	}
 	return latest, nil
 }
 
-func writeUpdateCheckCache(cacheDir, cachePath string, c updateCheckCache) {
+func writeUpdateCheckCache(cacheDir, cachePath string, c updateCheckCache) error {
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil { //nolint:gosec // cache dirs must stay readable across CLI runs
-		return
+		return err
 	}
 	body, err := json.Marshal(c)
 	if err != nil {
-		return
+		return err
 	}
-	_ = fsutil.AtomicWrite(cachePath, body)
+	return fsutil.AtomicWrite(cachePath, body)
 }
 
 // newUpdateCmd checks for and installs a newer version of the domaincraft core.
@@ -204,7 +217,11 @@ func runCoreUpdate(log *logger.Logger, checkOnly bool) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.Remove(tmp) }()
+	defer func() {
+		if cerr := removeFn(tmp); cerr != nil && !errors.Is(cerr, os.ErrNotExist) {
+			log.Warn("could not remove temporary update %s: %v", tmp, cerr)
+		}
+	}()
 
 	if err := verifyFileSHA256(tmp, wantSum); err != nil {
 		return fmt.Errorf("refusing to install update: %w", err)
@@ -219,12 +236,9 @@ func runCoreUpdate(log *logger.Logger, checkOnly bool) error {
 	return nil
 }
 
-// latestRelease fetches the newest published release metadata.
-func latestRelease() (*githubRelease, error) {
-	body, err := httpGetBodyFn(releasesLatestURL)
-	if err != nil {
-		return nil, err
-	}
+// decodeRelease validates the release payload shared by the explicit update
+// command and the automatic notice probe.
+func decodeRelease(body []byte) (*githubRelease, error) {
 	var rel githubRelease
 	if err := json.Unmarshal(body, &rel); err != nil {
 		return nil, err
@@ -233,6 +247,25 @@ func latestRelease() (*githubRelease, error) {
 		return nil, fmt.Errorf("no releases found for %s", coreRepo)
 	}
 	return &rel, nil
+}
+
+// latestReleaseForNotice probes the same endpoint with the short-lived client.
+// It is a seam so tests can drive the notice path without a network.
+var latestReleaseForNoticeFn = func() (*githubRelease, error) {
+	body, err := netutil.BoundedGet(commandCtx, noticeClient, releasesLatestURL, maxResponseBody, validateReleaseRedirect)
+	if err != nil {
+		return nil, err
+	}
+	return decodeRelease(body)
+}
+
+// latestRelease fetches the newest published release metadata.
+func latestRelease() (*githubRelease, error) {
+	body, err := httpGetBodyFn(releasesLatestURL)
+	if err != nil {
+		return nil, err
+	}
+	return decodeRelease(body)
 }
 
 // assetName returns the upload name of the binary for the current platform,
@@ -401,14 +434,12 @@ func downloadBinary(rawURL, dir string) (string, error) {
 	defer func() { _ = tmp.Close() }()
 
 	if _, err := tmp.Write(data); err != nil {
-		_ = os.Remove(tmp.Name())
-		return "", err
+		return "", errors.Join(err, removeFn(tmp.Name()))
 	}
 	if runtime.GOOS != "windows" {
 		// A non-executable download must never reach the install step.
 		if err := chmodFn(tmp.Name(), 0o755); err != nil {
-			_ = os.Remove(tmp.Name())
-			return "", fmt.Errorf("make downloaded update executable: %w", err)
+			return "", errors.Join(fmt.Errorf("make downloaded update executable: %w", err), removeFn(tmp.Name()))
 		}
 	}
 	return tmp.Name(), nil

@@ -2,23 +2,23 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/DomainCraft/DomainCraft/internal/appdir"
 )
 
 func TestCachedLatestCoreVersion(t *testing.T) {
-	orig := httpGetBodyFn
-	defer func() { httpGetBodyFn = orig }()
+	orig := latestReleaseForNoticeFn
+	defer func() { latestReleaseForNoticeFn = orig }()
 
 	appdir.SetBaseForTesting(t.TempDir())
 	t.Cleanup(func() { appdir.SetBaseForTesting("") })
 
-	httpGetBodyFn = func(url string) ([]byte, error) {
-		if url != releasesLatestURL {
-			return nil, fmt.Errorf("unexpected url %s", url)
-		}
-		return []byte(`{"tag_name":"v9.9.9","assets":[]}`), nil
+	latestReleaseForNoticeFn = func() (*githubRelease, error) {
+		return decodeRelease([]byte(`{"tag_name":"v9.9.9","assets":[]}`))
 	}
 
 	latest, err := cachedLatestCoreVersion()
@@ -30,7 +30,7 @@ func TestCachedLatestCoreVersion(t *testing.T) {
 	}
 
 	// Network is now down — the fresh cache must still serve the same version.
-	httpGetBodyFn = func(_ string) ([]byte, error) {
+	latestReleaseForNoticeFn = func() (*githubRelease, error) {
 		return nil, fmt.Errorf("network down")
 	}
 	latest2, err := cachedLatestCoreVersion()
@@ -42,14 +42,14 @@ func TestCachedLatestCoreVersion(t *testing.T) {
 // Regression: an offline check used to leave no cache entry, so every later
 // command waited for the full HTTP timeout again.
 func TestCachedLatestCoreVersionCachesFailedCheck(t *testing.T) {
-	orig := httpGetBodyFn
-	defer func() { httpGetBodyFn = orig }()
+	orig := latestReleaseForNoticeFn
+	defer func() { latestReleaseForNoticeFn = orig }()
 
 	appdir.SetBaseForTesting(t.TempDir())
 	t.Cleanup(func() { appdir.SetBaseForTesting("") })
 
 	calls := 0
-	httpGetBodyFn = func(string) ([]byte, error) {
+	latestReleaseForNoticeFn = func() (*githubRelease, error) {
 		calls++
 		return nil, fmt.Errorf("network down")
 	}
@@ -65,5 +65,36 @@ func TestCachedLatestCoreVersionCachesFailedCheck(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("network calls = %d, want 1 (failed attempt must be cached)", calls)
+	}
+}
+
+func TestNoticeClientHasShortTimeout(t *testing.T) {
+	if noticeClient.Timeout > 2*time.Second {
+		t.Errorf("notice timeout = %v, want at most 2s", noticeClient.Timeout)
+	}
+	if noticeClient.Timeout == httpClient.Timeout {
+		t.Errorf("notice client shares the download timeout %v", httpClient.Timeout)
+	}
+}
+
+func TestCachedLatestCoreVersionSurfacesCacheWriteFailure(t *testing.T) {
+	orig := latestReleaseForNoticeFn
+	defer func() { latestReleaseForNoticeFn = orig }()
+
+	base := t.TempDir()
+	appdir.SetBaseForTesting(base)
+	t.Cleanup(func() { appdir.SetBaseForTesting("") })
+	cacheDir, err := appdir.CacheDir("core")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(cacheDir, "core-update.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	latestReleaseForNoticeFn = func() (*githubRelease, error) {
+		return decodeRelease([]byte(`{"tag_name":"v9.9.9","assets":[]}`))
+	}
+	if _, err := cachedLatestCoreVersion(); err == nil {
+		t.Fatal("cache write failure was silently discarded")
 	}
 }

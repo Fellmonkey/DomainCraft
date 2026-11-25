@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"strings"
+	"sync"
 	"text/template"
 
 	"github.com/DomainCraft/DomainCraft/internal/ir"
@@ -169,10 +170,36 @@ func formatSpec(format string, args ...any) string {
 	return fmt.Sprintf(format, args...)
 }
 
+// warner is the narrow logging surface the bridge funcs need.
+type warner interface {
+	Warn(format string, args ...any)
+}
+
+// dedupWarn emits each identical warning once per Render. A missing spec is
+// discovered once per field otherwise, burying the useful diagnostics under
+// dozens of identical lines.
+type dedupWarn struct {
+	mu   sync.Mutex
+	log  *logger.Logger
+	seen map[string]bool
+}
+
+func (w *dedupWarn) Warn(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	w.mu.Lock()
+	if w.seen[msg] {
+		w.mu.Unlock()
+		return
+	}
+	w.seen[msg] = true
+	w.mu.Unlock()
+	w.log.Warn("%s", msg)
+}
+
 // warnMissingSpec reports a spec the bridge must declare in type_mappings.yaml.
 // Logger.Warn is nil-safe, so silent mode needs no extra guard.
-func warnMissingSpec(log *logger.Logger, kind, key string) {
-	log.Warn("type_mappings.yaml has no %s for %q; emitting an empty expression", kind, key)
+func warnMissingSpec(w warner, kind, key string) {
+	w.Warn("type_mappings.yaml has no %s for %q; emitting an empty expression", kind, key)
 }
 
 // buildBridgeFuncs turns a merged type_mappings into the template func map that
@@ -186,15 +213,16 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
 		return bridgeFuncs
 	}
 
-	languageType := registerTypeFuncs(bridgeFuncs, m, log)
-	registerLiteralFuncs(bridgeFuncs, m, log, languageType)
-	registerValueFuncs(bridgeFuncs, m, log)
+	w := &dedupWarn{log: log, seen: make(map[string]bool)}
+	languageType := registerTypeFuncs(bridgeFuncs, m, w)
+	registerLiteralFuncs(bridgeFuncs, m, w, languageType)
+	registerValueFuncs(bridgeFuncs, m, w)
 	return bridgeFuncs
 }
 
 // registerTypeFuncs registers languageType and isValueType. It returns the
 // languageType closure so the literal registrars reuse the very same mapping.
-func registerTypeFuncs(funcs map[string]any, m *typeMappings, log *logger.Logger) func(string, bool) string {
+func registerTypeFuncs(funcs map[string]any, m *typeMappings, w warner) func(string, bool) string {
 	// wrapNullable applies the bridge-specific nullable format to a type name.
 	wrapNullable := func(typeName string) string {
 		return typeName + m.NullableFormat
@@ -203,7 +231,7 @@ func registerTypeFuncs(funcs map[string]any, m *typeMappings, log *logger.Logger
 	// wrapArray wraps a type name in the bridge-specific array format.
 	wrapArray := func(elementType string) string {
 		if m.ArrayFormat == "" {
-			warnMissingSpec(log, "array_format", elementType)
+			warnMissingSpec(w, "array_format", elementType)
 			return ""
 		}
 		return fmt.Sprintf(m.ArrayFormat, elementType)
@@ -238,11 +266,11 @@ func registerTypeFuncs(funcs map[string]any, m *typeMappings, log *logger.Logger
 			if mapped, ok := m.Types[inner]; ok {
 				return wrapArray(mapped)
 			}
-			log.Warn("type_mappings.yaml has no type for %q; emitting raw type name %q", inner, inner)
+			w.Warn("type_mappings.yaml has no type for %q; emitting raw type name %q", inner, inner)
 			return wrapArray(inner)
 		}
 
-		log.Warn("type_mappings.yaml has no type for %q; emitting raw type name %q", dbType, dbType)
+		w.Warn("type_mappings.yaml has no type for %q; emitting raw type name %q", dbType, dbType)
 		return dbType
 	}
 	funcs["languageType"] = languageType
@@ -263,7 +291,7 @@ func registerTypeFuncs(funcs map[string]any, m *typeMappings, log *logger.Logger
 
 // registerLiteralFuncs registers the literal/array expression funcs. languageType
 // is the closure returned by registerTypeFuncs; literal specs are bridge-owned.
-func registerLiteralFuncs(funcs map[string]any, m *typeMappings, log *logger.Logger, languageType func(string, bool) string) {
+func registerLiteralFuncs(funcs map[string]any, m *typeMappings, w warner, languageType func(string, bool) string) {
 	// literalValue renders a scalar value of an IR database type as a bridge
 	// literal/parse expression. value is a native Go value (string, int64,
 	// float64, bool) or the raw string from a domain.yaml default.
@@ -277,14 +305,14 @@ func registerLiteralFuncs(funcs map[string]any, m *typeMappings, log *logger.Log
 			return fmt.Sprintf("%v", value) + spec.Suffix
 		case "uuid", "date", "datetime", "json":
 			if spec.Parse == "" {
-				warnMissingSpec(log, "literals.parse", dbType)
+				warnMissingSpec(w, "literals.parse", dbType)
 				return jsonValue(value) // JSON literal is language-neutral, not a target-language expression
 			}
 			return formatSpec(spec.Parse, jsonValue(value))
 		case "enum":
 			e := m.Literals["enum"]
 			if e.Parse == "" {
-				warnMissingSpec(log, "literals.enum.parse", dbType)
+				warnMissingSpec(w, "literals.enum.parse", dbType)
 				return jsonValue(value)
 			}
 			return formatSpec(e.Parse, languageType(dbType, false), jsonValue(textutil.PascalCase(fmt.Sprintf("%v", value))))
@@ -299,7 +327,7 @@ func registerLiteralFuncs(funcs map[string]any, m *typeMappings, log *logger.Log
 		kind := ir.KindOf(dbType)
 		if kind == "array" {
 			if m.Array.Empty == "" {
-				warnMissingSpec(log, "array.empty", dbType)
+				warnMissingSpec(w, "array.empty", dbType)
 				return ""
 			}
 			return formatSpec(m.Array.Empty, languageType(dbType, false))
@@ -310,13 +338,13 @@ func registerLiteralFuncs(funcs map[string]any, m *typeMappings, log *logger.Log
 				spec = m.Literals["enum"] // generic enum spec covers user-declared enums
 			}
 			if spec.Zero == "" {
-				warnMissingSpec(log, "literals.zero", dbType)
+				warnMissingSpec(w, "literals.zero", dbType)
 				return ""
 			}
 			return formatSpec(spec.Zero, languageType(dbType, false))
 		}
 		if spec.Default == "" {
-			warnMissingSpec(log, "literals.default", dbType)
+			warnMissingSpec(w, "literals.default", dbType)
 			return ""
 		}
 		return spec.Default
@@ -328,7 +356,7 @@ func registerLiteralFuncs(funcs map[string]any, m *typeMappings, log *logger.Log
 		if ir.KindOf(dbType) == "enum" {
 			spec := m.Literals["enum"]
 			if spec.Member == "" {
-				warnMissingSpec(log, "literals.enum.member", dbType)
+				warnMissingSpec(w, "literals.enum.member", dbType)
 				return ""
 			}
 			return formatSpec(spec.Member, languageType(dbType, false), textutil.PascalCase(value))
@@ -340,7 +368,7 @@ func registerLiteralFuncs(funcs map[string]any, m *typeMappings, log *logger.Log
 	// syntax (e.g. "new List<int> { " ... " }").
 	funcs["arrayLiteralOpen"] = func(dbType string) string {
 		if m.Array.Open == "" {
-			warnMissingSpec(log, "array.open", dbType)
+			warnMissingSpec(w, "array.open", dbType)
 			return ""
 		}
 		return formatSpec(m.Array.Open, languageType(dbType, false))
@@ -353,7 +381,7 @@ func registerLiteralFuncs(funcs map[string]any, m *typeMappings, log *logger.Log
 // registerValueFuncs registers the remaining bridge-specific value/config
 // helpers. columnSize and inputType are conditional: they exist only when the
 // bridge declared the corresponding mapping (no core-side fallback is added).
-func registerValueFuncs(funcs map[string]any, m *typeMappings, log *logger.Logger) {
+func registerValueFuncs(funcs map[string]any, m *typeMappings, w warner) {
 	funcs["deleteBehaviorName"] = func(value string) string {
 		key := strings.ToLower(strings.TrimSpace(value))
 		if v, ok := m.Behaviors[key]; ok {
@@ -385,7 +413,7 @@ func registerValueFuncs(funcs map[string]any, m *typeMappings, log *logger.Logge
 			if mapped, ok := m.InputTypes[dbType]; ok {
 				return mapped
 			}
-			warnMissingSpec(log, "input type", dbType)
+			warnMissingSpec(w, "input type", dbType)
 			return ""
 		}
 	}

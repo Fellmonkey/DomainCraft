@@ -142,19 +142,27 @@ func asUsageError(err error) error {
 	return usageError{err: err}
 }
 
+// newRootCommandFn is a seam so tests can attach their own error writer to
+// the command tree instead of replacing the process-global os.Stderr.
+var newRootCommandFn = newRootCommand
+
 // reportCommandError is the only place a command failure reaches stderr. A
 // cleanup handler must return its error instead of also logging a warning, or
 // the same failure would be printed twice.
-func reportCommandError(err error) {
-	_, _ = fmt.Fprintln(os.Stderr, "Error:", err)
+func reportCommandError(w io.Writer, err error) {
+	_, _ = fmt.Fprintln(w, "Error:", err)
 }
 
 // Execute runs the root command. Cobra is silenced so the error is printed
 // exactly once here; the error is returned to main, which owns the exit code.
-// Errors raised before the command's PersistentPreRun (unknown flag, unknown
-// command, failed argument validation) are usage errors by construction.
 func Execute() error {
-	root := newRootCommand()
+	return executeRoot(newRootCommandFn())
+}
+
+// executeRoot runs a prepared command tree. Errors raised before the command's
+// PersistentPreRun (unknown flag, unknown command, failed argument validation)
+// are usage errors by construction.
+func executeRoot(root *cobra.Command) error {
 	preRun := root.PersistentPreRun
 	reachedRun := false
 	root.PersistentPreRun = func(cmd *cobra.Command, args []string) {
@@ -164,7 +172,7 @@ func Execute() error {
 		}
 	}
 	if err := root.Execute(); err != nil {
-		reportCommandError(err)
+		reportCommandError(root.ErrOrStderr(), err)
 		if !reachedRun || errors.Is(err, errUsage) {
 			return asUsageError(err)
 		}
@@ -922,6 +930,7 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 		return nil
 	}
 	out := cmd.OutOrStdout()
+	errOut := cmd.ErrOrStderr()
 	// The resolved command lines are printed before they run, so the developer
 	// always sees exactly what will be executed (Phase 3.5 safety). Bridge YAML
 	// is untrusted input: strip terminal controls before showing or logging a
@@ -931,7 +940,7 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 		_, _ = fmt.Fprintf(out, "    %d) %s\n", i+1, sanitizeCommandLine(command))
 	}
 	for i, command := range cfg.Commands {
-		log.Info("Migration %d/%d: %s", i+1, len(cfg.Commands), sanitizeCommandLine(command))
+		log.Info("Migration %d/%d", i+1, len(cfg.Commands))
 		var argv []string
 		var shell string
 		if runtime.GOOS == "windows" {
@@ -944,7 +953,7 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 		c := execCommandFn(commandCtx, shell, argv...)
 		c.Dir = outDir
 		c.Stdout = out
-		c.Stderr = out
+		c.Stderr = errOut
 		if err := c.Run(); err != nil {
 			return fmt.Errorf("database migration %d failed: %w", i+1, err)
 		}

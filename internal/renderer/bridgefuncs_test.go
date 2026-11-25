@@ -1,8 +1,10 @@
 package renderer
 
 import (
+	"bytes"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
@@ -397,5 +399,21 @@ func TestMergeTypeMappingsAllFields(t *testing.T) {
 	}
 	if merged.Array != overlay.Array {
 		t.Errorf("Array = %+v, want %+v", merged.Array, overlay.Array)
+	}
+}
+
+func TestBuildBridgeFuncsWarnsOncePerMissingSpec(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	log := logger.New()
+	log.SetWriter(&out)
+	m := testMappings()
+	delete(m.Types, "jsonb")
+	fn := buildBridgeFuncs(m, log)["languageType"].(func(string, bool) string)
+	for range 5 {
+		fn("jsonb", false)
+	}
+	if n := strings.Count(out.String(), `no type for "jsonb"`); n != 1 {
+		t.Errorf("missing-type warning printed %d times, want 1: %q", n, out.String())
 	}
 }

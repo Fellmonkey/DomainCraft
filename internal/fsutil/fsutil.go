@@ -120,12 +120,10 @@ func AtomicWrite(path string, data []byte) error {
 	// CreateTemp uses 0600; apply the target's mode before committing the
 	// rename, the same way the renderer stages generated files.
 	if err := tmp.Chmod(mode); err != nil {
-		_ = tmp.Close()
-		return err
+		return errors.Join(err, tmp.Close())
 	}
 	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
+		return errors.Join(err, tmp.Close())
 	}
 	if err := tmp.Close(); err != nil {
 		return err
