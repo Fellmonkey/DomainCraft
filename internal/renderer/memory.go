@@ -1,7 +1,6 @@
 package renderer
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -9,8 +8,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"text/template"
 
+	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 	"github.com/DomainCraft/DomainCraft/internal/ir"
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
 )
@@ -37,6 +38,7 @@ func NewFromFS(fsys fs.FS, bridgePaths []string, log *logger.Logger) (*Renderer,
 		if err != nil {
 			return nil, fmt.Errorf("bridge %s: %w", dir, err)
 		}
+		warnUndeclaredContract(src, log)
 		src.readSource = func(dir, rel string) ([]byte, error) {
 			clean := path.Clean(filepath.ToSlash(rel))
 			if path.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
@@ -59,6 +61,77 @@ type MemoryFile struct {
 	Content string `json:"content"`
 }
 
+// memoryPlan is the static half of a generation: functions, helpers and parsed
+// templates. It depends only on bridge files, never on the domain model, so a
+// single entry is enough for a Studio that edits the model but keeps the bridge.
+type memoryPlan struct {
+	funcMap  template.FuncMap
+	helpers  *template.Template
+	compiled map[string]*compiledSpec
+}
+
+// memoryPlanCache mirrors the bounded parsedSourceCache: one entry, cleared
+// when the bridge chain changes.
+var memoryPlanCache = struct {
+	sync.Mutex
+	key  string
+	plan *memoryPlan
+}{}
+
+func (r *Renderer) memoryPlan() (*memoryPlan, error) {
+	key := r.memoryPlanKey()
+	memoryPlanCache.Lock()
+	defer memoryPlanCache.Unlock()
+	if memoryPlanCache.plan != nil && memoryPlanCache.key == key {
+		return memoryPlanCache.plan, nil
+	}
+
+	funcMap, err := r.buildFuncMap()
+	if err != nil {
+		return nil, fmt.Errorf("build template functions: %w", err)
+	}
+	helpers, err := r.parseHelpers(funcMap)
+	if err != nil {
+		return nil, err
+	}
+	plan := &memoryPlan{funcMap: funcMap, helpers: helpers, compiled: make(map[string]*compiledSpec)}
+	for _, src := range r.sources {
+		for _, spec := range src.config.Templates {
+			k := src.dir + "\x00" + spec.Source + "\x00" + strings.Join(spec.TargetPatterns(), "\x00")
+			compiled, err := r.compileSpec(src, spec, funcMap, helpers)
+			if err != nil {
+				return nil, err
+			}
+			plan.compiled[k] = compiled
+		}
+	}
+	memoryPlanCache.key, memoryPlanCache.plan = key, plan
+	return plan, nil
+}
+
+func (r *Renderer) memoryPlanKey() string {
+	var b strings.Builder
+	left, right := r.delimiters()
+	b.WriteString(left)
+	b.WriteByte('\x00')
+	b.WriteString(right)
+	for _, src := range r.sources {
+		b.WriteString(src.dir)
+		b.WriteByte('\x00')
+		b.WriteString(src.config.Helpers)
+		b.WriteByte('\x00')
+		for _, spec := range src.config.Templates {
+			b.WriteString(spec.For)
+			b.WriteByte(':')
+			b.WriteString(spec.Source)
+			b.WriteByte(':')
+			b.WriteString(spec.When)
+			b.WriteByte('\x00')
+		}
+	}
+	return b.String()
+}
+
 // RenderMemory executes the same templates as Render but writes into memory.
 // It deliberately has no filesystem, symlink or rollback machinery: in a
 // browser there is no output directory, and the caller decides what to do with
@@ -68,12 +141,7 @@ func (r *Renderer) RenderMemory(project *ir.Project, pkgs map[string]string) ([]
 	if project == nil {
 		return nil, errors.New("ir project is nil")
 	}
-
-	funcMap, err := r.buildFuncMap()
-	if err != nil {
-		return nil, fmt.Errorf("build template functions: %w", err)
-	}
-	helpers, err := r.parseHelpers(funcMap)
+	plan, err := r.memoryPlan()
 	if err != nil {
 		return nil, err
 	}
@@ -85,58 +153,41 @@ func (r *Renderer) RenderMemory(project *ir.Project, pkgs map[string]string) ([]
 			if !r.shouldRender(spec, project, pkgs) {
 				continue
 			}
-			tplBytes, err := readBridgeFile(src, spec.Source)
-			if err != nil {
-				return nil, fmt.Errorf("read template %s: %w", spec.Source, err)
-			}
-			tplName := filepath.Base(spec.Source)
-			var body *template.Template
-			if helpers != nil {
-				body, err = helpers.Clone()
-				if err == nil {
-					body, err = r.applyDelimiters(body.New(tplName)).Parse(string(tplBytes))
-				}
-			} else {
-				body, err = r.applyDelimiters(template.New(tplName).Funcs(funcMap)).Parse(string(tplBytes))
-			}
-			if err != nil {
-				return nil, fmt.Errorf("parse template %s: %w", spec.Source, err)
+			k := src.dir + "\x00" + spec.Source + "\x00" + strings.Join(spec.TargetPatterns(), "\x00")
+			compiled := plan.compiled[k]
+			if compiled == nil {
+				return nil, fmt.Errorf("no compiled template for %s", spec.Source)
 			}
 
 			contexts, err := r.renderContexts(spec.For, project, pkgs)
 			if err != nil {
 				return nil, err
 			}
-			targetTemplates := make([]*template.Template, 0, len(spec.TargetPatterns()))
-			for _, pattern := range spec.TargetPatterns() {
-				tpl, err := template.New("path").Funcs(funcMap).Parse(pattern)
-				if err != nil {
-					return nil, fmt.Errorf("parse target path %q: %w", pattern, err)
-				}
-				targetTemplates = append(targetTemplates, tpl)
-			}
-
 			for _, context := range contexts {
 				if !r.shouldRenderContext(spec, context) {
 					continue
 				}
-				for _, targetTpl := range targetTemplates {
+				for _, targetTpl := range compiled.targets {
 					rendered, err := executeTemplateString(targetTpl, context)
 					if err != nil {
 						return nil, fmt.Errorf("render target path: %w", err)
 					}
-					rel := path.Clean(filepath.ToSlash(rendered))
-					if path.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, "../") {
+					// The same lexical containment rule as the disk renderer;
+					// a browser has no symlinks, but `..` and volume names must
+					// never escape the generated project root.
+					_, rel, err := fsutil.LocalPathWithin(".", rendered)
+					if err != nil || rel == "." {
 						return nil, fmt.Errorf("template target path escapes output directory: %s", rendered)
 					}
+					rel = filepath.ToSlash(rel)
 					if spec.IsCustom() {
 						if customTargets[rel] {
 							continue
 						}
 						customTargets[rel] = true
 					}
-					var buf bytes.Buffer
-					if err := body.Execute(&buf, context); err != nil {
+					var buf strings.Builder
+					if err := compiled.body.Execute(&buf, context); err != nil {
 						return nil, fmt.Errorf("execute template %s: %w", spec.Source, err)
 					}
 					files[rel] = buf.String()

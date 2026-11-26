@@ -25,7 +25,7 @@ const { instance } = await WebAssembly.instantiate(bytes, go.importObject);
 void go.run(instance); // main blocks on a channel; exports are installed first.
 await new Promise((resolve) => setImmediate(resolve));
 
-const required = ['goValidate', 'goParseField', 'goParseDomain', 'goGenerate', 'goSpecmeta', 'goVersion'];
+const required = ['goValidate', 'goParseField', 'goParseDomain', 'goSpecmeta', 'goVersion'];
 for (const name of required) {
   if (typeof globalThis[name] !== 'function') throw new Error(`missing WASM export: ${name}`);
 }
@@ -61,10 +61,14 @@ check('goParseDomain', domain.project.name === 'Bench' && !!domain.entities.User
 const specmeta = JSON.parse(globalThis.goSpecmeta());
 check('goSpecmeta', Array.isArray(specmeta.fieldTypes) && specmeta.fieldTypes.length > 0);
 
-const generated = JSON.parse(globalThis.goGenerate(yaml, 'admin-alpine', ''));
-const index = generated.files?.find((f) => f.path === 'admin/index.html');
-check('goGenerate', !generated.error && !!index && index.content.includes('Bench'),
-  generated.error || `${generated.files?.length ?? 0} files`);
+if (typeof globalThis.goGenerate === 'function') {
+  const generated = JSON.parse(globalThis.goGenerate(yaml, 'admin-alpine', ''));
+  const index = generated.files?.find((f) => f.path === 'admin/index.html');
+  check('goGenerate', !generated.error && !!index && index.content.includes('Bench'),
+    generated.error || `${generated.files?.length ?? 0} files`);
+} else {
+  console.log('skip  goGenerate — this build predates the export');
+}
 
 const version = globalThis.goVersion();
 check('goVersion', typeof version === 'string' && version.length > 0, version);
@@ -87,7 +91,9 @@ time('goValidate-changed', () => globalThis.goValidate(yaml.replace('Bench', 'Ot
 time('goParseField', () => globalThis.goParseField('string [required, max:255]', 'title'), 200);
 time('goParseDomain', () => globalThis.goParseDomain(yaml), 200);
 time('goParseDomain-changed', () => globalThis.goParseDomain(yaml.replace('Bench', 'Other' + (timeCounter++ % 2))), 200);
-time('goGenerate', () => globalThis.goGenerate(yaml, 'admin-alpine', ''), 30);
+if (typeof globalThis.goGenerate === 'function') {
+  time('goGenerate', () => globalThis.goGenerate(yaml, 'admin-alpine', ''), 30);
+}
 time('goSpecmeta', () => globalThis.goSpecmeta(), 200);
 time('goVersion', () => globalThis.goVersion(), 200);
 

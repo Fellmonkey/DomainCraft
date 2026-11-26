@@ -138,6 +138,40 @@ func TestGenerateYAML(t *testing.T) {
 	}
 }
 
+func TestGenerateYAMLRejectsInvalidModel(t *testing.T) {
+	result := GenerateYAML("project:\n  name: Bad\nentities:\n  Broken:\n    fields:\n      title: string\n", "admin-alpine", "")
+	var got generateResult
+	if err := json.Unmarshal([]byte(result), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Error == "" || !strings.Contains(got.Error, "validation failed") {
+		t.Fatalf("GenerateYAML generated files for an invalid model: %s", result)
+	}
+}
+
+func TestGenerateYAMLAlternatingModels(t *testing.T) {
+	for _, name := range []string{"Alpha", "Beta", "Alpha"} {
+		yaml := strings.Replace(validYAML, "Bench", name, 1)
+		result := GenerateYAML(yaml, "admin-alpine", "")
+		var got generateResult
+		if err := json.Unmarshal([]byte(result), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Error != "" {
+			t.Fatalf("GenerateYAML(%s) error = %q", name, got.Error)
+		}
+		found := false
+		for _, f := range got.Files {
+			if f.Path == "admin/index.html" && strings.Contains(f.Content, name) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("GenerateYAML(%s) returned stale files", name)
+		}
+	}
+}
+
 func TestGenerateYAMLRejectsBadBridge(t *testing.T) {
 	result := GenerateYAML(validYAML, "does-not-exist", "")
 	var got generateResult

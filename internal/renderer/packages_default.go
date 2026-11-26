@@ -10,21 +10,6 @@ import (
 	"github.com/DomainCraft/DomainCraft/internal/packages"
 )
 
-// targetFramework returns the project's declared platform, then the framework
-// declared by the bridge chain (adapter first, base later). An absent framework
-// leaves version selection unconstrained — the core bakes in no TFM.
-func (r *Renderer) targetFramework(project *ir.Project) string {
-	if project != nil && project.Platform != "" {
-		return project.Platform
-	}
-	for _, src := range slices.Backward(r.sources) {
-		if fw := src.config.TargetFramework; fw != "" {
-			return fw
-		}
-	}
-	return ""
-}
-
 // resolvePackages resolves all package versions from the package registry,
 // cached per bridge so repeated runs don't hit the registry every time.
 // Registry packages from the chain are merged base-first, adapter wins.

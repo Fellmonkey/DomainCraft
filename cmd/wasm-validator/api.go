@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -76,18 +77,27 @@ func FieldErrorResult(message string) string {
 	return marshal(map[string]string{"error": message})
 }
 
+// parseAndValidateYAML is shared by goValidate and goGenerate: the CLI never
+// renders a schema that the validator rejected, and the browser must not either.
+func parseAndValidateYAML(yaml string) (*parser.ParsedSchema, []validator.ValidationError, error) {
+	schema, err := parser.ParseYAML([]byte(yaml))
+	if err != nil {
+		return nil, nil, err
+	}
+	return schema, validator.New(schema).Validate(), nil
+}
+
 // ValidateYAML is the production path: main.go converts the js.Value once and
 // calls this function directly, without a temporary []string.
 func ValidateYAML(yaml string) string {
 	return validateCache.get(yaml, func() string {
-		schema, err := parser.ParseYAML([]byte(yaml))
+		_, errs, err := parseAndValidateYAML(yaml)
 		if err != nil {
 			return marshal(validationResult{
 				Errors: []validationError{{Message: err.Error()}},
 				Parse:  true,
 			})
 		}
-		errs := validator.New(schema).Validate()
 		result := make([]validationError, 0, len(errs))
 		for _, e := range errs {
 			result = append(result, validationError{
@@ -149,6 +159,39 @@ type generateResult struct {
 	Error string                `json:"error,omitempty"`
 }
 
+// generationPlan holds the static half of a generation: the resolved chain and
+// a renderer with compiled templates. Both depend only on the embedded bridges
+// tree, never on the user's model, so one entry is enough for the Studio
+// pattern (many edits, same bridge).
+type generationPlan struct {
+	renderer *renderer.Renderer
+}
+
+var generationPlanCache = struct {
+	sync.Mutex
+	ref  string
+	plan *generationPlan
+}{}
+
+func generationPlanFor(ref string) (*generationPlan, error) {
+	generationPlanCache.Lock()
+	defer generationPlanCache.Unlock()
+	if generationPlanCache.plan != nil && generationPlanCache.ref == ref {
+		return generationPlanCache.plan, nil
+	}
+	chain, err := embeddedBridgeChain(ref)
+	if err != nil {
+		return nil, err
+	}
+	r, err := renderer.NewFromFS(domaincraft.Bridges, chain, nil)
+	if err != nil {
+		return nil, err
+	}
+	plan := &generationPlan{renderer: r}
+	generationPlanCache.ref, generationPlanCache.plan = ref, plan
+	return plan, nil
+}
+
 // GenerateYAML compiles domain.yaml into files in memory. bridgeRef is a
 // registry ID of a bundled bridge (or a path inside the embedded bridges tree).
 // packagesJSON is an optional map of package versions; the browser cannot
@@ -156,14 +199,24 @@ type generateResult struct {
 // them when it has them.
 func GenerateYAML(yamlText, bridgeRef, packagesJSON string) string {
 	result := generateResult{Files: []renderer.MemoryFile{}}
-	chain, err := embeddedBridgeChain(bridgeRef)
+	plan, err := generationPlanFor(bridgeRef)
 	if err != nil {
 		result.Error = err.Error()
 		return marshal(result)
 	}
-	schema, err := parser.ParseYAML([]byte(yamlText))
+	schema, errs, err := parseAndValidateYAML(yamlText)
 	if err != nil {
 		result.Error = err.Error()
+		return marshal(result)
+	}
+	hard := make([]error, 0, len(errs))
+	for _, e := range errs {
+		if !e.Warning {
+			hard = append(hard, e)
+		}
+	}
+	if len(hard) > 0 {
+		result.Error = fmt.Sprintf("validation failed with %d error(s): %v", len(hard), errors.Join(hard...))
 		return marshal(result)
 	}
 	project, err := ir.Build(schema)
@@ -180,11 +233,7 @@ func GenerateYAML(yamlText, bridgeRef, packagesJSON string) string {
 		}
 	}
 
-	r, err := renderer.NewFromFS(domaincraft.Bridges, chain, nil)
-	if err != nil {
-		result.Error = err.Error()
-		return marshal(result)
-	}
+	r := plan.renderer
 	r.SetSeedData(seed.Normalize(project))
 	r.SetMockData(seed.Generate(project, seed.Options{}))
 	files, err := r.RenderMemory(project, packages)

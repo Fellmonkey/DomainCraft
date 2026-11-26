@@ -12,9 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/DomainCraft/DomainCraft/internal/bridgecontract"
 	"github.com/DomainCraft/DomainCraft/internal/netutil"
-	"github.com/DomainCraft/DomainCraft/internal/specmeta"
-	"gopkg.in/yaml.v3"
 )
 
 // httpClient is shared by remote version probes.
@@ -40,59 +39,19 @@ var httpGetBodyFn = httpGetBody
 // an invocation does not hit the network every time.
 const DefaultUpdateInterval = 24 * time.Hour
 
-// CoreContractVersion is the bridge-contract version the current core
-// implements. It aliases specmeta.ContractVersion so a bump needs one edit.
-// An upstream bridge declaring a higher contract is unsupported and must never
-// be applied.
-const CoreContractVersion = specmeta.ContractVersion
+// CoreContractVersion is the bridge contract implemented by this core. The
+// gate lives in internal/bridgecontract so the CLI update path, the disk
+// renderer and the in-browser renderer share one implementation.
+const CoreContractVersion = bridgecontract.CoreContractVersion
 
-// ParseContractVersion reads `contract_version` from bridge.yaml bytes. It is
-// the single parser used by both the update gate and the renderer loader, so
-// a manifest can never be accepted on one side and rejected on the other.
-// Returns the effective version, whether the field was explicitly declared,
-// and an error. An absent (or zero) field means the core's contract version;
-// every other unreadable value — including a negative one — is a hard error:
-// a malformed manifest must never be silently downgraded to "supported".
+// ParseContractVersion reads contract_version from bridge.yaml bytes.
 func ParseContractVersion(data []byte) (int, bool, error) {
-	// Parse once into a node, then decode from it. A truncated body may still
-	// be valid YAML (e.g. a scalar or a list), so require a mapping document
-	// before reading the version.
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return 0, false, fmt.Errorf("parse bridge contract version: %w", err)
-	}
-	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
-		return 0, false, fmt.Errorf("parse bridge contract version: manifest must be a YAML mapping")
-	}
-	// A pointer distinguishes an absent field from an explicit 0, while the
-	// declared flag follows the legacy "0 means absent" behaviour.
-	var cfg struct {
-		ContractVersion *int `yaml:"contract_version"`
-	}
-	if err := doc.Decode(&cfg); err != nil {
-		return 0, false, fmt.Errorf("parse bridge contract version: %w", err)
-	}
-	if cfg.ContractVersion == nil {
-		return CoreContractVersion, false, nil
-	}
-	if *cfg.ContractVersion < 0 {
-		return 0, true, fmt.Errorf("invalid contract_version %d", *cfg.ContractVersion)
-	}
-	if *cfg.ContractVersion == 0 {
-		return CoreContractVersion, false, nil
-	}
-	return *cfg.ContractVersion, true, nil
+	return bridgecontract.ParseContractVersion(data)
 }
 
-// CheckContractVersion verifies that a bridge declaring contractVersion is
-// supported by the current core. A newer contract is a hard error — an
-// unsupported bridge must never be downloaded/applied. Shared with the
-// renderer so both gates move together on a contract bump.
-func CheckContractVersion(contractVersion int) error {
-	if contractVersion > CoreContractVersion {
-		return fmt.Errorf("bridge requires contract v%d, but this core implements contract v%d", contractVersion, CoreContractVersion)
-	}
-	return nil
+// CheckContractVersion rejects a bridge that declares a newer contract.
+func CheckContractVersion(version int) error {
+	return bridgecontract.CheckContractVersion(version)
 }
 
 // gateRemoteContract fetches a bridge manifest at ref and applies the contract

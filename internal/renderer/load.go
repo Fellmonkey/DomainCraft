@@ -9,6 +9,7 @@ import (
 	"sync"
 	"text/template"
 
+	"github.com/DomainCraft/DomainCraft/internal/bridgecontract"
 	"github.com/DomainCraft/DomainCraft/internal/ir"
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
 
@@ -260,11 +261,11 @@ func parseSourceConfig(data []byte, dir string) (sourceConfig, error) {
 	}
 	// Contract version: use the same parser/gate as the bridge update path so
 	// a manifest cannot be accepted on one side and rejected on the other.
-	contractVersion, contractDeclared, err := parseBridgeContractVersion(data)
+	contractVersion, contractDeclared, err := bridgecontract.ParseContractVersion(data)
 	if err != nil {
 		return sourceConfig{}, err
 	}
-	if err := checkBridgeContractVersion(contractVersion); err != nil {
+	if err := bridgecontract.CheckContractVersion(contractVersion); err != nil {
 		return sourceConfig{}, fmt.Errorf("bridge %q: %w", config.Name, err)
 	}
 	config.ContractVersion = contractVersion
@@ -277,10 +278,16 @@ func New(bridgePath string, log *logger.Logger) (*Renderer, error) {
 	if err != nil {
 		return nil, err
 	}
+	warnUndeclaredContract(src, log)
+	return &Renderer{sources: []sourceConfig{src}, log: log}, nil
+}
+
+// warnUndeclaredContract keeps CLI and in-browser bridge loading diagnostics
+// identical. A nil logger is a silent host, which is the WASM case.
+func warnUndeclaredContract(src sourceConfig, log *logger.Logger) {
 	if !src.contractDeclared && log != nil {
 		log.Warn("bridge %q does not declare `contract_version`; assuming contract v%d (deprecated — please add it)", src.config.Name, src.config.ContractVersion)
 	}
-	return &Renderer{sources: []sourceConfig{src}, log: log}, nil
 }
 
 // Extends reports the base bridge this bridge composes on top of (a path,
