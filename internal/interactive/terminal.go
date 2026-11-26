@@ -71,7 +71,6 @@ func IsTerminal() bool {
 var (
 	promptInput  io.Reader = os.Stdin
 	promptOutput io.Writer = os.Stdout
-	promptReader *bufio.Reader
 )
 
 // realTTY reports whether prompts run against a real terminal (raw mode,
@@ -206,19 +205,12 @@ type key struct {
 	r    rune
 }
 
-func readByte() (byte, error) {
-	if promptReader == nil {
-		promptReader = bufio.NewReader(promptInput)
-	}
-	return promptReader.ReadByte()
-}
-
-// readKey reads one keypress. Arrow keys arrive as ESC [ X or ESC O X (some
-// terminals use application cursor mode); a bare Esc (no '['/'O' after it)
-// aborts the prompt and the extra byte, if any, is pushed back so it isn't
-// lost.
-func readKey() (key, error) {
-	b, err := readByte()
+// readKey reads one keypress from the reader created for this prompt. Arrow
+// keys arrive as ESC [ X or ESC O X (some terminals use application cursor
+// mode); a bare Esc (no '['/'O' after it) aborts the prompt and the extra byte,
+// if any, is pushed back so it isn't lost.
+func readKey(r *bufio.Reader) (key, error) {
+	b, err := r.ReadByte()
 	if err != nil {
 		return key{}, err
 	}
@@ -228,15 +220,15 @@ func readKey() (key, error) {
 	case ' ':
 		return key{kind: keySpace}, nil
 	case 27:
-		next, err := readByte()
+		next, err := r.ReadByte()
 		if err != nil {
 			return key{kind: keyEsc}, nil
 		}
 		if next != '[' && next != 'O' {
-			_ = promptReader.UnreadByte()
+			_ = r.UnreadByte()
 			return key{kind: keyEsc}, nil
 		}
-		seq, err := readByte()
+		seq, err := r.ReadByte()
 		if err != nil {
 			return key{kind: keyEsc}, nil
 		}

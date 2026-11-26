@@ -1,6 +1,7 @@
 package interactive
 
 import (
+	"bufio"
 	"fmt"
 
 	"github.com/DomainCraft/DomainCraft/internal/bridge"
@@ -15,9 +16,10 @@ func runListNav(count int, draw func(cursor int) []string, onToggle func(int)) (
 	redraw := func() { f.draw(draw(cursor)) }
 	redraw()
 
+	reader := bufio.NewReader(promptInput)
 	err := rawMode(func() error {
 		for {
-			k, err := readKey()
+			k, err := readKey(reader)
 			if err != nil {
 				return err
 			}
@@ -178,9 +180,10 @@ func confirm(title, description string) (bool, error) {
 	f := &field{}
 	f.draw(build())
 	var result bool
+	reader := bufio.NewReader(promptInput)
 	err := rawMode(func() error {
 		for {
-			k, err := readKey()
+			k, err := readKey(reader)
 			if err != nil {
 				return err
 			}

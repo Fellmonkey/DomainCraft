@@ -14,7 +14,6 @@ import (
 func setInput(s string) {
 	promptInput = strings.NewReader(s)
 	promptOutput = io.Discard
-	promptReader = nil
 }
 
 func TestConfirm(t *testing.T) {
