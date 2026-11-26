@@ -4,7 +4,6 @@ package lexer
 import (
 	"fmt"
 	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/DomainCraft/DomainCraft/internal/specmeta"
@@ -44,13 +43,6 @@ type FieldDefinition struct {
 // Parse parses a full field definition: "string [required, max:255]"
 func Parse(input string) (*FieldDefinition, error) {
 	return parse(input, nil)
-}
-
-// ParseWithStringModifiers parses input with additional string validation
-// modifier names. It is the explicit injection point for a caller that extends
-// the spec; no package-level state is mutated.
-func ParseWithStringModifiers(input string, extraStringMods []string) (*FieldDefinition, error) {
-	return parse(input, extraStringMods)
 }
 
 func parse(input string, extraStringMods []string) (*FieldDefinition, error) {
@@ -94,50 +86,55 @@ func parse(input string, extraStringMods []string) (*FieldDefinition, error) {
 	return fd, nil
 }
 
+// callType describes one `kind(Target)` field declaration. The three
+// variants differ only in kind, destination field and diagnostics.
+type callType struct {
+	kind          string
+	prefix        string
+	missingParen  string
+	missingTarget string
+	isRelation    bool
+}
+
+var callTypes = []callType{
+	{specmeta.FieldTypeRelation, specmeta.FieldTypeRelation + "(", "relation type requires a closing parenthesis", "relation type requires a target entity name", true},
+	{specmeta.FieldTypeArray, specmeta.FieldTypeArray + "(", "array type requires a closing parenthesis", "array type requires an element type", false},
+	{specmeta.FieldTypeEnum, specmeta.FieldTypeEnum + "(", "enum type requires a closing parenthesis", "enum type requires a name", false},
+}
+
+// fieldFlags are the bare modifiers that set a boolean on the field. Keeping
+// them in one table lets validation reuse the same vocabulary.
+var fieldFlags = map[string]func(*FieldDefinition){
+	"primary":  func(f *FieldDefinition) { f.IsPrimary = true },
+	"optional": func(f *FieldDefinition) { f.IsOptional = true },
+	"required": func(f *FieldDefinition) { f.IsRequired = true },
+	"unique":   func(f *FieldDefinition) { f.IsUnique = true },
+	"hidden":   func(f *FieldDefinition) { f.IsHidden = true },
+	"readonly": func(f *FieldDefinition) { f.IsReadonly = true },
+	"many":     func(f *FieldDefinition) { f.IsMany = true },
+}
+
 // parseType parses the type portion (e.g. "string", "relation(User)", "array(int)", "enum(Status)")
 func parseType(typeStr string, fd *FieldDefinition) error {
 	typeStr = strings.TrimSpace(typeStr)
 
-	// Check for relation(EntityName). A missing closing paren is an error, not
-	// a prefix to be trimmed away.
-	if strings.HasPrefix(typeStr, specmeta.FieldTypeRelation+"(") {
+	for _, spec := range callTypes {
+		if !strings.HasPrefix(typeStr, spec.prefix) {
+			continue
+		}
+		// A missing closing paren is an error, not a prefix to trim away.
 		if !strings.HasSuffix(typeStr, ")") {
-			return fmt.Errorf("relation type requires a closing parenthesis")
+			return fmt.Errorf("%s", spec.missingParen)
 		}
-		fd.Type = specmeta.FieldTypeRelation
-		targetEntity := strings.TrimSuffix(strings.TrimPrefix(typeStr, specmeta.FieldTypeRelation+"("), ")")
-		fd.TargetEntity = strings.TrimSpace(targetEntity)
-		if fd.TargetEntity == "" {
-			return fmt.Errorf("relation type requires a target entity name")
+		target := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(typeStr, spec.prefix), ")"))
+		if target == "" {
+			return fmt.Errorf("%s", spec.missingTarget)
 		}
-		return nil
-	}
-
-	// Check for array(Type). specmeta owns the element-type extraction; the
-	// closing parenthesis is checked here once so an unclosed declaration
-	// gets its own diagnostic instead of falling through to "unknown type".
-	if strings.HasPrefix(typeStr, specmeta.FieldTypeArray+"(") {
-		if !strings.HasSuffix(typeStr, ")") {
-			return fmt.Errorf("array type requires a closing parenthesis")
-		}
-		fd.Type = specmeta.FieldTypeArray
-		fd.TargetType = strings.TrimSpace(specmeta.ParseArrayInner(typeStr))
-		if fd.TargetType == "" {
-			return fmt.Errorf("array type requires an element type")
-		}
-		return nil
-	}
-
-	// Check for enum(Name)
-	if strings.HasPrefix(typeStr, specmeta.FieldTypeEnum+"(") {
-		if !strings.HasSuffix(typeStr, ")") {
-			return fmt.Errorf("enum type requires a closing parenthesis")
-		}
-		fd.Type = specmeta.FieldTypeEnum
-		enumName := strings.TrimSuffix(strings.TrimPrefix(typeStr, specmeta.FieldTypeEnum+"("), ")")
-		fd.TargetType = strings.TrimSpace(enumName)
-		if fd.TargetType == "" {
-			return fmt.Errorf("enum type requires a name")
+		fd.Type = spec.kind
+		if spec.isRelation {
+			fd.TargetEntity = target
+		} else {
+			fd.TargetType = target
 		}
 		return nil
 	}
@@ -171,7 +168,7 @@ func parseModifiers(modStr string, fd *FieldDefinition, extraStringMods []string
 			value = strings.Trim(value, `"'`)
 
 			switch {
-			case specmeta.IsStringValidationModifier(key) || slices.Contains(extraStringMods, key) || specmeta.IsNumericValidationModifier(key):
+			case specmeta.IsValidationModifier(key, extraStringMods):
 				fd.Validations[key] = value
 			case key == "default":
 				// Check for function-style defaults like now(), uuid()
@@ -207,24 +204,11 @@ func parseModifiers(modStr string, fd *FieldDefinition, extraStringMods []string
 		}
 
 		// Flag modifiers (no value)
-		switch mod {
-		case "primary":
-			fd.IsPrimary = true
-		case "optional":
-			fd.IsOptional = true
-		case "required":
-			fd.IsRequired = true
-		case "unique":
-			fd.IsUnique = true
-		case "hidden":
-			fd.IsHidden = true
-		case "readonly":
-			fd.IsReadonly = true
-		case "many":
-			fd.IsMany = true
-		default:
-			return fmt.Errorf("unknown modifier flag: %s", mod)
+		if set, ok := fieldFlags[mod]; ok {
+			set(fd)
+			continue
 		}
+		return fmt.Errorf("unknown modifier flag: %s", mod)
 	}
 
 	return nil
@@ -235,44 +219,7 @@ func parseModifiers(modStr string, fd *FieldDefinition, extraStringMods []string
 // Without this, "default:[a, b, c]" would be chopped at every comma and the
 // default value would never round-trip through parse → serialize → parse.
 func splitModifiers(s string) []string {
-	var out []string
-	var cur strings.Builder
-	depth := 0
-	var quote byte
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if quote != 0 {
-			cur.WriteByte(c)
-			if c == quote {
-				quote = 0
-			}
-			continue
-		}
-		switch c {
-		case '\'', '"':
-			quote = c
-			cur.WriteByte(c)
-		case '[':
-			depth++
-			cur.WriteByte(c)
-		case ']':
-			if depth > 0 {
-				depth--
-			}
-			cur.WriteByte(c)
-		case ',':
-			if depth == 0 {
-				out = append(out, cur.String())
-				cur.Reset()
-				continue
-			}
-			cur.WriteByte(c)
-		default:
-			cur.WriteByte(c)
-		}
-	}
-	out = append(out, cur.String())
-	return out
+	return specmeta.SplitRespectingQuotes(s)
 }
 
 // Validate checks the logical consistency of a FieldDefinition

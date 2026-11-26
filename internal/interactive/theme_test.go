@@ -27,11 +27,13 @@ func TestFitVisible(t *testing.T) {
 		width int
 		want  string
 	}{
-		{"fits", "short", 80, "short"},                 // fits
-		{"exact_fit", "12345", 5, "12345"},             // exact fit
-		{"truncated", "123456", 5, "1234…"},            // truncated with ellipsis
-		{"rune_aware", "Привет мир", 5, "Прив…"},       // rune-aware, not byte-aware
+		{"fits", "short", 80, "short"},                                       // fits
+		{"exact_fit", "12345", 5, "12345"},                                   // exact fit
+		{"truncated", "123456", 5, "1234…"},                                  // truncated with ellipsis
+		{"rune_aware", "Привет мир", 5, "Прив…"},                             // rune-aware, not byte-aware
 		{"ansi_preserved", "\x1b[42mhello\x1b[0m", 4, "\x1b[42mhel…\x1b[0m"}, // ANSI preserved, text truncated
+		{"wide_runes", "漢字abc", 5, "漢字…"},                                    // CJK takes two columns each; "漢字a" would wrap
+		{"emoji", "🚀abc", 3, "🚀…"},                                           // emoji takes two columns
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

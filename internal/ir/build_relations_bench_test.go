@@ -15,13 +15,6 @@ import (
 
 var updateGolden = flag.Bool("update", false, "regenerate benchmark golden files")
 
-func checkBenchGolden(t *testing.T, name, got string) {
-	t.Helper()
-	testutil.CheckGolden(t, name, got, *updateGolden)
-}
-
-func benchHash(lines []string) string { return testutil.HashLines(lines) }
-
 // benchmarkSortFixture builds the dependency shapes shared by
 // BenchmarkSortEntities and TestBenchmarkSortEntitiesGolden:
 //   - chain: entity i depends on i-1 (every pop scans all entities today);
@@ -119,10 +112,10 @@ func TestBenchmarkSortEntitiesGolden(t *testing.T) {
 				slices.Sort(rels)
 				entries = append(entries, fmt.Sprintf("%s|%s", e.Name, strings.Join(rels, ",")))
 			}
-			lines = append(lines, fmt.Sprintf("%s/%d\tentities=%d\tsha256=%s", kind, size, len(sorted), benchHash(entries)))
+			lines = append(lines, fmt.Sprintf("%s/%d\tentities=%d\tsha256=%s", kind, size, len(sorted), testutil.HashLines(entries)))
 		}
 	}
-	checkBenchGolden(t, "sort-entities.golden.txt", strings.Join(lines, "\n"))
+	testutil.CheckGolden(t, "sort-entities.golden.txt", strings.Join(lines, "\n"), *updateGolden)
 }
 
 // benchmarkHubSchema builds one hub with N [many] relations to N leaves and a
@@ -221,7 +214,7 @@ func hubIRDigest(t *testing.T, project *Project) string {
 		}
 	}
 	slices.Sort(lines)
-	return benchHash(lines)
+	return testutil.HashLines(lines)
 }
 
 // TestBenchmarkBuildHubRelationsGolden pins the relation reconciliation on the
@@ -236,7 +229,7 @@ func TestBenchmarkBuildHubRelationsGolden(t *testing.T) {
 		}
 		lines = append(lines, fmt.Sprintf("entities=%d\tir=%d\tsha256=%s", size, len(project.Entities), hubIRDigest(t, project)))
 	}
-	checkBenchGolden(t, "build-hub-relations.golden.txt", strings.Join(lines, "\n"))
+	testutil.CheckGolden(t, "build-hub-relations.golden.txt", strings.Join(lines, "\n"), *updateGolden)
 }
 
 // TestBuildHubRelationsPreservesFirstMatch guards the hub case while the

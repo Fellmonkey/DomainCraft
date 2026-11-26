@@ -109,23 +109,46 @@ func termWidth() int {
 	return w
 }
 
-// fitVisible truncates s so its visible width fits in width columns (one
-// column per rune). ANSI escape sequences are zero-width and are preserved;
-// a trailing ellipsis replaces the last column of truncated text. When the
-// truncation cut through a styled line, a reset sequence is re-appended so
-// the color cannot leak past the line.
+// runeWidth is the number of terminal columns a rune occupies. East Asian
+// wide/fullwidth characters and emoji take two columns; counting one column
+// per rune let a line "fit" by the metric and then wrap in the terminal, which
+// breaks in-place redraw — the reason fitVisible exists.
+func runeWidth(r rune) int {
+	switch {
+	case r < 0x20 || (r >= 0x7f && r < 0xa0):
+		return 0
+	case r >= 0x1100 && (r <= 0x115f || r == 0x2329 || r == 0x232a ||
+		(r >= 0x2e80 && r <= 0xa4cf && r != 0x303f) ||
+		(r >= 0xac00 && r <= 0xd7a3) ||
+		(r >= 0xf900 && r <= 0xfaff) ||
+		(r >= 0xfe10 && r <= 0xfe19) ||
+		(r >= 0xfe30 && r <= 0xfe6f) ||
+		(r >= 0xff00 && r <= 0xff60) ||
+		(r >= 0xffe0 && r <= 0xffe6) ||
+		(r >= 0x1f300 && r <= 0x1faff) ||
+		(r >= 0x20000 && r <= 0x3fffd)):
+		return 2
+	default:
+		return 1
+	}
+}
+
+// fitVisible truncates s so its visible width fits in width columns. ANSI
+// escape sequences are zero-width and are preserved; a trailing ellipsis
+// replaces the last column of truncated text. When the truncation cut through
+// a styled line, a reset sequence is re-appended so the color cannot leak.
 func fitVisible(s string, width int) string {
 	toks := tokenize(s)
 	visible := 0
 	for _, t := range toks {
 		if t.esc == "" {
-			visible++
+			visible += runeWidth(t.r)
 		}
 	}
 	if visible <= width {
 		return s
 	}
-	// Keep width-1 runes and let the ellipsis take the last column.
+	// Keep width-1 columns and let the ellipsis take the last one.
 	keep := width - 1
 	var out strings.Builder
 	hasANSI := false
@@ -136,9 +159,10 @@ func fitVisible(s string, width int) string {
 			out.WriteString(t.esc)
 			continue
 		}
-		if written < keep {
+		w := runeWidth(t.r)
+		if written+w <= keep {
 			out.WriteRune(t.r)
-			written++
+			written += w
 		} else {
 			out.WriteString("\u2026")
 			break
@@ -244,7 +268,21 @@ func readKey(r *bufio.Reader) (key, error) {
 		}
 		return key{kind: keyOther}, nil
 	default:
-		return key{kind: keyRune, r: rune(b)}, nil
+		if b < utf8.RuneSelf {
+			return key{kind: keyRune, r: rune(b)}, nil
+		}
+		// Buffer the continuation bytes of a multi-byte UTF-8 rune instead of
+		// emitting one keyRune per byte.
+		buf := []byte{b}
+		for !utf8.FullRune(buf) && len(buf) < utf8.UTFMax {
+			next, err := r.ReadByte()
+			if err != nil {
+				break
+			}
+			buf = append(buf, next)
+		}
+		decoded, _ := utf8.DecodeRune(buf)
+		return key{kind: keyRune, r: decoded}, nil
 	}
 }
 

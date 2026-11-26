@@ -34,53 +34,89 @@ func oldDatabaseColumnName(field *parser.ParsedField) string {
 }
 
 // applyProjectConfig copies the optional project blocks into their IR shape.
-// The parser types carry presence flags for defaulting; the IR types carry only
-// the resolved values, so the mapping is explicit and lives in one place.
+// A nil parser block means "absent"; a non-nil block is copied even when all of
+// its values are zero — presence flags stay in the parser and are resolved
+// before Build, so the IR needs only the values.
 func applyProjectConfig(target *Project, p parser.ProjectConfig) {
-	if p.Cache != nil {
-		target.Cache = &CacheConfig{
-			Enabled:          p.Cache.Enabled,
-			Provider:         p.Cache.Provider,
-			ConnectionString: p.Cache.ConnectionString,
-			TTLSeconds:       p.Cache.TTLSeconds,
-		}
+	target.Cache = convertCacheConfig(p.Cache)
+	target.CORS = convertCORSConfig(p.CORS)
+	target.Deploy = convertDeployConfig(p.Deploy)
+	target.Versioning = convertVersioningConfig(p.Versioning)
+	target.RateLimit = convertRateLimitConfig(p.RateLimit)
+	target.Pagination = convertPaginationConfig(p.Pagination)
+	target.Infrastructure = convertInfrastructure(p.Infrastructure)
+}
+
+func convertCacheConfig(src *parser.CacheConfig) *CacheConfig {
+	if src == nil {
+		return nil
 	}
-	if p.CORS != nil {
-		target.CORS = &CORSConfig{
-			Enabled: p.CORS.Enabled,
-			Origins: append([]string(nil), p.CORS.Origins...),
-		}
+	return &CacheConfig{
+		Enabled:          src.Enabled,
+		Provider:         src.Provider,
+		ConnectionString: src.ConnectionString,
+		TTLSeconds:       src.TTLSeconds,
 	}
-	if p.Deploy != nil {
-		target.Deploy = &DeployConfig{Domain: p.Deploy.Domain, Port: p.Deploy.Port}
+}
+
+func convertCORSConfig(src *parser.CORSConfig) *CORSConfig {
+	if src == nil {
+		return nil
 	}
-	if p.Versioning != nil {
-		target.Versioning = &VersioningConfig{
-			Enabled:        p.Versioning.Enabled,
-			DefaultVersion: p.Versioning.DefaultVersion,
-		}
+	return &CORSConfig{
+		Enabled: src.Enabled,
+		Origins: append([]string(nil), src.Origins...),
 	}
-	if p.RateLimit != nil {
-		target.RateLimit = &RateLimitConfig{
-			Enabled:       p.RateLimit.Enabled,
-			Policy:        p.RateLimit.Policy,
-			PermitLimit:   p.RateLimit.PermitLimit,
-			WindowSeconds: p.RateLimit.WindowSeconds,
-		}
+}
+
+func convertDeployConfig(src *parser.DeployConfig) *DeployConfig {
+	if src == nil {
+		return nil
 	}
-	if p.Pagination != nil {
-		target.Pagination = &PaginationConfig{
-			DefaultPageSize: p.Pagination.DefaultPageSize,
-			MaxPageSize:     p.Pagination.MaxPageSize,
-		}
+	return &DeployConfig{Domain: src.Domain, Port: src.Port}
+}
+
+func convertVersioningConfig(src *parser.VersioningConfig) *VersioningConfig {
+	if src == nil {
+		return nil
 	}
-	if p.Infrastructure != nil {
-		target.Infrastructure = &Infrastructure{
-			Queue:   p.Infrastructure.Queue,
-			Cache:   p.Infrastructure.Cache,
-			Secrets: p.Infrastructure.Secrets,
-			Storage: p.Infrastructure.Storage,
-		}
+	return &VersioningConfig{
+		Enabled:        src.Enabled,
+		DefaultVersion: src.DefaultVersion,
+	}
+}
+
+func convertRateLimitConfig(src *parser.RateLimitConfig) *RateLimitConfig {
+	if src == nil {
+		return nil
+	}
+	return &RateLimitConfig{
+		Enabled:       src.Enabled,
+		Policy:        src.Policy,
+		PermitLimit:   src.PermitLimit,
+		WindowSeconds: src.WindowSeconds,
+	}
+}
+
+func convertPaginationConfig(src *parser.PaginationConfig) *PaginationConfig {
+	if src == nil {
+		return nil
+	}
+	return &PaginationConfig{
+		DefaultPageSize: src.DefaultPageSize,
+		MaxPageSize:     src.MaxPageSize,
+	}
+}
+
+func convertInfrastructure(src *parser.InfrastructureConfig) *Infrastructure {
+	if src == nil {
+		return nil
+	}
+	return &Infrastructure{
+		Queue:   src.Queue,
+		Cache:   src.Cache,
+		Secrets: src.Secrets,
+		Storage: src.Storage,
 	}
 }
 
@@ -246,21 +282,21 @@ func resolveDatabaseType(field *parser.ParsedField, schema *parser.ParsedSchema,
 		return "", fmt.Errorf("relation target '%s' has no primary key", field.TargetEntity)
 	}
 
-	if field.Type == "array" {
+	if field.Type == specmeta.FieldTypeArray {
 		return resolveArrayType(field.TargetType), nil
 	}
 
-	if field.Type == "enum" {
-		if field.TargetType != "" {
-			return field.TargetType, nil
+	if field.Type == specmeta.FieldTypeEnum {
+		if field.TargetType == "" {
+			return "", fmt.Errorf("enum field has no target type")
 		}
-		return specmeta.DefaultFieldType, nil
+		return field.TargetType, nil
 	}
 
 	if specmeta.IsPrimitive(field.Type) {
 		return field.Type, nil
 	}
-	return specmeta.DefaultFieldType, nil
+	return "", fmt.Errorf("unknown field type %q", field.Type)
 }
 
 func resolveArrayType(targetType string) string {
@@ -317,7 +353,8 @@ func copyEnumsSorted(source map[string][]string) map[string][]string {
 		return nil
 	}
 	result := make(map[string][]string, len(source))
-	for k, v := range source {
+	for _, k := range slices.Sorted(maps.Keys(source)) {
+		v := source[k]
 		cp := make([]string, len(v))
 		copy(cp, v)
 		result[k] = cp

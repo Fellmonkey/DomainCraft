@@ -6,7 +6,6 @@ package bridgechain
 import (
 	"fmt"
 	"path/filepath"
-	"slices"
 
 	"github.com/DomainCraft/DomainCraft/internal/bridge"
 	"github.com/DomainCraft/DomainCraft/internal/renderer"
@@ -22,7 +21,7 @@ var absPathFn = filepath.Abs
 // its bases. Absolute paths make cycle detection path-based, not textual.
 func Walk(ref, fromDir string, resolver *bridge.Resolver, log *logger.Logger) ([]string, error) {
 	var chain []string
-	visited := make([]string, 0)
+	visited := make(map[string]bool)
 	for ref != "" {
 		path, err := bridge.ResolveExtendsRef(ref, fromDir, resolver)
 		if err != nil {
@@ -33,10 +32,11 @@ func Walk(ref, fromDir string, resolver *bridge.Resolver, log *logger.Logger) ([
 			return nil, fmt.Errorf("resolve absolute bridge path %q: %w", path, err)
 		}
 		path = abs
-		if slices.ContainsFunc(visited, func(seen string) bool { return bridge.SamePath(seen, path) }) {
+		key := bridge.PathKey(path)
+		if visited[key] {
 			return nil, fmt.Errorf("bridge `extends` cycle detected at %q", ref)
 		}
-		visited = append(visited, path)
+		visited[key] = true
 		chain = append(chain, path)
 
 		base, err := renderer.New(path, log)

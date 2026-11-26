@@ -25,7 +25,7 @@ namespace {{ .Project.Name | pascalcase }}.Infrastructure.Persistence.Seeders;
 /// The CORE normalizes the developer's explicit `seed:` rows into typed
 /// SeedRecord/SeedValue records (types, relations and constraints already
 /// resolved), so this bridge only serializes them into C# object initializers.
-/// seedValueExpression is defined in _helpers.cs.tmpl (loaded via bridge.yaml helpers).
+/// seedValueExpression is defined in helpers.cs.tmpl (loaded via bridge.yaml helpers).
 /// Password-typed seed fields are hashed through IPasswordHasher so a plaintext value in
 /// domain.yaml never lands in the database; pre-hashed (bcrypt, "$2...") values pass through.
 /// </summary>

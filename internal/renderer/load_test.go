@@ -115,24 +115,21 @@ func TestLoadSourceFailsClosedOnMissingBridgeYaml(t *testing.T) {
 // users.
 func TestParsedSourceCacheEvictsOldEntries(t *testing.T) {
 	clearCache := func() {
-		parsedSourceCache.Range(func(k, _ any) bool {
-			parsedSourceCache.Delete(k)
-			return true
-		})
+		parsedSourceCache.Lock()
+		parsedSourceCache.entries = make(map[string]sourceConfig)
+		parsedSourceCache.Unlock()
 	}
 	t.Cleanup(clearCache)
 	clearCache()
 
 	inserts := maxParsedSourceCacheEntries + 10
 	for i := range inserts {
-		storeParsedSource("evict-probe-"+strconv.Itoa(i), parsedBridgeSource{})
+		storeParsedSource("evict-probe-"+strconv.Itoa(i), sourceConfig{})
 	}
 
-	n := 0
-	parsedSourceCache.Range(func(_, _ any) bool {
-		n++
-		return true
-	})
+	parsedSourceCache.RLock()
+	n := len(parsedSourceCache.entries)
+	parsedSourceCache.RUnlock()
 	if n > maxParsedSourceCacheEntries {
 		t.Fatalf("cache has %d entries after %d inserts, want at most %d",
 			n, inserts, maxParsedSourceCacheEntries)

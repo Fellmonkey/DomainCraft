@@ -26,10 +26,6 @@ func writeBridge(t *testing.T, dir, extends string) string {
 	return dir
 }
 
-func testResolver() *bridge.Resolver {
-	return bridge.NewResolver(bridge.Default())
-}
-
 func TestWalkResolvesExtendsChainTopFirst(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -37,7 +33,7 @@ func TestWalkResolvesExtendsChainTopFirst(t *testing.T) {
 	mid := writeBridge(t, filepath.Join(root, "mid"), base)
 	top := writeBridge(t, filepath.Join(root, "top"), mid)
 
-	chain, err := Walk(top, top, testResolver(), nil)
+	chain, err := Walk(top, top, bridge.NewResolver(bridge.Default()), nil)
 	if err != nil {
 		t.Fatalf("Walk: %v", err)
 	}
@@ -62,7 +58,7 @@ func TestWalkDetectsCycle(t *testing.T) {
 	b := writeBridge(t, filepath.Join(root, "b"), a)
 	writeBridge(t, a, b) // a → b → a
 
-	_, err := Walk(a, a, testResolver(), nil)
+	_, err := Walk(a, a, bridge.NewResolver(bridge.Default()), nil)
 	if err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("err = %v, want a cycle error", err)
 	}
@@ -76,7 +72,7 @@ func TestWalkDetectsCycleAcrossCaseVariants(t *testing.T) {
 	a := writeBridge(t, filepath.Join(root, "CycleA"), "")
 	b := writeBridge(t, filepath.Join(root, "cyclea"), a)
 
-	if _, err := Walk(a, a, testResolver(), nil); err == nil || !strings.Contains(err.Error(), "cycle") {
+	if _, err := Walk(a, a, bridge.NewResolver(bridge.Default()), nil); err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("err = %v, want a cycle error across case variants (%q vs %q)", err, a, b)
 	}
 }
@@ -89,7 +85,7 @@ func TestWalkFailsWhenAbsFails(t *testing.T) {
 	t.Cleanup(func() { absPathFn = original })
 	absPathFn = func(string) (string, error) { return "", os.ErrPermission }
 
-	_, err := Walk(base, root, testResolver(), nil)
+	_, err := Walk(base, root, bridge.NewResolver(bridge.Default()), nil)
 	if err == nil {
 		t.Fatal("Walk accepted a bridge path it could not make absolute")
 	}
@@ -103,7 +99,7 @@ func TestWalkMissingLocalPathIsHardError(t *testing.T) {
 	root := t.TempDir()
 	missing := filepath.Join(root, "missing-bridge")
 
-	_, err := Walk(missing, root, testResolver(), nil)
+	_, err := Walk(missing, root, bridge.NewResolver(bridge.Default()), nil)
 	if err == nil {
 		t.Fatal("expected an error for a missing local bridge")
 	}

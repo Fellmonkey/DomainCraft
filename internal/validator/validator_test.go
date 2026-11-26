@@ -81,20 +81,10 @@ func TestValidateDetectsMissingPrimaryKey(t *testing.T) {
 
 func TestValidateRejectsOldNameEqualToFieldName(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"Product"},
-		Entities: map[string]*parser.ParsedEntity{
-			"Product": {
-				Name:       "Product",
-				FieldOrder: []string{"id", "name"},
-				Fields: map[string]*parser.ParsedField{
-					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"name": testutil.MustParsedField(t, "name", "string [required, old_name:name]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "Product",
+		"id", "uuid [primary]",
+		"name", "string [required, old_name:name]",
+	)
 
 	errs := New(schema).Validate()
 	errs = nonWarnings(errs)
@@ -111,21 +101,11 @@ func TestValidateRejectsOldNameEqualToFieldName(t *testing.T) {
 
 func TestValidateRejectsOldNameCollidingWithExistingField(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"Product"},
-		Entities: map[string]*parser.ParsedEntity{
-			"Product": {
-				Name:       "Product",
-				FieldOrder: []string{"id", "title", "name"},
-				Fields: map[string]*parser.ParsedField{
-					"id":    testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"title": testutil.MustParsedField(t, "title", "string"),
-					"name":  testutil.MustParsedField(t, "name", "string [required, old_name:title]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "Product",
+		"id", "uuid [primary]",
+		"title", "string",
+		"name", "string [required, old_name:title]",
+	)
 
 	errs := New(schema).Validate()
 	errs = nonWarnings(errs)
@@ -142,20 +122,10 @@ func TestValidateRejectsOldNameCollidingWithExistingField(t *testing.T) {
 
 func TestValidateAcceptsValidOldName(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"Product"},
-		Entities: map[string]*parser.ParsedEntity{
-			"Product": {
-				Name:       "Product",
-				FieldOrder: []string{"id", "name"},
-				Fields: map[string]*parser.ParsedField{
-					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"name": testutil.MustParsedField(t, "name", "string [required, old_name:title]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "Product",
+		"id", "uuid [primary]",
+		"name", "string [required, old_name:title]",
+	)
 
 	errs := nonWarnings(New(schema).Validate())
 	for _, e := range errs {
@@ -167,20 +137,10 @@ func TestValidateAcceptsValidOldName(t *testing.T) {
 
 func TestValidateDetectsDuplicatePrimaryKey(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "code"},
-				Fields: map[string]*parser.ParsedField{
-					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"code": testutil.MustParsedField(t, "code", "string [primary]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"code", "string [primary]",
+	)
 
 	errs := New(schema).Validate()
 	errs = nonWarnings(errs)
@@ -197,20 +157,10 @@ func TestValidateDetectsDuplicatePrimaryKey(t *testing.T) {
 
 func TestValidateDetectsBrokenRelation(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"Product"},
-		Entities: map[string]*parser.ParsedEntity{
-			"Product": {
-				Name:       "Product",
-				FieldOrder: []string{"id", "categoryId"},
-				Fields: map[string]*parser.ParsedField{
-					"id":         testutil.MustParsedField(t, "id", "uuid"),
-					"categoryId": testutil.MustParsedField(t, "categoryId", "relation(Category)"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "Product",
+		"id", "uuid",
+		"categoryId", "relation(Category)",
+	)
 	product := schema.Entities["Product"]
 	product.Fields["id"].IsPrimary = true
 
@@ -221,7 +171,7 @@ func TestValidateDetectsBrokenRelation(t *testing.T) {
 	}
 }
 
-func TestValidateDetectsSetNullOnRequiredField(t *testing.T) {
+func TestValidatorAcceptsSetNullOnOptionalField(t *testing.T) {
 	t.Parallel()
 	// Note: on_delete:set_null on a required relation is caught by the lexer, not the validator.
 	// This test verifies the schema passes validation when the lexer constraint is respected.
@@ -260,21 +210,11 @@ func TestValidateDetectsSetNullOnRequiredField(t *testing.T) {
 
 func TestValidateDetectsUndefinedEnum(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"Product"},
-		Enums:       map[string][]string{"ProductStatus": {"DRAFT", "PUBLISHED"}},
-		Entities: map[string]*parser.ParsedEntity{
-			"Product": {
-				Name:       "Product",
-				FieldOrder: []string{"id", "status"},
-				Fields: map[string]*parser.ParsedField{
-					"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"status": testutil.MustParsedField(t, "status", "enum(NoSuchEnum)"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "Product",
+		"id", "uuid [primary]",
+		"status", "enum(NoSuchEnum)",
+	)
+	schema.Enums = map[string][]string{"ProductStatus": {"DRAFT", "PUBLISHED"}}
 	schema.Entities["Product"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -291,22 +231,12 @@ func TestValidateDetectsUndefinedEnum(t *testing.T) {
 
 func TestValidatePassesValidEnums(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"Product"},
-		Enums:       map[string][]string{"ProductStatus": {"DRAFT", "PUBLISHED"}},
-		Entities: map[string]*parser.ParsedEntity{
-			"Product": {
-				Name:       "Product",
-				FieldOrder: []string{"id", "status", "tags"},
-				Fields: map[string]*parser.ParsedField{
-					"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"status": testutil.MustParsedField(t, "status", "enum(ProductStatus)"),
-					"tags":   testutil.MustParsedField(t, "tags", "array(ProductStatus)"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "Product",
+		"id", "uuid [primary]",
+		"status", "enum(ProductStatus)",
+		"tags", "array(ProductStatus)",
+	)
+	schema.Enums = map[string][]string{"ProductStatus": {"DRAFT", "PUBLISHED"}}
 	schema.Entities["Product"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -318,18 +248,10 @@ func TestValidatePassesValidEnums(t *testing.T) {
 
 func TestValidateDetectsEmptyProjectName(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id"},
-				Fields: map[string]*parser.ParsedField{
-					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+	)
+	schema.Project.Name = ""
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -344,23 +266,13 @@ func TestValidateDetectsEmptyProjectName(t *testing.T) {
 	}
 }
 
-func TestValidateDetectsManyOnNonRelation(t *testing.T) {
+func TestValidatorAcceptsValidSchemaAfterLexerRejectsMany(t *testing.T) {
 	t.Parallel()
 	// Note: "many" on non-relation is caught by the lexer, not the validator.
 	// This test verifies the lexer catches it before validation.
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id"},
-				Fields: map[string]*parser.ParsedField{
-					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+	)
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	// Valid schema should pass — the lexer rejects "many" on non-relation at parse time.
@@ -371,23 +283,13 @@ func TestValidateDetectsManyOnNonRelation(t *testing.T) {
 	}
 }
 
-func TestValidateDetectsOnDeleteOnNonRelation(t *testing.T) {
+func TestValidatorAcceptsValidSchemaAfterLexerRejectsOnDelete(t *testing.T) {
 	t.Parallel()
 	// Note: on_delete on non-relation is caught by the lexer, not the validator.
 	// This test verifies the lexer catches it before validation.
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id"},
-				Fields: map[string]*parser.ParsedField{
-					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+	)
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	// Valid schema should pass — the lexer rejects on_delete on non-relation at parse time.
@@ -400,20 +302,10 @@ func TestValidateDetectsOnDeleteOnNonRelation(t *testing.T) {
 
 func TestValidateDetectsEmptyEnum(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Enums:       map[string][]string{"Status": {}},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id"},
-				Fields: map[string]*parser.ParsedField{
-					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+	)
+	schema.Enums = map[string][]string{"Status": {}}
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -430,22 +322,10 @@ func TestValidateDetectsEmptyEnum(t *testing.T) {
 
 func TestValidateDetectsEmptyIndexFields(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id"},
-				Fields: map[string]*parser.ParsedField{
-					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
-				},
-				Indexes: []*parser.ParsedIndex{
-					{Fields: []string{}, Type: "btree"},
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+	)
+	schema.Entities["User"].Indexes = []*parser.ParsedIndex{{Fields: []string{}, Type: "btree"}}
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -462,23 +342,11 @@ func TestValidateDetectsEmptyIndexFields(t *testing.T) {
 
 func TestValidateDetectsSortLengthMismatch(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "email"},
-				Fields: map[string]*parser.ParsedField{
-					"id":    testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"email": testutil.MustParsedField(t, "email", "string"),
-				},
-				Indexes: []*parser.ParsedIndex{
-					{Fields: []string{"id", "email"}, Sort: []string{"asc"}, Type: "btree"},
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"email", "string",
+	)
+	schema.Entities["User"].Indexes = []*parser.ParsedIndex{{Fields: []string{"id", "email"}, Sort: []string{"asc"}, Type: "btree"}}
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -505,21 +373,11 @@ func nonWarnings(errs []ValidationError) []ValidationError {
 
 func TestValidateAuthEntityMissingEmailPassword(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		Auth:        &parser.AuthConfig{Type: "jwt", Entity: "Product"},
-		EntityOrder: []string{"Product"},
-		Entities: map[string]*parser.ParsedEntity{
-			"Product": {
-				Name:       "Product",
-				FieldOrder: []string{"id", "name"},
-				Fields: map[string]*parser.ParsedField{
-					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"name": testutil.MustParsedField(t, "name", "string"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "Product",
+		"id", "uuid [primary]",
+		"name", "string",
+	)
+	schema.Auth = &parser.AuthConfig{Type: "jwt", Entity: "Product"}
 	schema.Entities["Product"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -536,22 +394,12 @@ func TestValidateAuthEntityMissingEmailPassword(t *testing.T) {
 
 func TestValidateAuthEntityValidEmailPassword(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		Auth:        &parser.AuthConfig{Type: "jwt", Entity: "User"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "email", "password"},
-				Fields: map[string]*parser.ParsedField{
-					"id":       testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"email":    testutil.MustParsedField(t, "email", "string"),
-					"password": testutil.MustParsedField(t, "password", "string"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"email", "string",
+		"password", "string",
+	)
+	schema.Auth = &parser.AuthConfig{Type: "jwt", Entity: "User"}
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -565,20 +413,10 @@ func TestValidateAuthEntityValidEmailPassword(t *testing.T) {
 
 func TestValidateDefaultNowOnNonDatetime(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "count"},
-				Fields: map[string]*parser.ParsedField{
-					"id":    testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"count": testutil.MustParsedField(t, "count", "int [default:now()]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"count", "int [default:now()]",
+	)
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -595,20 +433,10 @@ func TestValidateDefaultNowOnNonDatetime(t *testing.T) {
 
 func TestValidateDefaultNowOnDatetime(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "created"},
-				Fields: map[string]*parser.ParsedField{
-					"id":      testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"created": testutil.MustParsedField(t, "created", "datetime [default:now()]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"created", "datetime [default:now()]",
+	)
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -622,20 +450,10 @@ func TestValidateDefaultNowOnDatetime(t *testing.T) {
 
 func TestValidateDefaultUuidOnNonUuid(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "name"},
-				Fields: map[string]*parser.ParsedField{
-					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"name": testutil.MustParsedField(t, "name", "string [default:uuid()]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"name", "string [default:uuid()]",
+	)
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -667,22 +485,10 @@ func TestValidateDeployPortRange(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			schema := &parser.ParsedSchema{
-				Project: parser.ProjectConfig{
-					Name:   "Test",
-					Deploy: &parser.DeployConfig{Port: tt.port},
-				},
-				EntityOrder: []string{"User"},
-				Entities: map[string]*parser.ParsedEntity{
-					"User": {
-						Name:       "User",
-						FieldOrder: []string{"id"},
-						Fields: map[string]*parser.ParsedField{
-							"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
-						},
-					},
-				},
-			}
+			schema := schemaWithFields(t, "User",
+				"id", "uuid [primary]",
+			)
+			schema.Project = parser.ProjectConfig{Name: "Test", Deploy: &parser.DeployConfig{Port: tt.port}}
 			schema.Entities["User"].Fields["id"].IsPrimary = true
 
 			errs := New(schema).Validate()
@@ -854,23 +660,11 @@ func TestValidateIndexOnFKFieldNoWarning(t *testing.T) {
 
 func TestValidateIndexOnPrimitiveField(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "email"},
-				Fields: map[string]*parser.ParsedField{
-					"id":    testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"email": testutil.MustParsedField(t, "email", "string"),
-				},
-				Indexes: []*parser.ParsedIndex{
-					{Fields: []string{"email"}, Type: "btree"},
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"email", "string",
+	)
+	schema.Entities["User"].Indexes = []*parser.ParsedIndex{{Fields: []string{"email"}, Type: "btree"}}
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -884,21 +678,11 @@ func TestValidateIndexOnPrimitiveField(t *testing.T) {
 
 func TestValidateEnumDefaultMustMatchDeclaredValues(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"Product"},
-		Enums:       map[string][]string{"ProductStatus": {"DRAFT", "PUBLISHED"}},
-		Entities: map[string]*parser.ParsedEntity{
-			"Product": {
-				Name:       "Product",
-				FieldOrder: []string{"id", "status"},
-				Fields: map[string]*parser.ParsedField{
-					"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"status": testutil.MustParsedField(t, "status", "enum(ProductStatus) [default:DRAFTT]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "Product",
+		"id", "uuid [primary]",
+		"status", "enum(ProductStatus) [default:DRAFTT]",
+	)
+	schema.Enums = map[string][]string{"ProductStatus": {"DRAFT", "PUBLISHED"}}
 	schema.Entities["Product"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -916,21 +700,11 @@ func TestValidateEnumDefaultMustMatchDeclaredValues(t *testing.T) {
 
 func TestValidateEnumDefaultValidValue(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"Product"},
-		Enums:       map[string][]string{"ProductStatus": {"DRAFT", "PUBLISHED"}},
-		Entities: map[string]*parser.ParsedEntity{
-			"Product": {
-				Name:       "Product",
-				FieldOrder: []string{"id", "status"},
-				Fields: map[string]*parser.ParsedField{
-					"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"status": testutil.MustParsedField(t, "status", "enum(ProductStatus) [default:DRAFT]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "Product",
+		"id", "uuid [primary]",
+		"status", "enum(ProductStatus) [default:DRAFT]",
+	)
+	schema.Enums = map[string][]string{"ProductStatus": {"DRAFT", "PUBLISHED"}}
 	schema.Entities["Product"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -944,20 +718,10 @@ func TestValidateEnumDefaultValidValue(t *testing.T) {
 
 func TestValidateNumericValidationValueNotNumeric(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "age"},
-				Fields: map[string]*parser.ParsedField{
-					"id":  testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"age": testutil.MustParsedField(t, "age", "int [gte:notanumber]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"age", "int [gte:notanumber]",
+	)
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -975,20 +739,10 @@ func TestValidateNumericValidationValueNotNumeric(t *testing.T) {
 
 func TestValidateNumericValidationValueValid(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "age"},
-				Fields: map[string]*parser.ParsedField{
-					"id":  testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"age": testutil.MustParsedField(t, "age", "int [gte:0, lt:150]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"age", "int [gte:0, lt:150]",
+	)
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -1002,20 +756,10 @@ func TestValidateNumericValidationValueValid(t *testing.T) {
 
 func TestValidateEntityEnumNameCollision(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"Status"},
-		Enums:       map[string][]string{"Status": {"ACTIVE", "INACTIVE"}},
-		Entities: map[string]*parser.ParsedEntity{
-			"Status": {
-				Name:       "Status",
-				FieldOrder: []string{"id"},
-				Fields: map[string]*parser.ParsedField{
-					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "Status",
+		"id", "uuid [primary]",
+	)
+	schema.Enums = map[string][]string{"Status": {"ACTIVE", "INACTIVE"}}
 	schema.Entities["Status"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -1032,25 +776,13 @@ func TestValidateEntityEnumNameCollision(t *testing.T) {
 
 func TestValidatePermissionRolesEmptyAuthRoles(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		Auth:        &parser.AuthConfig{Type: "jwt"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "email", "password"},
-				Fields: map[string]*parser.ParsedField{
-					"id":       testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"email":    testutil.MustParsedField(t, "email", "string"),
-					"password": testutil.MustParsedField(t, "password", "string"),
-				},
-				Permissions: &parser.ParsedPermissions{
-					Read: []string{"Admin"},
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"email", "string",
+		"password", "string",
+	)
+	schema.Auth = &parser.AuthConfig{Type: "jwt"}
+	schema.Entities["User"].Permissions = &parser.ParsedPermissions{Read: []string{"Admin"}}
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -1067,20 +799,10 @@ func TestValidatePermissionRolesEmptyAuthRoles(t *testing.T) {
 
 func TestValidateContradictoryStringMinMax(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "name"},
-				Fields: map[string]*parser.ParsedField{
-					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"name": testutil.MustParsedField(t, "name", "string [min:10, max:5]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"name", "string [min:10, max:5]",
+	)
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -1098,20 +820,10 @@ func TestValidateContradictoryStringMinMax(t *testing.T) {
 
 func TestValidateValidStringMinMax(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "name"},
-				Fields: map[string]*parser.ParsedField{
-					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"name": testutil.MustParsedField(t, "name", "string [min:2, max:50]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"name", "string [min:2, max:50]",
+	)
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -1125,20 +837,10 @@ func TestValidateValidStringMinMax(t *testing.T) {
 
 func TestValidateContradictoryNumericGteLt(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "age"},
-				Fields: map[string]*parser.ParsedField{
-					"id":  testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"age": testutil.MustParsedField(t, "age", "int [gte:100, lt:10]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"age", "int [gte:100, lt:10]",
+	)
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -1156,20 +858,10 @@ func TestValidateContradictoryNumericGteLt(t *testing.T) {
 
 func TestValidateContradictoryNumericGtLte(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "score"},
-				Fields: map[string]*parser.ParsedField{
-					"id":    testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"score": testutil.MustParsedField(t, "score", "int [gt:50, lte:50]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"score", "int [gt:50, lte:50]",
+	)
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -1187,20 +879,10 @@ func TestValidateContradictoryNumericGtLte(t *testing.T) {
 
 func TestValidateValidNumericRange(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "age"},
-				Fields: map[string]*parser.ParsedField{
-					"id":  testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"age": testutil.MustParsedField(t, "age", "int [gte:0, lt:150]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"age", "int [gte:0, lt:150]",
+	)
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -1214,21 +896,11 @@ func TestValidateValidNumericRange(t *testing.T) {
 
 func TestValidateUnusedEnumWarning(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Enums:       map[string][]string{"Role": {"ADMIN", "USER"}, "Status": {"ACTIVE", "INACTIVE"}},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "role"},
-				Fields: map[string]*parser.ParsedField{
-					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"role": testutil.MustParsedField(t, "role", "enum(Role)"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"role", "enum(Role)",
+	)
+	schema.Enums = map[string][]string{"Role": {"ADMIN", "USER"}, "Status": {"ACTIVE", "INACTIVE"}}
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 	schema.Entities["User"].Fields["role"].Type = "enum"
 	schema.Entities["User"].Fields["role"].TargetType = "Role"
@@ -1247,21 +919,11 @@ func TestValidateUnusedEnumWarning(t *testing.T) {
 
 func TestValidateUsedEnumNoWarning(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Enums:       map[string][]string{"Role": {"ADMIN", "USER"}},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "role"},
-				Fields: map[string]*parser.ParsedField{
-					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"role": testutil.MustParsedField(t, "role", "enum(Role)"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"role", "enum(Role)",
+	)
+	schema.Enums = map[string][]string{"Role": {"ADMIN", "USER"}}
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 	schema.Entities["User"].Fields["role"].Type = "enum"
 	schema.Entities["User"].Fields["role"].TargetType = "Role"
@@ -1274,7 +936,7 @@ func TestValidateUsedEnumNoWarning(t *testing.T) {
 	}
 }
 
-func TestValidateOnDeleteValueInvalid(t *testing.T) {
+func TestValidatorAcceptsValidSchemaAfterLexerRejectsOnDeleteValue(t *testing.T) {
 	t.Parallel()
 	// Note: invalid on_delete values are caught by the lexer, not the validator.
 	// This test verifies the lexer catches it before validation.
@@ -1311,22 +973,12 @@ func TestValidateOnDeleteValueInvalid(t *testing.T) {
 
 func TestValidateSeedValueTypeMismatch(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "age"},
-				Fields: map[string]*parser.ParsedField{
-					"id":  testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"age": testutil.MustParsedField(t, "age", "int"),
-				},
-				Seed: []map[string]any{
-					{"id": "550e8400-e29b-41d4-a716-446655440000", "age": true},
-				},
-			},
-		},
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"age", "int",
+	)
+	schema.Entities["User"].Seed = []map[string]any{
+		{"id": "550e8400-e29b-41d4-a716-446655440000", "age": true},
 	}
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
@@ -1345,22 +997,12 @@ func TestValidateSeedValueTypeMismatch(t *testing.T) {
 
 func TestValidateSeedBooleanTypeMismatch(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"Config"},
-		Entities: map[string]*parser.ParsedEntity{
-			"Config": {
-				Name:       "Config",
-				FieldOrder: []string{"id", "enabled"},
-				Fields: map[string]*parser.ParsedField{
-					"id":      testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"enabled": testutil.MustParsedField(t, "enabled", "boolean"),
-				},
-				Seed: []map[string]any{
-					{"id": "550e8400-e29b-41d4-a716-446655440000", "enabled": "notabool"},
-				},
-			},
-		},
+	schema := schemaWithFields(t, "Config",
+		"id", "uuid [primary]",
+		"enabled", "boolean",
+	)
+	schema.Entities["Config"].Seed = []map[string]any{
+		{"id": "550e8400-e29b-41d4-a716-446655440000", "enabled": "notabool"},
 	}
 	schema.Entities["Config"].Fields["id"].IsPrimary = true
 
@@ -1589,23 +1231,13 @@ func TestValidateGenuineManyToManyHasNoReconciliationWarning(t *testing.T) {
 
 func TestValidateSeedUniqueConstraintViolation(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "email"},
-				Fields: map[string]*parser.ParsedField{
-					"id":    testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"email": testutil.MustParsedField(t, "email", "string [unique]"),
-				},
-				Seed: []map[string]any{
-					{"id": "11111111-1111-1111-1111-111111111111", "email": "a@test.com"},
-					{"id": "22222222-2222-2222-2222-222222222222", "email": "a@test.com"},
-				},
-			},
-		},
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"email", "string [unique]",
+	)
+	schema.Entities["User"].Seed = []map[string]any{
+		{"id": "11111111-1111-1111-1111-111111111111", "email": "a@test.com"},
+		{"id": "22222222-2222-2222-2222-222222222222", "email": "a@test.com"},
 	}
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
@@ -1624,23 +1256,13 @@ func TestValidateSeedUniqueConstraintViolation(t *testing.T) {
 
 func TestValidateSeedUniqueConstraintPass(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "email"},
-				Fields: map[string]*parser.ParsedField{
-					"id":    testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"email": testutil.MustParsedField(t, "email", "string [unique]"),
-				},
-				Seed: []map[string]any{
-					{"id": "11111111-1111-1111-1111-111111111111", "email": "a@test.com"},
-					{"id": "22222222-2222-2222-2222-222222222222", "email": "b@test.com"},
-				},
-			},
-		},
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"email", "string [unique]",
+	)
+	schema.Entities["User"].Seed = []map[string]any{
+		{"id": "11111111-1111-1111-1111-111111111111", "email": "a@test.com"},
+		{"id": "22222222-2222-2222-2222-222222222222", "email": "b@test.com"},
 	}
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
@@ -1655,21 +1277,11 @@ func TestValidateSeedUniqueConstraintPass(t *testing.T) {
 
 func TestValidateSeedInvalidUUID(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id"},
-				Fields: map[string]*parser.ParsedField{
-					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
-				},
-				Seed: []map[string]any{
-					{"id": "not-a-uuid"},
-				},
-			},
-		},
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+	)
+	schema.Entities["User"].Seed = []map[string]any{
+		{"id": "not-a-uuid"},
 	}
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
@@ -1688,21 +1300,11 @@ func TestValidateSeedInvalidUUID(t *testing.T) {
 
 func TestValidateSeedValidUUID(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id"},
-				Fields: map[string]*parser.ParsedField{
-					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
-				},
-				Seed: []map[string]any{
-					{"id": "550e8400-e29b-41d4-a716-446655440000"},
-				},
-			},
-		},
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+	)
+	schema.Entities["User"].Seed = []map[string]any{
+		{"id": "550e8400-e29b-41d4-a716-446655440000"},
 	}
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
@@ -1717,22 +1319,12 @@ func TestValidateSeedValidUUID(t *testing.T) {
 
 func TestValidateSeedInvalidDatetime(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "createdAt"},
-				Fields: map[string]*parser.ParsedField{
-					"id":        testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"createdAt": testutil.MustParsedField(t, "createdAt", "datetime"),
-				},
-				Seed: []map[string]any{
-					{"id": "550e8400-e29b-41d4-a716-446655440000", "createdAt": "not-a-date"},
-				},
-			},
-		},
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"createdAt", "datetime",
+	)
+	schema.Entities["User"].Seed = []map[string]any{
+		{"id": "550e8400-e29b-41d4-a716-446655440000", "createdAt": "not-a-date"},
 	}
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
@@ -1751,22 +1343,12 @@ func TestValidateSeedInvalidDatetime(t *testing.T) {
 
 func TestValidateSeedValidDatetime(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "createdAt"},
-				Fields: map[string]*parser.ParsedField{
-					"id":        testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"createdAt": testutil.MustParsedField(t, "createdAt", "datetime"),
-				},
-				Seed: []map[string]any{
-					{"id": "550e8400-e29b-41d4-a716-446655440000", "createdAt": "2024-01-15T10:30:00Z"},
-				},
-			},
-		},
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"createdAt", "datetime",
+	)
+	schema.Entities["User"].Seed = []map[string]any{
+		{"id": "550e8400-e29b-41d4-a716-446655440000", "createdAt": "2024-01-15T10:30:00Z"},
 	}
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
@@ -1781,22 +1363,12 @@ func TestValidateSeedValidDatetime(t *testing.T) {
 
 func TestValidateSeedInvalidJSON(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "metadata"},
-				Fields: map[string]*parser.ParsedField{
-					"id":       testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"metadata": testutil.MustParsedField(t, "metadata", "json"),
-				},
-				Seed: []map[string]any{
-					{"id": "550e8400-e29b-41d4-a716-446655440000", "metadata": "{invalid json}"},
-				},
-			},
-		},
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"metadata", "json",
+	)
+	schema.Entities["User"].Seed = []map[string]any{
+		{"id": "550e8400-e29b-41d4-a716-446655440000", "metadata": "{invalid json}"},
 	}
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
@@ -1815,22 +1387,12 @@ func TestValidateSeedInvalidJSON(t *testing.T) {
 
 func TestValidateSeedValidJSON(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "metadata"},
-				Fields: map[string]*parser.ParsedField{
-					"id":       testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"metadata": testutil.MustParsedField(t, "metadata", "json"),
-				},
-				Seed: []map[string]any{
-					{"id": "550e8400-e29b-41d4-a716-446655440000", "metadata": `{"key":"value"}`},
-				},
-			},
-		},
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"metadata", "json",
+	)
+	schema.Entities["User"].Seed = []map[string]any{
+		{"id": "550e8400-e29b-41d4-a716-446655440000", "metadata": `{"key":"value"}`},
 	}
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
@@ -1845,22 +1407,10 @@ func TestValidateSeedValidJSON(t *testing.T) {
 
 func TestValidatePermissionRoleIdentifierInvalid(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id"},
-				Fields: map[string]*parser.ParsedField{
-					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
-				},
-				Permissions: &parser.ParsedPermissions{
-					Read: []string{"valid-role", "123invalid"},
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+	)
+	schema.Entities["User"].Permissions = &parser.ParsedPermissions{Read: []string{"valid-role", "123invalid"}}
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -1877,23 +1427,10 @@ func TestValidatePermissionRoleIdentifierInvalid(t *testing.T) {
 
 func TestValidatePermissionRoleSpecialTokensAllowed(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id"},
-				Fields: map[string]*parser.ParsedField{
-					"id": testutil.MustParsedField(t, "id", "uuid [primary]"),
-				},
-				Permissions: &parser.ParsedPermissions{
-					Read:   []string{"*", "@Owner"},
-					Create: []string{"Admin"},
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+	)
+	schema.Entities["User"].Permissions = &parser.ParsedPermissions{Read: []string{"*", "@Owner"}, Create: []string{"Admin"}}
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -1906,22 +1443,12 @@ func TestValidatePermissionRoleSpecialTokensAllowed(t *testing.T) {
 
 func TestValidateSeedDateTypeMismatch(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"Event"},
-		Entities: map[string]*parser.ParsedEntity{
-			"Event": {
-				Name:       "Event",
-				FieldOrder: []string{"id", "started_on"},
-				Fields: map[string]*parser.ParsedField{
-					"id":         testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"started_on": testutil.MustParsedField(t, "started_on", "date"),
-				},
-				Seed: []map[string]any{
-					{"id": "550e8400-e29b-41d4-a716-446655440000", "started_on": "not-a-date"},
-				},
-			},
-		},
+	schema := schemaWithFields(t, "Event",
+		"id", "uuid [primary]",
+		"started_on", "date",
+	)
+	schema.Entities["Event"].Seed = []map[string]any{
+		{"id": "550e8400-e29b-41d4-a716-446655440000", "started_on": "not-a-date"},
 	}
 	schema.Entities["Event"].Fields["id"].IsPrimary = true
 
@@ -1940,22 +1467,12 @@ func TestValidateSeedDateTypeMismatch(t *testing.T) {
 
 func TestValidateSeedDateValid(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"Event"},
-		Entities: map[string]*parser.ParsedEntity{
-			"Event": {
-				Name:       "Event",
-				FieldOrder: []string{"id", "started_on"},
-				Fields: map[string]*parser.ParsedField{
-					"id":         testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"started_on": testutil.MustParsedField(t, "started_on", "date"),
-				},
-				Seed: []map[string]any{
-					{"id": "550e8400-e29b-41d4-a716-446655440000", "started_on": "2024-05-01"},
-				},
-			},
-		},
+	schema := schemaWithFields(t, "Event",
+		"id", "uuid [primary]",
+		"started_on", "date",
+	)
+	schema.Entities["Event"].Seed = []map[string]any{
+		{"id": "550e8400-e29b-41d4-a716-446655440000", "started_on": "2024-05-01"},
 	}
 	schema.Entities["Event"].Fields["id"].IsPrimary = true
 
@@ -1970,25 +1487,15 @@ func TestValidateSeedDateValid(t *testing.T) {
 
 func TestValidateSeedEnumInvalidValue(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project: parser.ProjectConfig{Name: "Test"},
-		Enums: map[string][]string{
-			"Status": {"ACTIVE", "INACTIVE"},
-		},
-		EntityOrder: []string{"Product"},
-		Entities: map[string]*parser.ParsedEntity{
-			"Product": {
-				Name:       "Product",
-				FieldOrder: []string{"id", "status"},
-				Fields: map[string]*parser.ParsedField{
-					"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"status": testutil.MustParsedField(t, "status", "enum(Status)"),
-				},
-				Seed: []map[string]any{
-					{"id": "550e8400-e29b-41d4-a716-446655440000", "status": "BOGUS"},
-				},
-			},
-		},
+	schema := schemaWithFields(t, "Product",
+		"id", "uuid [primary]",
+		"status", "enum(Status)",
+	)
+	schema.Enums = map[string][]string{
+		"Status": {"ACTIVE", "INACTIVE"},
+	}
+	schema.Entities["Product"].Seed = []map[string]any{
+		{"id": "550e8400-e29b-41d4-a716-446655440000", "status": "BOGUS"},
 	}
 	schema.Entities["Product"].Fields["id"].IsPrimary = true
 
@@ -2007,25 +1514,15 @@ func TestValidateSeedEnumInvalidValue(t *testing.T) {
 
 func TestValidateSeedEnumValidValue(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project: parser.ProjectConfig{Name: "Test"},
-		Enums: map[string][]string{
-			"Status": {"ACTIVE", "INACTIVE"},
-		},
-		EntityOrder: []string{"Product"},
-		Entities: map[string]*parser.ParsedEntity{
-			"Product": {
-				Name:       "Product",
-				FieldOrder: []string{"id", "status"},
-				Fields: map[string]*parser.ParsedField{
-					"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"status": testutil.MustParsedField(t, "status", "enum(Status)"),
-				},
-				Seed: []map[string]any{
-					{"id": "550e8400-e29b-41d4-a716-446655440000", "status": "ACTIVE"},
-				},
-			},
-		},
+	schema := schemaWithFields(t, "Product",
+		"id", "uuid [primary]",
+		"status", "enum(Status)",
+	)
+	schema.Enums = map[string][]string{
+		"Status": {"ACTIVE", "INACTIVE"},
+	}
+	schema.Entities["Product"].Seed = []map[string]any{
+		{"id": "550e8400-e29b-41d4-a716-446655440000", "status": "ACTIVE"},
 	}
 	schema.Entities["Product"].Fields["id"].IsPrimary = true
 
@@ -2040,22 +1537,12 @@ func TestValidateSeedEnumValidValue(t *testing.T) {
 
 func TestValidateSeedArrayInvalidValue(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"Item"},
-		Entities: map[string]*parser.ParsedEntity{
-			"Item": {
-				Name:       "Item",
-				FieldOrder: []string{"id", "tags"},
-				Fields: map[string]*parser.ParsedField{
-					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"tags": testutil.MustParsedField(t, "tags", "array(string)"),
-				},
-				Seed: []map[string]any{
-					{"id": "550e8400-e29b-41d4-a716-446655440000", "tags": "not-json"},
-				},
-			},
-		},
+	schema := schemaWithFields(t, "Item",
+		"id", "uuid [primary]",
+		"tags", "array(string)",
+	)
+	schema.Entities["Item"].Seed = []map[string]any{
+		{"id": "550e8400-e29b-41d4-a716-446655440000", "tags": "not-json"},
 	}
 	schema.Entities["Item"].Fields["id"].IsPrimary = true
 
@@ -2074,22 +1561,12 @@ func TestValidateSeedArrayInvalidValue(t *testing.T) {
 
 func TestValidateSeedArrayValidValue(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"Item"},
-		Entities: map[string]*parser.ParsedEntity{
-			"Item": {
-				Name:       "Item",
-				FieldOrder: []string{"id", "tags"},
-				Fields: map[string]*parser.ParsedField{
-					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"tags": testutil.MustParsedField(t, "tags", "array(string)"),
-				},
-				Seed: []map[string]any{
-					{"id": "550e8400-e29b-41d4-a716-446655440000", "tags": []any{"a", "b"}},
-				},
-			},
-		},
+	schema := schemaWithFields(t, "Item",
+		"id", "uuid [primary]",
+		"tags", "array(string)",
+	)
+	schema.Entities["Item"].Seed = []map[string]any{
+		{"id": "550e8400-e29b-41d4-a716-446655440000", "tags": []any{"a", "b"}},
 	}
 	schema.Entities["Item"].Fields["id"].IsPrimary = true
 
@@ -2104,20 +1581,10 @@ func TestValidateSeedArrayValidValue(t *testing.T) {
 
 func TestValidateStringMinMaxNonNumeric(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"User"},
-		Entities: map[string]*parser.ParsedEntity{
-			"User": {
-				Name:       "User",
-				FieldOrder: []string{"id", "name"},
-				Fields: map[string]*parser.ParsedField{
-					"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"name": testutil.MustParsedField(t, "name", "string [max:abc]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "User",
+		"id", "uuid [primary]",
+		"name", "string [max:abc]",
+	)
 	schema.Entities["User"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -2207,20 +1674,10 @@ func TestValidateNoCircularRelationWarningForAcyclic(t *testing.T) {
 
 func TestValidateNoCircularRelationWarningForSelfReference(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"Category"},
-		Entities: map[string]*parser.ParsedEntity{
-			"Category": {
-				Name:       "Category",
-				FieldOrder: []string{"id", "parentId"},
-				Fields: map[string]*parser.ParsedField{
-					"id":       testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"parentId": testutil.MustParsedField(t, "parentId", "relation(Category) [optional]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "Category",
+		"id", "uuid [primary]",
+		"parentId", "relation(Category) [optional]",
+	)
 	schema.Entities["Category"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -2268,20 +1725,10 @@ func TestValidateNoCircularRelationWarningForManyToMany(t *testing.T) {
 
 func TestValidateDefaultDateInvalid(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"Event"},
-		Entities: map[string]*parser.ParsedEntity{
-			"Event": {
-				Name:       "Event",
-				FieldOrder: []string{"id", "started_on"},
-				Fields: map[string]*parser.ParsedField{
-					"id":         testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"started_on": testutil.MustParsedField(t, "started_on", "date [default:not-a-date]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "Event",
+		"id", "uuid [primary]",
+		"started_on", "date [default:not-a-date]",
+	)
 	schema.Entities["Event"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -2298,20 +1745,10 @@ func TestValidateDefaultDateInvalid(t *testing.T) {
 
 func TestValidateDefaultUuidInvalid(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"Doc"},
-		Entities: map[string]*parser.ParsedEntity{
-			"Doc": {
-				Name:       "Doc",
-				FieldOrder: []string{"id", "external_id"},
-				Fields: map[string]*parser.ParsedField{
-					"id":          testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"external_id": testutil.MustParsedField(t, "external_id", "uuid [default:not-a-uuid]"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "Doc",
+		"id", "uuid [primary]",
+		"external_id", "uuid [default:not-a-uuid]",
+	)
 	schema.Entities["Doc"].Fields["id"].IsPrimary = true
 
 	errs := New(schema).Validate()
@@ -2419,20 +1856,10 @@ func TestValidateRejectsNonPositiveStringBounds(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			schema := &parser.ParsedSchema{
-				Project:     parser.ProjectConfig{Name: "Test"},
-				EntityOrder: []string{"Doc"},
-				Entities: map[string]*parser.ParsedEntity{
-					"Doc": {
-						Name:       "Doc",
-						FieldOrder: []string{"id", "name"},
-						Fields: map[string]*parser.ParsedField{
-							"id":   testutil.MustParsedField(t, "id", "uuid [primary]"),
-							"name": testutil.MustParsedField(t, "name", tt.def),
-						},
-					},
-				},
-			}
+			schema := schemaWithFields(t, "Doc",
+				"id", "uuid [primary]",
+				"name", tt.def,
+			)
 
 			errs := nonWarnings(New(schema).Validate())
 			found := false
@@ -2461,21 +1888,11 @@ func TestValidateRejectsEnumWireValueCollision(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			schema := &parser.ParsedSchema{
-				Project:     parser.ProjectConfig{Name: "Test"},
-				EntityOrder: []string{"Doc"},
-				Enums:       map[string][]string{"Status": tt.values},
-				Entities: map[string]*parser.ParsedEntity{
-					"Doc": {
-						Name:       "Doc",
-						FieldOrder: []string{"id", "status"},
-						Fields: map[string]*parser.ParsedField{
-							"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
-							"status": testutil.MustParsedField(t, "status", "enum(Status)"),
-						},
-					},
-				},
-			}
+			schema := schemaWithFields(t, "Doc",
+				"id", "uuid [primary]",
+				"status", "enum(Status)",
+			)
+			schema.Enums = map[string][]string{"Status": tt.values}
 
 			errs := nonWarnings(New(schema).Validate())
 			found := false
@@ -2508,23 +1925,13 @@ func TestValidateRejectsUnparseableNumericSeed(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			schema := &parser.ParsedSchema{
-				Project:     parser.ProjectConfig{Name: "Test"},
-				EntityOrder: []string{"Doc"},
-				Entities: map[string]*parser.ParsedEntity{
-					"Doc": {
-						Name:       "Doc",
-						FieldOrder: []string{"id", "count", "big", "price"},
-						Fields: map[string]*parser.ParsedField{
-							"id":    testutil.MustParsedField(t, "id", "uuid [primary]"),
-							"count": testutil.MustParsedField(t, "count", "int"),
-							"big":   testutil.MustParsedField(t, "big", "bigint"),
-							"price": testutil.MustParsedField(t, "price", "decimal"),
-						},
-						Seed: []map[string]any{{"id": "550e8400-e29b-41d4-a716-446655440000", tt.field: tt.value}},
-					},
-				},
-			}
+			schema := schemaWithFields(t, "Doc",
+				"id", "uuid [primary]",
+				"count", "int",
+				"big", "bigint",
+				"price", "decimal",
+			)
+			schema.Entities["Doc"].Seed = []map[string]any{{"id": "550e8400-e29b-41d4-a716-446655440000", tt.field: tt.value}}
 
 			errs := nonWarnings(New(schema).Validate())
 			found := false
@@ -2542,21 +1949,11 @@ func TestValidateRejectsUnparseableNumericSeed(t *testing.T) {
 
 func TestValidateSortsErrorsByMessageTiebreaker(t *testing.T) {
 	t.Parallel()
-	schema := &parser.ParsedSchema{
-		Project:     parser.ProjectConfig{Name: "Test"},
-		EntityOrder: []string{"Doc"},
-		Enums:       map[string][]string{"Status": {"A", "a", ""}},
-		Entities: map[string]*parser.ParsedEntity{
-			"Doc": {
-				Name:       "Doc",
-				FieldOrder: []string{"id", "status"},
-				Fields: map[string]*parser.ParsedField{
-					"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
-					"status": testutil.MustParsedField(t, "status", "enum(Status)"),
-				},
-			},
-		},
-	}
+	schema := schemaWithFields(t, "Doc",
+		"id", "uuid [primary]",
+		"status", "enum(Status)",
+	)
+	schema.Enums = map[string][]string{"Status": {"A", "a", ""}}
 
 	errs := nonWarnings(New(schema).Validate())
 	if len(errs) < 2 {
@@ -2575,6 +1972,42 @@ func TestValidateSortsErrorsByMessageTiebreaker(t *testing.T) {
 	}
 	if !strings.Contains(errs[0].Message, "enum value must not be empty") {
 		t.Fatalf("first error = %q, want the empty-value error", errs[0].Message)
+	}
+}
+
+// schemaWithFields builds a minimal one-entity schema from "name", "type
+// [modifiers]" pairs. It mirrors the parser's field order and marks the id
+// field primary (or the first field when there is no id) unless a definition
+// already declares a primary key.
+func schemaWithFields(t *testing.T, entityName string, defs ...string) *parser.ParsedSchema {
+	t.Helper()
+	fields := make(map[string]*parser.ParsedField, len(defs)/2)
+	order := make([]string, 0, len(defs)/2)
+	hasPrimary := false
+	for i := 0; i+1 < len(defs); i += 2 {
+		name, def := defs[i], defs[i+1]
+		field := testutil.MustParsedField(t, name, def)
+		fields[name] = field
+		order = append(order, name)
+		hasPrimary = hasPrimary || field.IsPrimary
+	}
+	if !hasPrimary && len(order) > 0 {
+		pk := order[0]
+		if _, ok := fields["id"]; ok {
+			pk = "id"
+		}
+		fields[pk].IsPrimary = true
+	}
+	return &parser.ParsedSchema{
+		Project:     parser.ProjectConfig{Name: "Test"},
+		EntityOrder: []string{entityName},
+		Entities: map[string]*parser.ParsedEntity{
+			entityName: {
+				Name:       entityName,
+				FieldOrder: order,
+				Fields:     fields,
+			},
+		},
 	}
 }
 
@@ -2825,7 +2258,7 @@ func TestValidateRejectsInvalidNumericDefault(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			errs := validateDefaultValue("Item", "amount", c.ftype, c.defaultVal)
+			errs := validateDefaultValue("Item", "amount", c.ftype, false, c.defaultVal)
 			if c.wantError {
 				if len(errs) != 1 || errs[0].Warning {
 					t.Fatalf("validateDefaultValue(%q, %q) = %v, want one error", c.ftype, c.defaultVal, errs)

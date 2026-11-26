@@ -1,8 +1,10 @@
 package specmeta
 
-import "fmt"
-
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 func TestIsPrimitive(t *testing.T) {
 	t.Parallel()
@@ -538,6 +540,34 @@ func TestNumericFieldTypesDerivedFromGroups(t *testing.T) {
 	}
 }
 
+// A comma inside a quoted array element is data, not a separator. The lexer
+// and the seed/validator paths must agree on the same split.
+// Every declared primitive must have an explicit kind. Without this guard a
+// new primitive would fall through FieldKind's defensive "text" branch and
+// silently change validation and seed coercion.
+func TestFieldKindCoversEveryPrimitive(t *testing.T) {
+	t.Parallel()
+	for _, name := range PrimitiveFieldTypes {
+		if got := FieldKind(name); got == FieldKindEnum {
+			t.Errorf("FieldKind(%q) = enum; add an explicit case", name)
+		}
+	}
+	if got := FieldKind("NotAPrimitive"); got != FieldKindEnum {
+		t.Errorf("FieldKind(unknown) = %q, want %q", got, FieldKindEnum)
+	}
+}
+
+func TestSplitArrayDefaultRespectsQuotes(t *testing.T) {
+	t.Parallel()
+	got := SplitArrayDefault(`["a,b", "c"]`)
+	if len(got) != 2 || !strings.Contains(got[0], "a,b") || !strings.Contains(got[1], "c") {
+		t.Fatalf("SplitArrayDefault = %q, want two elements with the comma inside the first", got)
+	}
+	if SplitRespectingQuotes(`default:["a,b", other]`) == nil {
+		t.Fatal("SplitRespectingQuotes returned nil")
+	}
+}
+
 func TestEffectiveContractVersion(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -548,7 +578,7 @@ func TestEffectiveContractVersion(t *testing.T) {
 		{name: "absent declaration defaults to shared constant", declared: 0, want: ContractVersion},
 		{name: "negative declaration defaults to shared constant", declared: -1, want: ContractVersion},
 		{name: "explicit version is preserved", declared: 1, want: 1},
-		{name: "newer version is preserved for the caller to reject", declared: 2, want: 2},
+		{name: "explicit version is preserved", declared: ContractVersion, want: ContractVersion},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

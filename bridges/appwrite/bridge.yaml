@@ -1,4 +1,5 @@
 name: appwrite
+contract_version: 2
 description: Appwrite bridge for DomainCraft — TablesDB schema + role teams + project settings in one appwrite.config.json, deployed with the Appwrite CLI v26 (itself the migration engine).
 version: "1.0.0"
 output_dir: generated

@@ -22,9 +22,9 @@ func TestContractVersionAliasesSpecmeta(t *testing.T) {
 }
 
 // TestContractVersionMatrix is the compatibility oracle for bridge contracts:
-// absent → 1 (accepted, deprecated); equal → accepted; newer → rejected whose a
-// hard error naming both versions. This is the core guard against silent
-// incompatibility between a bridge and the core.
+// absent → the core version (accepted); older and equal → accepted; newer →
+// rejected with a hard error naming both versions. This is the core guard
+// against silent incompatibility between a bridge and the core.
 func TestContractVersionMatrix(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -33,9 +33,10 @@ func TestContractVersionMatrix(t *testing.T) {
 		wantOK  bool
 		wantVer int
 	}{
-		{"absent defaults to 1", "name: b\n", true, 1},
-		{"explicit 1 accepted", "name: b\ncontract_version: 1\n", true, 1},
-		{"newer 2 rejected", "name: b\ncontract_version: 2\n", false, 0},
+		{"absent defaults to current", "name: b\n", true, specmeta.ContractVersion},
+		{"older 1 accepted", "name: b\ncontract_version: 1\n", true, 1},
+		{"explicit current accepted", "name: b\ncontract_version: 2\n", true, 2},
+		{"newer 3 rejected", "name: b\ncontract_version: 3\n", false, 0},
 		{"much newer 9 rejected", "name: b\ncontract_version: 9\n", false, 0},
 	}
 	for _, c := range cases {
@@ -81,7 +82,7 @@ func TestBridgeVersionParsed(t *testing.T) {
 // declares a newer contract.
 func TestNewerContractRejectedInBase(t *testing.T) {
 	t.Parallel()
-	base := writeBridgeConfig(t, "name: base\ncontract_version: 2\n")
+	base := writeBridgeConfig(t, "name: base\ncontract_version: 3\n")
 	adapter := writeBridgeConfig(t, "name: adapter\nextends: "+base+"\n")
 
 	r, err := New(adapter, nil)
@@ -97,7 +98,7 @@ func TestNewerContractRejectedInBase(t *testing.T) {
 // base attaches cleanly.
 func TestMatchingContractAcceptedInBase(t *testing.T) {
 	t.Parallel()
-	base := writeBridgeConfig(t, "name: base\ncontract_version: 1\n")
+	base := writeBridgeConfig(t, "name: base\ncontract_version: 2\n")
 	adapter := writeBridgeConfig(t, "name: adapter\nextends: "+base+"\n")
 
 	r, err := New(adapter, nil)

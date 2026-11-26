@@ -66,7 +66,7 @@ func (f *ParsedField) NavigationName() string {
 	}
 	// Strip an FK id suffix (Id / ID) via the shared specmeta helper.
 	// Lowercase "id" is not an FK format: fluid and squid keep their names.
-	if len(name) > 2 && specmeta.HasIDSuffix(name) {
+	if specmeta.HasIDSuffix(name) {
 		name = name[:len(name)-2]
 	}
 	if name == "" {
@@ -224,13 +224,14 @@ func ParseField(name string, fieldDef string) (*ParsedField, error) {
 
 	// Infer relation type for relation fields.
 	var relType string
-	if fd.Type == "relation" {
-		if fd.IsMany {
-			relType = "many-to-many"
-		} else if fd.IsUnique {
-			relType = "one-to-one"
-		} else {
-			relType = "many-to-one"
+	if fd.Type == specmeta.FieldTypeRelation {
+		switch {
+		case fd.IsMany:
+			relType = specmeta.RelationTypeManyToMany
+		case fd.IsUnique:
+			relType = specmeta.RelationTypeOneToOne
+		default:
+			relType = specmeta.RelationTypeManyToOne
 		}
 	}
 

@@ -45,6 +45,11 @@ func sortEntities(entities []Entity) []Entity {
 	// Deferring the sort until the next pop turns fan-out (N-1 insertions at
 	// one step) into one sort instead of N-1 full-slice copies. Ascending
 	// insertions never set dirty and keep the old O(1) append path.
+	//
+	// This is load-bearing, not micro-optimization: an unconditional sort at
+	// every pop was measured at +2884% on BenchmarkSortEntities/fanout/2000
+	// (303µs -> 9067µs, benchstat p=0.008) with identical allocations. Do not
+	// "simplify" it away.
 	dirty := false
 	insertReady := func(name string) {
 		if len(ready) > 0 && name < ready[len(ready)-1] {

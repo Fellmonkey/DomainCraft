@@ -21,30 +21,53 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// seedKind is the language-agnostic value kind of a seed field. It is derived
+// from the IR database type; the typed constants keep template formatters from
+// comparing free-form strings.
+type seedKind string
+
+const (
+	seedArray    seedKind = "array"
+	seedUUID     seedKind = "uuid"
+	seedText     seedKind = "text"
+	seedInt      seedKind = "int"
+	seedBigInt   seedKind = "bigint"
+	seedFloat    seedKind = "float"
+	seedDecimal  seedKind = "decimal"
+	seedBool     seedKind = "bool"
+	seedDate     seedKind = "date"
+	seedDateTime seedKind = "datetime"
+	seedJSON     seedKind = "json"
+	seedEnum     seedKind = "enum"
+)
+
+func kindOfSeed(dbType string) seedKind { return seedKind(ir.KindOf(dbType)) }
+
 // LiteralSpec declares how a bridge writes a scalar literal of one IR type in
 // its target language. Loaded from type_mappings.yaml `literals:` (keyed by IR
 // database type; "enum" is a reserved key for user-declared enums).
 type LiteralSpec struct {
-	// Parse is a printf template (one %s) that turns a serialized value into an
-	// expression, e.g. "Guid.Parse(%s)" or "JsonDocument.Parse(%s, default)".
+	// Parse is a printf template (one %s) that turns a serialized value into a
+	// target-language expression (a parse call in languages that need one).
 	Parse string `yaml:"parse"`
-	// Suffix is appended to a bare numeric literal, e.g. "L" (long) or "m" (decimal).
+	// Suffix is appended to a bare numeric literal, e.g. a long or decimal marker.
 	Suffix string `yaml:"suffix"`
-	// Default is the value-less default expression, e.g. "Guid.NewGuid()" or "0m".
+	// Default is the value-less default expression, e.g. a fresh identifier or
+	// a numeric zero, in the bridge's target language.
 	Default string `yaml:"default"`
-	// Member (enums) is a printf template (type, value) for a compile-time member
-	// reference, e.g. "%s.%s" -> "OrderStatus.Draft".
+	// Member (enums) is a printf template (type, value) for a compile-time
+	// reference to an enum member, e.g. "%s.%s".
 	Member string `yaml:"member"`
-	// Zero (enums) is a printf template (type) for a zero-valued enum, e.g. "(%s)0".
+	// Zero (enums) is a printf template (type) for a zero-valued enum expression.
 	Zero string `yaml:"zero"`
 }
 
 // ArrayLiteralSpec declares how a bridge writes array literals. %s placeholders
-// are filled with the bridge's array type (e.g. "List<int>").
+// are filled with the bridge's array type.
 type ArrayLiteralSpec struct {
-	Open  string `yaml:"open"`  // e.g. "new %s { "
-	Close string `yaml:"close"` // e.g. " }"
-	Empty string `yaml:"empty"` // e.g. "new %s()"
+	Open  string `yaml:"open"`  // bridge-specific opening delimiter/expression
+	Close string `yaml:"close"` // bridge-specific closing delimiter
+	Empty string `yaml:"empty"` // bridge-specific empty-array expression
 }
 
 // typeMappings is the raw shape of a bridge's type_mappings.yaml. A composed
@@ -281,83 +304,144 @@ func registerTypeFuncs(funcs map[string]any, m *typeMappings, w *dedupWarn) func
 	return languageType
 }
 
+// literalContext carries the bridge-owned specs and the shared formatter
+// closure through one literal-formatting call.
+type literalContext struct {
+	specs        *typeMappings
+	warn         *dedupWarn
+	languageType func(string, bool) string
+}
+
+// kindFormatters holds the three literal operations for one seed kind. A nil
+// operation falls back to the language-neutral JSON expression; that fallback
+// is what an array value or an unknown kind gets from literalValue today.
+type kindFormatters struct {
+	value  func(*literalContext, string, any) string
+	def    func(*literalContext, string) string
+	member func(*literalContext, string, string) string
+}
+
+// literalFormattersByKind is the single kind → formatter table. Adding a kind
+// means adding one row here, not editing three switch statements.
+var literalFormattersByKind = map[seedKind]kindFormatters{
+	seedArray:    {def: arrayDefault},
+	seedEnum:     {value: enumLiteral, def: enumDefault, member: enumMember},
+	seedText:     {value: jsonLiteral, def: scalarDefault},
+	seedInt:      {value: numericLiteral, def: scalarDefault},
+	seedBigInt:   {value: numericLiteral, def: scalarDefault},
+	seedFloat:    {value: numericLiteral, def: scalarDefault},
+	seedDecimal:  {value: numericLiteral, def: scalarDefault},
+	seedBool:     {value: numericLiteral, def: scalarDefault},
+	seedUUID:     {value: parseLiteral, def: scalarDefault},
+	seedDate:     {value: parseLiteral, def: scalarDefault},
+	seedDateTime: {value: parseLiteral, def: scalarDefault},
+	seedJSON:     {value: parseLiteral, def: scalarDefault},
+}
+
+func jsonLiteral(ctx *literalContext, _ string, value any) string {
+	return jsonValueOrFallback(ctx.warn, value)
+}
+
+func numericLiteral(ctx *literalContext, dbType string, value any) string {
+	return fmt.Sprintf("%v", value) + ctx.specs.Literals[dbType].Suffix
+}
+
+func parseLiteral(ctx *literalContext, dbType string, value any) string {
+	spec := ctx.specs.Literals[dbType]
+	if spec.Parse == "" {
+		warnMissingSpec(ctx.warn, "literals.parse", dbType)
+		return jsonValueOrFallback(ctx.warn, value) // JSON literal is language-neutral, not a target-language expression
+	}
+	return formatSpec(spec.Parse, jsonValueOrFallback(ctx.warn, value))
+}
+
+func enumLiteral(ctx *literalContext, dbType string, value any) string {
+	spec := ctx.specs.Literals["enum"]
+	if spec.Parse == "" {
+		warnMissingSpec(ctx.warn, "literals.enum.parse", dbType)
+		return jsonValueOrFallback(ctx.warn, value)
+	}
+	member := textutil.PascalCase(fmt.Sprintf("%v", value))
+	return formatSpec(spec.Parse, ctx.languageType(dbType, false), jsonValueOrFallback(ctx.warn, member))
+}
+
+func scalarDefault(ctx *literalContext, dbType string) string {
+	spec := ctx.specs.Literals[dbType]
+	if spec.Default == "" {
+		warnMissingSpec(ctx.warn, "literals.default", dbType)
+		return ""
+	}
+	return spec.Default
+}
+
+func enumDefault(ctx *literalContext, dbType string) string {
+	spec := ctx.specs.Literals[dbType]
+	if spec.Zero == "" {
+		spec = ctx.specs.Literals["enum"] // generic enum spec covers user-declared enums
+	}
+	if spec.Zero == "" {
+		warnMissingSpec(ctx.warn, "literals.zero", dbType)
+		return ""
+	}
+	return formatSpec(spec.Zero, ctx.languageType(dbType, false))
+}
+
+func arrayDefault(ctx *literalContext, dbType string) string {
+	if ctx.specs.Array.Empty == "" {
+		warnMissingSpec(ctx.warn, "array.empty", dbType)
+		return ""
+	}
+	return formatSpec(ctx.specs.Array.Empty, ctx.languageType(dbType, false))
+}
+
+func enumMember(ctx *literalContext, dbType, value string) string {
+	spec := ctx.specs.Literals["enum"]
+	if spec.Member == "" {
+		warnMissingSpec(ctx.warn, "literals.enum.member", dbType)
+		return ""
+	}
+	return formatSpec(spec.Member, ctx.languageType(dbType, false), textutil.PascalCase(value))
+}
+
 // registerLiteralFuncs registers the literal/array expression funcs. languageType
 // is the closure returned by registerTypeFuncs; literal specs are bridge-owned.
 func registerLiteralFuncs(funcs map[string]any, m *typeMappings, w *dedupWarn, languageType func(string, bool) string) {
+	ctx := &literalContext{specs: m, warn: w, languageType: languageType}
+
 	// literalValue renders a scalar value of an IR database type as a bridge
 	// literal/parse expression. value is a native Go value (string, int64,
 	// float64, bool) or the raw string from a domain.yaml default.
 	funcs["literalValue"] = func(dbType string, value any) string {
-		kind := ir.KindOf(dbType)
-		spec := m.Literals[dbType]
-		switch kind {
-		case "text":
-			return jsonValue(value)
-		case "int", "bigint", "float", "decimal", "bool":
-			return fmt.Sprintf("%v", value) + spec.Suffix
-		case "uuid", "date", "datetime", "json":
-			if spec.Parse == "" {
-				warnMissingSpec(w, "literals.parse", dbType)
-				return jsonValue(value) // JSON literal is language-neutral, not a target-language expression
-			}
-			return formatSpec(spec.Parse, jsonValue(value))
-		case "enum":
-			e := m.Literals["enum"]
-			if e.Parse == "" {
-				warnMissingSpec(w, "literals.enum.parse", dbType)
-				return jsonValue(value)
-			}
-			return formatSpec(e.Parse, languageType(dbType, false), jsonValue(textutil.PascalCase(fmt.Sprintf("%v", value))))
+		f := literalFormattersByKind[kindOfSeed(dbType)]
+		if f.value == nil {
+			return jsonLiteral(ctx, dbType, value)
 		}
-		return jsonValue(value)
+		return f.value(ctx, dbType, value)
 	}
 
 	// literalDefault renders the value-less default expression for a type:
 	// a scalar default, a zero-valued enum, or an empty array. Missing specs
 	// produce an empty expression and a warning; the core never invents one.
 	funcs["literalDefault"] = func(dbType string) string {
-		kind := ir.KindOf(dbType)
-		if kind == "array" {
-			if m.Array.Empty == "" {
-				warnMissingSpec(w, "array.empty", dbType)
-				return ""
-			}
-			return formatSpec(m.Array.Empty, languageType(dbType, false))
+		f := literalFormattersByKind[kindOfSeed(dbType)]
+		if f.def == nil {
+			return scalarDefault(ctx, dbType)
 		}
-		spec := m.Literals[dbType]
-		if kind == "enum" {
-			if spec.Zero == "" {
-				spec = m.Literals["enum"] // generic enum spec covers user-declared enums
-			}
-			if spec.Zero == "" {
-				warnMissingSpec(w, "literals.zero", dbType)
-				return ""
-			}
-			return formatSpec(spec.Zero, languageType(dbType, false))
-		}
-		if spec.Default == "" {
-			warnMissingSpec(w, "literals.default", dbType)
-			return ""
-		}
-		return spec.Default
+		return f.def(ctx, dbType)
 	}
 
 	// literalMember renders a compile-time enum member reference (Type.Value),
 	// used for enum defaults in domain.yaml.
 	funcs["literalMember"] = func(dbType string, value string) string {
-		if ir.KindOf(dbType) == "enum" {
-			spec := m.Literals["enum"]
-			if spec.Member == "" {
-				warnMissingSpec(w, "literals.enum.member", dbType)
-				return ""
-			}
-			return formatSpec(spec.Member, languageType(dbType, false), textutil.PascalCase(value))
+		f := literalFormattersByKind[kindOfSeed(dbType)]
+		if f.member == nil {
+			return jsonLiteral(ctx, dbType, value)
 		}
-		return jsonValue(value)
+		return f.member(ctx, dbType, value)
 	}
 
-	// arrayLiteralOpen/Close wrap rendered elements in the bridge's array
-	// syntax (e.g. "new List<int> { " ... " }").
+	// arrayLiteralOpen/Close wrap rendered elements in the bridge's configured
+	// array delimiters.
 	funcs["arrayLiteralOpen"] = func(dbType string) string {
 		if m.Array.Open == "" {
 			warnMissingSpec(w, "array.open", dbType)
@@ -422,10 +506,25 @@ func executeTemplateString(tpl *template.Template, data any) (string, error) {
 	return builder.String(), nil
 }
 
-func jsonValue(value any) string {
+// jsonValue serializes a value as a language-neutral JSON literal. A value
+// json.Marshal cannot encode returns an error instead of silently emitting a
+// plain-text fallback. text/template surfaces that error at execution time.
+func jsonValue(value any) (string, error) {
 	encoded, err := json.Marshal(value)
 	if err != nil {
+		return "", fmt.Errorf("encode %T as JSON: %w", value, err)
+	}
+	return string(encoded), nil
+}
+
+// jsonValueOrFallback is for literal formatters whose contract is to keep
+// emitting an expression: it warns once about the bad value and falls back to
+// the previous plain-text representation.
+func jsonValueOrFallback(w *dedupWarn, value any) string {
+	encoded, err := jsonValue(value)
+	if err != nil {
+		w.Warn("%v; emitting the plain value %v", err, value)
 		return fmt.Sprintf("%v", value)
 	}
-	return string(encoded)
+	return encoded
 }

@@ -34,24 +34,30 @@ func (e ValidationError) Error() string {
 	return fmt.Sprintf("entity %q: %s", e.Entity, e.Message)
 }
 
+// newValidationErr is the single constructor behind all four diagnostic
+// helpers, so the Warning flag and entity/field placement cannot drift.
+func newValidationErr(warning bool, entity, field, message string) ValidationError {
+	return ValidationError{Entity: entity, Field: field, Message: message, Warning: warning}
+}
+
 // invalid builds a non-warning validation error for an entity and field.
 func invalid(entity, field, message string) ValidationError {
-	return ValidationError{Entity: entity, Field: field, Message: message}
+	return newValidationErr(false, entity, field, message)
 }
 
 // warn builds a warning validation error for an entity and field.
 func warn(entity, field, message string) ValidationError {
-	return ValidationError{Entity: entity, Field: field, Message: message, Warning: true}
+	return newValidationErr(true, entity, field, message)
 }
 
 // invalidf builds a non-warning validation error with a formatted message.
 func invalidf(entity, field, format string, args ...any) ValidationError {
-	return invalid(entity, field, fmt.Sprintf(format, args...))
+	return newValidationErr(false, entity, field, fmt.Sprintf(format, args...))
 }
 
 // warnf builds a warning validation error with a formatted message.
 func warnf(entity, field, format string, args ...any) ValidationError {
-	return warn(entity, field, fmt.Sprintf(format, args...))
+	return newValidationErr(true, entity, field, fmt.Sprintf(format, args...))
 }
 
 // Validator checks ParsedSchema for logical consistency.
@@ -242,9 +248,9 @@ func validateInfrastructureConfig(p parser.ProjectConfig) []ValidationError {
 		return nil
 	}
 	checks := []struct {
-		value string
-		valid func(string) bool
-		kind  string
+		value   string
+		valid   func(string) bool
+		kind    string
 		allowed []string
 	}{
 		{i.Queue, specmeta.IsInfraQueue, "queue", specmeta.InfraQueues},
@@ -386,10 +392,7 @@ func (v *Validator) validateAuth() []ValidationError {
 	// Validate that auth roles are used in at least one entity's permissions.
 	// When auth.roles is non-empty, check that permission roles are declared.
 	// When auth.roles is empty, warn if any entity references named roles.
-	roleSet := make(map[string]bool, len(auth.Roles))
-	for _, r := range auth.Roles {
-		roleSet[r] = true
-	}
+	roleSet := specmeta.SliceToSet(auth.Roles)
 	for _, entityName := range v.schema.EntityOrder {
 		entity := v.schema.Entities[entityName]
 		if entity == nil || entity.Permissions == nil {
@@ -699,8 +702,7 @@ func (v *Validator) validateRelationField(entityName, fieldName string, field *p
 	if field.TargetEntity == "" {
 		errs = append(errs, invalid(entityName, fieldName,
 			"relation field must specify a target entity"))
-	}
-	if field.TargetEntity != "" {
+	} else {
 		target, ok := v.schema.Entities[field.TargetEntity]
 		if !ok {
 			errs = append(errs, invalidf(entityName, fieldName,
@@ -756,38 +758,39 @@ func validatePrimaryKeyField(entityName, fieldName string, field *parser.ParsedF
 	return errs
 }
 
+// validateEnumReference is the single "is this enum declared?" check shared
+// by scalar enum fields and array element types. The caller owns the message
+// so each diagnostic stays specific.
+func (v *Validator) validateEnumReference(entityName, fieldName, target, message string) []ValidationError {
+	if target == "" {
+		return nil
+	}
+	if _, ok := v.schema.Enums[target]; ok {
+		return nil
+	}
+	return []ValidationError{invalidf(entityName, fieldName, message, target)}
+}
+
 // validateEnumField checks that an enum reference is declared.
 func (v *Validator) validateEnumField(entityName, fieldName string, field *parser.ParsedField) []ValidationError {
-	var errs []ValidationError
-
-	// Enum reference.
-	if field.Type == specmeta.FieldTypeEnum && field.TargetType != "" {
-		if _, ok := v.schema.Enums[field.TargetType]; !ok {
-			errs = append(errs, invalidf(entityName, fieldName,
-				"enum '%s' is not defined in enums section", field.TargetType))
-		}
+	if field.Type != specmeta.FieldTypeEnum {
+		return nil
 	}
-
-	return errs
+	return v.validateEnumReference(entityName, fieldName, field.TargetType,
+		"enum '%s' is not defined in enums section")
 }
 
 // validateArrayField checks that an array element type is primitive or a
 // declared enum.
 func (v *Validator) validateArrayField(entityName, fieldName string, field *parser.ParsedField) []ValidationError {
-	var errs []ValidationError
-
-	// Array element type.
-	if field.Type == specmeta.FieldTypeArray && field.TargetType != "" {
-		inner := strings.ToLower(field.TargetType)
-		if !specmeta.IsPrimitive(inner) {
-			if _, ok := v.schema.Enums[field.TargetType]; !ok {
-				errs = append(errs, invalidf(entityName, fieldName,
-					"array element type '%s' is not a primitive or defined enum", field.TargetType))
-			}
-		}
+	if field.Type != specmeta.FieldTypeArray || field.TargetType == "" {
+		return nil
 	}
-
-	return errs
+	if specmeta.IsPrimitive(strings.ToLower(field.TargetType)) {
+		return nil
+	}
+	return v.validateEnumReference(entityName, fieldName, field.TargetType,
+		"array element type '%s' is not a primitive or defined enum")
 }
 
 // validateFieldValidations checks modifier applicability, numeric values and
@@ -850,17 +853,17 @@ func (v *Validator) validateFieldDefault(entityName, fieldName string, field *pa
 	var errs []ValidationError
 
 	ftype := strings.ToLower(field.Type)
-	defaultType := ftype
-	if ftype == specmeta.FieldTypeArray && field.TargetType != "" {
-		// The element type drives the default check; specmeta owns extraction.
-		defaultType = specmeta.FieldTypeArray + "(" + field.TargetType + ")"
+	inner := ftype
+	isArray := ftype == specmeta.FieldTypeArray && field.TargetType != ""
+	if isArray {
+		inner = field.TargetType
 	}
 
 	// Default value type check.
 	if field.DefaultValue != "" && field.DefaultIsFunc {
 		errs = append(errs, validateFuncDefault(entityName, fieldName, ftype, field.DefaultValue)...)
 	} else if field.DefaultValue != "" {
-		errs = append(errs, validateDefaultValue(entityName, fieldName, defaultType, field.DefaultValue)...)
+		errs = append(errs, validateDefaultValue(entityName, fieldName, inner, isArray, field.DefaultValue)...)
 	}
 
 	// Enum default must be one of the declared enum values.
@@ -879,28 +882,21 @@ func (v *Validator) validateFieldDefault(entityName, fieldName string, field *pa
 }
 
 // validateDefaultValue checks one scalar default, or every element of an array
-// default, against the field's element type. Numeric defaults must parse as a
-// number — the legacy true/false values no longer slip through.
-func validateDefaultValue(entityName, fieldName, ftype, defaultVal string) []ValidationError {
+// default, against the field's already-unwrapped element type inner. isArray
+// selects per-element checking; defaults never get re-encoded as array(...).
+// Numeric defaults must parse as a number — the legacy true/false values no
+// longer slip through.
+func validateDefaultValue(entityName, fieldName, inner string, isArray bool, defaultVal string) []ValidationError {
 	var errs []ValidationError
-	inner := specmeta.ParseArrayInner(ftype)
 	values := []string{defaultVal}
-	if specmeta.IsArrayType(ftype) {
+	if isArray {
 		values = specmeta.SplitArrayDefault(defaultVal)
 	}
 
 	for _, value := range values {
 		switch {
-		case specmeta.IsIntegralType(inner):
-			if _, err := strconv.ParseInt(value, 10, 64); err != nil {
-				errs = append(errs, invalidf(entityName, fieldName,
-					"default value '%s' is not valid for numeric type %s", value, inner))
-			}
-		case specmeta.IsFloatType(inner):
-			if _, err := strconv.ParseFloat(value, 64); err != nil {
-				errs = append(errs, invalidf(entityName, fieldName,
-					"default value '%s' is not valid for numeric type %s", value, inner))
-			}
+		case specmeta.IsIntegralType(inner), specmeta.IsFloatType(inner):
+			errs = append(errs, validateNumericDefault(entityName, fieldName, inner, value)...)
 		case inner == specmeta.FieldTypeBoolean:
 			if !boolValues[value] {
 				errs = append(errs, invalidf(entityName, fieldName,
@@ -924,6 +920,24 @@ func validateDefaultValue(entityName, fieldName, ftype, defaultVal string) []Val
 		}
 	}
 	return errs
+}
+
+// validateNumericDefault parses a numeric default with the parser matching its
+// kind: integral types reject decimals, float types accept them. Both kinds
+// share one diagnostic so the message cannot drift between them.
+func validateNumericDefault(entityName, fieldName, inner, value string) []ValidationError {
+	if specmeta.IsIntegralType(inner) {
+		if _, err := strconv.ParseInt(value, 10, 64); err != nil {
+			return []ValidationError{invalidf(entityName, fieldName,
+				"default value '%s' is not valid for numeric type %s", value, inner)}
+		}
+		return nil
+	}
+	if _, err := strconv.ParseFloat(value, 64); err != nil {
+		return []ValidationError{invalidf(entityName, fieldName,
+			"default value '%s' is not valid for numeric type %s", value, inner)}
+	}
+	return nil
 }
 
 // validateFuncDefault checks that function-style defaults (e.g. now(), uuid()) are used on appropriate types.
@@ -1122,9 +1136,10 @@ func (v *Validator) validatePermissions(entityName string, perms *parser.ParsedP
 func (v *Validator) validateSeedEntry(entityName string, entity *parser.ParsedEntity,
 	entryIdx int, entry map[string]any) []ValidationError {
 	var errs []ValidationError
+	seedFields := slices.Sorted(maps.Keys(entry))
 
 	// Check that seed fields exist.
-	for _, seedField := range slices.Sorted(maps.Keys(entry)) {
+	for _, seedField := range seedFields {
 		if _, ok := entity.Fields[seedField]; !ok {
 			errs = append(errs, invalidf(entityName, seedField,
 				"seed entry %d references unknown field '%s'", entryIdx, seedField))
@@ -1132,7 +1147,7 @@ func (v *Validator) validateSeedEntry(entityName string, entity *parser.ParsedEn
 	}
 
 	// Check seed value types against field types.
-	for _, seedField := range slices.Sorted(maps.Keys(entry)) {
+	for _, seedField := range seedFields {
 		seedValue := entry[seedField]
 		field := entity.Fields[seedField]
 		if field == nil {
@@ -1276,7 +1291,7 @@ func (v *Validator) validateSeedValueType(c seedValueContext) []ValidationError 
 		} else if !isValidDatetime(s) {
 			add(c.errf("value %q is not a valid datetime (expected ISO 8601 format, e.g. 2024-01-15T10:30:00Z)", s))
 		}
-	case specmeta.FieldKind(ftype) == "json":
+	case specmeta.FieldKind(ftype) == specmeta.FieldKindJSON:
 		// JSON values can be any valid JSON — accept any type.
 		// String values are validated as parseable JSON.
 		if s, ok := c.seedValue.(string); ok && !isValidJSON(s) {

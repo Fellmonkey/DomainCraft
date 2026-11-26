@@ -17,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-
 	"github.com/DomainCraft/DomainCraft/internal/appdir"
 	"github.com/DomainCraft/DomainCraft/internal/bridge"
 	"github.com/DomainCraft/DomainCraft/internal/bridgechain"
@@ -89,12 +88,18 @@ func TestMain(m *testing.M) {
 // goldenPlatform returns the target platform of the golden domain model. It is
 // part of the package-version cache key and must match the framework the
 // renderer sees.
-func goldenPlatform() (string, error) {
+// loadGoldenDomain is the single parse step for TestMain's platform probe and
+// the per-test project loader, so they cannot drift apart.
+func loadGoldenDomain() (*parser.ParsedSchema, error) {
 	data, err := os.ReadFile(filepath.Join("testdata", "domain.yaml"))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	schema, err := parser.ParseYAML(data)
+	return parser.ParseYAML(data)
+}
+
+func goldenPlatform() (string, error) {
+	schema, err := loadGoldenDomain()
 	if err != nil {
 		return "", err
 	}
@@ -141,15 +146,13 @@ func seedPackageVersions(framework string) error {
 		// single URL: the adapter's, otherwise the first one declared by a base.
 		packageIDs := make(map[string]struct{})
 		registryURL := ""
-		var adapter bridge.Manifest
-		for i, base := range chain {
+		manifests := make([]bridge.Manifest, 0, len(chain))
+		for _, base := range chain {
 			m, err := bridge.LoadManifest(base)
 			if err != nil {
 				return err
 			}
-			if i == 0 {
-				adapter = m
-			}
+			manifests = append(manifests, m)
 			for _, packageID := range m.RegistryPackages {
 				packageIDs[packageID] = struct{}{}
 			}
@@ -157,6 +160,7 @@ func seedPackageVersions(framework string) error {
 				registryURL = m.RegistryURL
 			}
 		}
+		adapter := manifests[0]
 		if len(packageIDs) == 0 {
 			continue
 		}
@@ -167,11 +171,7 @@ func seedPackageVersions(framework string) error {
 		// bridge-declared target_framework. Seed both keys so a golden run is
 		// hermetic even when the golden domain declares no platform.
 		frameworks := map[string]bool{framework: true}
-		for _, base := range chain {
-			m, err := bridge.LoadManifest(base)
-			if err != nil {
-				return err
-			}
+		for _, m := range manifests {
 			if m.TargetFramework != "" {
 				frameworks[m.TargetFramework] = true
 			}
@@ -202,13 +202,9 @@ func seedPackageVersions(framework string) error {
 
 func loadGoldenProject(t *testing.T) *ir.Project {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("testdata", "domain.yaml"))
+	schema, err := loadGoldenDomain()
 	if err != nil {
-		t.Fatalf("read testdata/domain.yaml: %v", err)
-	}
-	schema, err := parser.ParseYAML(data)
-	if err != nil {
-		t.Fatalf("parse domain.yaml: %v", err)
+		t.Fatalf("load golden domain: %v", err)
 	}
 	for _, ve := range validator.New(schema).Validate() {
 		if !ve.Warning {

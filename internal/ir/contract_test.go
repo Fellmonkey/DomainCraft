@@ -1,6 +1,9 @@
 package ir
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestValidationRules(t *testing.T) {
 	t.Parallel()
@@ -261,7 +264,7 @@ func TestEndpointsContract(t *testing.T) {
 	}
 
 	update := byOp["update"]
-	if !update.Concurrency || !update.HasStatus(409) {
+	if !update.Concurrency || !slices.Contains(update.ErrorStatuses, 409) {
 		t.Errorf("update should allow 409 with optimistic lock: %+v", update)
 	}
 

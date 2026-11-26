@@ -11,9 +11,9 @@ import (
 	"github.com/DomainCraft/DomainCraft/internal/ir"
 )
 
-// writeHardeningBridge lays out a minimal bridge directory for the filesystem
-// hardening tests. Keys are forward-slash relative paths.
-func writeHardeningBridge(t *testing.T, files map[string]string) string {
+// writeBridge lays out a bridge fixture. Keys are forward-slash relative paths;
+// parent directories are created as needed.
+func writeBridge(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
 	for name, content := range files {
@@ -38,7 +38,7 @@ func TestRenderRejectsSymlinkAtFinalComponent(t *testing.T) {
 		t.Fatalf("write outside file: %v", err)
 	}
 
-	bridge := writeHardeningBridge(t, map[string]string{
+	bridge := writeBridge(t, map[string]string{
 		"bridge.yaml": `name: demo
 templates:
   - for: project
@@ -99,7 +99,7 @@ templates:
     target: "out.txt"
 `
 		}
-		bridge := writeHardeningBridge(t, map[string]string{
+		bridge := writeBridge(t, map[string]string{
 			"bridge.yaml":         manifest("templates/good.tmpl"),
 			"templates/good.tmpl": `good`,
 		})
@@ -152,7 +152,7 @@ templates:
 func TestRenderExecuteErrorPreservesPreviousOutput(t *testing.T) {
 	t.Parallel()
 	tmp := t.TempDir()
-	bridge := writeHardeningBridge(t, map[string]string{
+	bridge := writeBridge(t, map[string]string{
 		"bridge.yaml": `name: demo
 templates:
   - for: project
@@ -202,7 +202,7 @@ func TestRenderFailureRollsBackPriorWrites(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			tmp := t.TempDir()
-			bridge := writeHardeningBridge(t, map[string]string{
+			bridge := writeBridge(t, map[string]string{
 				"bridge.yaml": `name: demo
 templates:
   - for: project
@@ -255,7 +255,7 @@ templates:
 // so rollback removes the file instead of restoring a nonexistent original.
 func TestRenderRollbackRemovesTargetDeletedBeforeCommit(t *testing.T) {
 	base := t.TempDir()
-	bridge := writeHardeningBridge(t, map[string]string{
+	bridge := writeBridge(t, map[string]string{
 		"bridge.yaml": `name: demo
 contract_version: 1
 templates:
@@ -293,7 +293,7 @@ templates:
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	r.SetBeforeCommitHook(func() {
+	r.setBeforeCommitHook(func() {
 		if err := os.Remove(a); err != nil && !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("remove staged target: %v", err)
 		}
@@ -301,7 +301,7 @@ templates:
 			t.Errorf("plant symlink before commit: %v", err)
 		}
 	})
-	t.Cleanup(func() { r.SetBeforeCommitHook(nil) })
+	t.Cleanup(func() { r.setBeforeCommitHook(nil) })
 
 	if _, _, err := r.Render(&ir.Project{Name: "P"}, out); err == nil {
 		t.Fatal("Render succeeded despite a blocked commit")
@@ -318,7 +318,7 @@ templates:
 // whole write path now goes through os.Root, which refuses to follow the link.
 func TestRenderRejectsParentSymlinkPlantedBeforeCommit(t *testing.T) {
 	base := t.TempDir()
-	bridge := writeHardeningBridge(t, map[string]string{
+	bridge := writeBridge(t, map[string]string{
 		"bridge.yaml": `name: demo
 contract_version: 1
 templates:
@@ -347,7 +347,7 @@ templates:
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	r.SetBeforeCommitHook(func() {
+	r.setBeforeCommitHook(func() {
 		if err := os.RemoveAll(src); err != nil {
 			t.Errorf("remove staged src: %v", err)
 		}
@@ -355,7 +355,7 @@ templates:
 			t.Errorf("plant parent symlink: %v", err)
 		}
 	})
-	t.Cleanup(func() { r.SetBeforeCommitHook(nil) })
+	t.Cleanup(func() { r.setBeforeCommitHook(nil) })
 
 	if _, _, err := r.Render(&ir.Project{Name: "P"}, out); err == nil {
 		t.Fatal("Render succeeded after parent directory was replaced by a symlink")
@@ -432,7 +432,7 @@ func TestRollbackErrorKeepsOriginalPrimary(t *testing.T) {
 
 func TestCustomTemplateStagedOncePerRun(t *testing.T) {
 	t.Parallel()
-	bridge := writeHardeningBridge(t, map[string]string{
+	bridge := writeBridge(t, map[string]string{
 		"bridge.yaml": `name: demo
 templates:
   - for: entity
@@ -475,7 +475,7 @@ templates:
 // order (including skipped scaffolds), and a failure during commit rolls back
 // partial writes while returning neither paths nor a manifest.
 func TestRenderPhasesPreserveManifestAndRollback(t *testing.T) {
-	bridge := writeHardeningBridge(t, map[string]string{
+	bridge := writeBridge(t, map[string]string{
 		"bridge.yaml": `name: demo
 templates:
   - for: entity
@@ -568,12 +568,12 @@ templates:
 			t.Fatalf("write prior Alpha.txt: %v", err)
 		}
 
-		r.SetBeforeCommitHook(func() {
+		r.setBeforeCommitHook(func() {
 			if err := os.Symlink(outside, filepath.Join(out2, "shared.txt")); err != nil {
 				t.Errorf("plant symlink before commit: %v", err)
 			}
 		})
-		t.Cleanup(func() { r.SetBeforeCommitHook(nil) })
+		t.Cleanup(func() { r.setBeforeCommitHook(nil) })
 
 		written, manifest, err := r.Render(project, out2)
 		if err == nil {
@@ -616,7 +616,7 @@ templates:
 // cleanupBackups then deleted the backup, silently losing developer-owned
 // bytes. Earlier committed writes must still roll back when the race is hit.
 func TestRenderCommitPreservesCustomFileCreatedBeforeCommit(t *testing.T) {
-	bridge := writeHardeningBridge(t, map[string]string{
+	bridge := writeBridge(t, map[string]string{
 		"bridge.yaml": `name: demo
 contract_version: 1
 templates:
@@ -648,12 +648,12 @@ templates:
 		t.Fatalf("write prior output: %v", err)
 	}
 	custom := filepath.Join(out, "custom.txt")
-	r.SetBeforeCommitHook(func() {
+	r.setBeforeCommitHook(func() {
 		if err := os.WriteFile(custom, []byte("developer-owned"), 0o644); err != nil {
 			t.Errorf("create custom file before commit: %v", err)
 		}
 	})
-	t.Cleanup(func() { r.SetBeforeCommitHook(nil) })
+	t.Cleanup(func() { r.setBeforeCommitHook(nil) })
 
 	written, manifest, err := r.Render(&ir.Project{Name: "P"}, out)
 	if err == nil {

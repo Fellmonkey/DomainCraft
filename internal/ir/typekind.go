@@ -22,14 +22,9 @@ func (f Field) EnumTypeName() string {
 // are false for array fields (whose element type is inspected separately via
 // EnumTypeName/ArrayElementType).
 
-// IsUUID reports whether the field holds a UUID.
-func (f Field) IsUUID() bool { return f.DatabaseType == specmeta.FieldTypeUUID }
-
-// IsUuid reports whether the field holds a UUID.
-//
-// Deprecated: use IsUUID. Kept as an alias for bridges using the old casing.
-//nolint:revive // deprecated bridge alias; renaming breaks existing bridge templates
-func (f Field) IsUuid() bool { return f.IsUUID() }
+// IsUuid reports whether the field holds a UUID. This is the canonical name:
+// every shipped bridge and the IR itself use this casing.
+func (f Field) IsUuid() bool { return f.DatabaseType == specmeta.FieldTypeUUID } //nolint:revive // bridge template contract casing
 
 // IsText reports whether the field holds a string/text value.
 func (f Field) IsText() bool { return specmeta.IsStringType(f.DatabaseType) }
@@ -52,27 +47,15 @@ func (f Field) IsDate() bool { return f.DatabaseType == specmeta.FieldTypeDate }
 // IsDateTime reports whether the field holds a datetime.
 func (f Field) IsDateTime() bool { return f.DatabaseType == specmeta.FieldTypeDatetime }
 
-// IsJSON reports whether the field holds a JSON document (json or jsonb).
-func (f Field) IsJSON() bool {
+// IsJson reports whether the field holds a JSON document (json or jsonb).
+func (f Field) IsJson() bool { //nolint:revive // bridge template contract casing
 	return f.DatabaseType == specmeta.FieldTypeJSON || f.DatabaseType == specmeta.FieldTypeJSONB
 }
 
-// IsJson reports whether the field holds a JSON document.
-//
-// Deprecated: use IsJSON.
-//nolint:revive // deprecated bridge alias; renaming breaks existing bridge templates
-func (f Field) IsJson() bool { return f.IsJSON() }
-
-// IsJSONB reports whether the field holds a jsonb document specifically
+// IsJsonB reports whether the field holds a jsonb document specifically
 // (as opposed to a plain json column). Bridges use this to choose between
 // ordered (numeric) and text-only JSON path operators.
-func (f Field) IsJSONB() bool { return f.DatabaseType == specmeta.FieldTypeJSONB }
-
-// IsJsonB reports whether the field holds a jsonb document.
-//
-// Deprecated: use IsJSONB.
-//nolint:revive // deprecated bridge alias; renaming breaks existing bridge templates
-func (f Field) IsJsonB() bool { return f.IsJSONB() }
+func (f Field) IsJsonB() bool { return f.DatabaseType == specmeta.FieldTypeJSONB } //nolint:revive // bridge template contract casing
 
 // IsString reports whether the field holds a bounded string column
 // (as opposed to an unbounded text column, which also satisfies IsText).

@@ -13,13 +13,9 @@ import "embed"
 // needs no regeneration step: checkout at the tag plus `go build` embeds exactly
 // that commit's templates.
 //
-// Go excludes files whose names begin with "_" when embedding a directory.
-// Bridge helper templates use that prefix, so each of them is listed explicitly
-// below. TestEmbeddedBridgesMatchTree compares this set with the source tree.
+// Helper templates are named helpers.*.tmpl (no "_" prefix), so a single
+// directory directive embeds them along with every other bridge file.
+// TestEmbeddedBridgesMatchTree compares this set with the source tree.
 //
 //go:embed bridges
-//go:embed bridges/csharp/core/templates/_helpers.cs.tmpl
-//go:embed bridges/typescript/core/templates/_helpers.ts.tmpl
-//go:embed bridges/admin/templates/_helpers.html.tmpl
-//go:embed bridges/csharp/persistence/dapper-stub/templates/_helpers.cs.tmpl
 var Bridges embed.FS

@@ -86,7 +86,9 @@ func safeOutputPathCached(outputDir, renderedTarget string, verified map[string]
 // cleanup failure to the primary error so a leftover file cannot go unnoticed.
 func failWithTempCleanup(err error, tmp *os.File, path string) error {
 	cleanup := []error{err}
-	if cerr := tmp.Close(); cerr != nil {
+	// The helper is also used after a failed Close: a second Close returns
+	// ErrClosed, which is not a new cleanup failure.
+	if cerr := tmp.Close(); cerr != nil && !errors.Is(cerr, os.ErrClosed) {
 		cleanup = append(cleanup, cerr)
 	}
 	if rerr := os.Remove(path); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
@@ -114,7 +116,7 @@ type stagedWrite struct {
 	backupLeaf string // backup name inside parentDir
 
 	custom bool // overwrite:false — developer-owned, must not be replaced at commit
-	record   RenderedFile
+	record RenderedFile
 }
 
 // rollbackWrites undoes committed writes in reverse order and removes every
@@ -321,14 +323,7 @@ func (r *Renderer) stageTemplates(s *renderSession) error {
 				}
 
 				for _, targetTpl := range targetTemplates {
-					in := stageTargetInput{
-						spec:       spec,
-						context:    context,
-						body:       parsedTemplate,
-						target:     targetTpl,
-						entityName: entityName,
-					}
-					if err := r.stageOneTarget(s, in); err != nil {
+					if err := stageOneTarget(s, spec, context, parsedTemplate, targetTpl, entityName); err != nil {
 						return err
 					}
 				}
@@ -338,124 +333,145 @@ func (r *Renderer) stageTemplates(s *renderSession) error {
 	return nil
 }
 
-// stageTargetInput groups the per-target values of one staging step. Keeping
-// them in a struct leaves stageOneTarget with two parameters while the target
-// loop stays a plain selection loop.
-type stageTargetInput struct {
-	spec       TemplateSpec
-	context    RenderContext
-	body       *template.Template
-	target     *template.Template
-	entityName string
+// resolvedTarget is one rendered target path plus the manifest record shared
+// by the scaffold gate and the staging step.
+type resolvedTarget struct {
+	rendered string // raw rendered target, used verbatim in error messages
+	abs      string // absolute, containment-checked destination
+	record   RenderedFile
 }
 
-// stageOneTarget resolves one rendered target path, applies the scaffold and
-// symlink policies, and stages the rendered bytes. The order of the checks is
-// load-bearing: it is preserved verbatim from the original staging loop.
-func (r *Renderer) stageOneTarget(s *renderSession, in stageTargetInput) error {
-	context, spec := in.context, in.spec
-	entityName := in.entityName
-
-	renderedTarget, err := executeTemplateString(in.target, context)
+// resolveTargetPath executes the target pattern, re-checks containment with
+// the per-render cache and builds the manifest record.
+func (s *renderSession) resolveTargetPath(target *template.Template, context RenderContext, spec TemplateSpec, entityName string) (resolvedTarget, error) {
+	renderedTarget, err := executeTemplateString(target, context)
 	if err != nil {
-		return s.fail(fmt.Errorf("render target path: %w", err))
+		return resolvedTarget{}, fmt.Errorf("render target path: %w", err)
 	}
-
 	absTarget, err := safeOutputPathCached(s.outputDir, renderedTarget, s.verified)
 	if err != nil {
-		return s.fail(err)
+		return resolvedTarget{}, err
 	}
+	return resolvedTarget{
+		rendered: renderedTarget,
+		abs:      absTarget,
+		record: RenderedFile{
+			Path:    filepath.ToSlash(renderedTarget),
+			Entity:  entityName,
+			Custom:  spec.IsCustom(),
+			Written: true,
+		},
+	}, nil
+}
 
-	relPath := filepath.ToSlash(renderedTarget)
-	record := RenderedFile{
-		Path:    relPath,
-		Entity:  entityName,
-		Custom:  spec.IsCustom(),
-		Written: true,
+// scaffoldAllowed applies overwrite:false semantics: a target planned earlier
+// in this run or already present on disk stays developer-owned. A skipped
+// target is recorded in the manifest with Written=false and is not staged.
+func (s *renderSession) scaffoldAllowed(path resolvedTarget) bool {
+	if !path.record.Custom {
+		return true
 	}
-
-	// Scaffold semantics: overwrite: false files are created only once.
-	// The developer owns them afterwards, so they survive regeneration.
-	if spec.IsCustom() {
-		if s.customTargets[absTarget] {
-			record.Written = false
-			s.manifest = append(s.manifest, record)
-			return nil
-		}
-		if _, statErr := os.Stat(absTarget); statErr == nil {
-			record.Written = false
-			s.manifest = append(s.manifest, record)
-			return nil
-		}
-		s.customTargets[absTarget] = true
+	if s.customTargets[path.abs] {
+		path.record.Written = false
+		s.manifest = append(s.manifest, path.record)
+		return false
 	}
+	if _, statErr := os.Stat(path.abs); statErr == nil {
+		path.record.Written = false
+		s.manifest = append(s.manifest, path.record)
+		return false
+	}
+	s.customTargets[path.abs] = true
+	return true
+}
 
-	if err := os.MkdirAll(filepath.Dir(absTarget), 0o755); err != nil { //nolint:gosec // generated project dirs must stay world-readable
-		return s.fail(fmt.Errorf("create output dir: %w", err))
+// stageTempFile creates the parent directory, re-checks containment after
+// MkdirAll, captures the parent's identity and the previous file mode, then
+// renders the body into a temp file next to the target. On success the staged
+// write and its manifest record are appended; on failure the temp file is
+// cleaned up.
+func (s *renderSession) stageTempFile(path resolvedTarget, body *template.Template, context RenderContext) error {
+	if err := os.MkdirAll(filepath.Dir(path.abs), 0o755); err != nil { //nolint:gosec // generated project dirs must stay world-readable
+		return fmt.Errorf("create output dir: %w", err)
 	}
 	// MkdirAll may have created the missing components above; re-check
 	// with a fully fresh walk (no cached directories) so a symlink
 	// planted in the meantime is still rejected.
-	if _, err := safeOutputPath(s.outputDir, renderedTarget); err != nil {
-		return s.fail(err)
+	if _, err := safeOutputPath(s.outputDir, path.rendered); err != nil {
+		return err
 	}
 	// Capture the verified parent directory now. Commit opens an
 	// os.Root from this path and compares the directory identity,
 	// so a swap before commit is detected instead of followed.
-	parentDir := filepath.Dir(absTarget)
+	parentDir := filepath.Dir(path.abs)
 	parentInfo, ok := s.parentInfos[parentDir]
 	if !ok {
-		parentInfo, err = os.Lstat(parentDir)
+		info, err := os.Lstat(parentDir)
 		if err != nil {
-			return s.fail(fmt.Errorf("inspect output directory for %s: %w", renderedTarget, err))
+			return fmt.Errorf("inspect output directory for %s: %w", path.rendered, err)
 		}
+		parentInfo = info
 		s.parentInfos[parentDir] = parentInfo
 	}
 
 	mode := os.FileMode(0o644) // os.Create's default under the usual umask
-	if info, statErr := os.Lstat(absTarget); statErr == nil {
+	if info, statErr := os.Lstat(path.abs); statErr == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
-			return s.fail(fmt.Errorf("template target path escapes output directory through a symlink: %s", renderedTarget))
+			return fmt.Errorf("template target path escapes output directory through a symlink: %s", path.rendered)
 		}
 		mode = info.Mode().Perm()
 		// The previous bytes are not read here: the commit phase moves
 		// the whole file aside and moves it back on rollback.
 	} else if !errors.Is(statErr, os.ErrNotExist) {
-		return s.fail(fmt.Errorf("inspect output file %s: %w", renderedTarget, statErr))
+		return fmt.Errorf("inspect output file %s: %w", path.rendered, statErr)
 	}
 
 	// Render into a temp file in the target's own directory so the
 	// final rename stays on the same filesystem. The prior file is
 	// never truncated, even if Execute or Close fails.
-	tmp, err := os.CreateTemp(filepath.Dir(absTarget), ".domaincraft-render-*")
+	tmp, err := os.CreateTemp(filepath.Dir(path.abs), ".domaincraft-render-*")
 	if err != nil {
-		return s.fail(fmt.Errorf("create temp output file: %w", err))
+		return fmt.Errorf("create temp output file: %w", err)
 	}
 	tmpPath := tmp.Name()
 	// CreateTemp uses 0600; generated files stay readable as before.
 	if err := tmp.Chmod(mode); err != nil {
-		return s.fail(failWithTempCleanup(fmt.Errorf("set mode on temp output %s: %w", tmpPath, err), tmp, tmpPath))
+		return failWithTempCleanup(fmt.Errorf("set mode on temp output %s: %w", tmpPath, err), tmp, tmpPath)
 	}
-	if err := in.body.Execute(tmp, context); err != nil {
-		return s.fail(failWithTempCleanup(fmt.Errorf("execute template: %w", err), tmp, tmpPath))
+	if err := body.Execute(tmp, context); err != nil {
+		return failWithTempCleanup(fmt.Errorf("execute template: %w", err), tmp, tmpPath)
 	}
 	if err := tmp.Close(); err != nil {
-		if rerr := os.Remove(tmpPath); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
-			return s.fail(errors.Join(fmt.Errorf("close temp output %s: %w", tmpPath, err), rerr))
-		}
-		return s.fail(fmt.Errorf("close temp output %s: %w", tmpPath, err))
+		return failWithTempCleanup(fmt.Errorf("close temp output %s: %w", tmpPath, err), tmp, tmpPath)
 	}
 	s.staged = append(s.staged, stagedWrite{
 		temp:       tmpPath,
-		target:     absTarget,
+		target:     path.abs,
 		parentDir:  parentDir,
 		parentInfo: parentInfo,
-		leaf:       filepath.Base(absTarget),
+		leaf:       filepath.Base(path.abs),
 		tempLeaf:   filepath.Base(tmpPath),
-		custom:     record.Custom,
-		record:     record,
+		custom:     path.record.Custom,
+		record:     path.record,
 	})
-	s.manifest = append(s.manifest, record)
+	s.manifest = append(s.manifest, path.record)
+	return nil
+}
+
+// stageOneTarget resolves one rendered target path, applies the scaffold and
+// symlink policies, and stages the rendered bytes. The order of the three
+// steps is load-bearing: it is preserved verbatim from the original loop.
+func stageOneTarget(s *renderSession, spec TemplateSpec, context RenderContext, body, target *template.Template, entityName string) error {
+	path, err := s.resolveTargetPath(target, context, spec, entityName)
+	if err != nil {
+		return s.fail(err)
+	}
+	if !s.scaffoldAllowed(path) {
+		return nil
+	}
+	if err := s.stageTempFile(path, body, context); err != nil {
+		return s.fail(err)
+	}
 	return nil
 }
 
@@ -606,63 +622,15 @@ func (r *Renderer) shouldRenderContext(spec TemplateSpec, context RenderContext)
 	if spec.When == "" {
 		return true
 	}
-	// Addon conditions accept a suffix after a colon, e.g. "hasAddon:dapr" /
-	// "notHasAddon:dapr". Bare "hasAddon" treats the presence of any addon as
-	// true.
-	if cond, name, ok := strings.Cut(spec.When, ":"); ok {
-		switch strings.TrimSpace(cond) {
-		case whenAddon:
-			if context.Project != nil {
-				if name == "" {
-					return len(context.Project.Addons) > 0
-				}
-				return context.Project.HasAddon(strings.TrimSpace(name))
-			}
-			return false
-		case whenNotAddon:
-			if context.Project != nil {
-				if name == "" {
-					return len(context.Project.Addons) == 0
-				}
-				return !context.Project.HasAddon(strings.TrimSpace(name))
-			}
-			return true
-		}
-	}
-	switch spec.When {
-	case whenSeed:
-		// Only render seed templates if there's actual seed data.
-		return context.HasSeedData()
-	case whenEnums:
-		// Only render enum templates if there are enums defined
-		if context.Project != nil && len(context.Project.Enums) > 0 {
-			return true
-		}
-		return false
-	case whenOwnerTokens:
-		// Only render owner resolver if any entity uses @Owner tokens
-		if context.Project != nil {
-			for _, e := range context.Project.Entities {
-				if e.Permissions != nil && e.Permissions.HasOwnerToken() {
-					return true
-				}
-			}
-		}
-		return false
-	case whenAuth:
-		return context.Project != nil && context.Project.HasAuth()
-	case whenMigration:
-		// True when the core computed a non-empty schema migration plan.
-		return context.HasMigration()
-	case whenMockData:
-		// True when the context carries generated mock data.
-		return context.HasMockData()
-	default:
+	cond, name, _ := strings.Cut(spec.When, ":")
+	entry, ok := whenSpecs[strings.TrimSpace(cond)]
+	if !ok {
 		// Defensive only: loaded manifests are validated against the closed
 		// vocabulary in validateWhenConditions, so this is unreachable for
 		// bridge.yaml-driven templates.
 		return true
 	}
+	return entry.eval(context, name)
 }
 
 // resolvePackages resolves all package versions from the package registry,

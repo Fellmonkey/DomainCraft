@@ -1033,6 +1033,70 @@ func TestBuildWithoutAuthYieldsNilAuth(t *testing.T) {
 	}
 }
 
+func TestBuildRejectsUnresolvableFieldTypes(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		definition lexer.FieldDefinition
+		wantErr    string
+	}{
+		{"unknown type", lexer.FieldDefinition{Name: "weird", Type: "mystery"}, "unknown field type"},
+		{"enum without target", lexer.FieldDefinition{Name: "status", Type: "enum"}, "enum field has no target type"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			definition := tc.definition
+			schema := &parser.ParsedSchema{
+				Project:     parser.ProjectConfig{Name: "Test"},
+				Database:    "postgresql",
+				EntityOrder: []string{"Item"},
+				Entities: map[string]*parser.ParsedEntity{
+					"Item": {
+						Name:       "Item",
+						NamePlural: "Items",
+						FieldOrder: []string{definition.Name},
+						Fields: map[string]*parser.ParsedField{
+							definition.Name: {FieldDefinition: &definition},
+						},
+					},
+				},
+			}
+			if _, err := Build(schema); err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Build() error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestBuildPreservesZeroValuedProjectBlocks(t *testing.T) {
+	t.Parallel()
+	schema := &parser.ParsedSchema{
+		Project: parser.ProjectConfig{
+			Name:           "Test",
+			Cache:          &parser.CacheConfig{},
+			CORS:           &parser.CORSConfig{},
+			Deploy:         &parser.DeployConfig{},
+			Versioning:     &parser.VersioningConfig{},
+			RateLimit:      &parser.RateLimitConfig{},
+			Pagination:     &parser.PaginationConfig{},
+			Infrastructure: &parser.InfrastructureConfig{},
+		},
+		Database: "postgresql",
+	}
+	project, err := Build(schema)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	// A present-but-zero block stays present: presence flags are resolved by
+	// the parser and must not be re-inferred from the value here.
+	if project.Cache == nil || project.CORS == nil || project.Deploy == nil ||
+		project.Versioning == nil || project.RateLimit == nil || project.Pagination == nil ||
+		project.Infrastructure == nil {
+		t.Fatalf("Build() dropped a present zero-valued config block: %+v", project)
+	}
+}
+
 func TestBuildDetachesSeedFromParsedSchema(t *testing.T) {
 	t.Parallel()
 	seedRow := map[string]any{"id": "11111111-1111-4111-8111-111111111111"}

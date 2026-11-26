@@ -27,7 +27,7 @@ func FuncMap() template.FuncMap {
 		"add":        Add,
 		"any":        Any,
 		"append":     Append,
-		"atoi":       Atoi,
+		"atoi":       func(s string) int { return AtoiOrDefault(s, 0) },
 		"base":       path.Base,
 		"camelcase":  CamelCase,
 		"contains":   Contains,
@@ -75,16 +75,26 @@ func Any(v ...any) bool {
 	return false
 }
 
-// Atoi parses s as an integer, returning 0 on error.
-func Atoi(s string) int {
-	i, _ := strconv.Atoi(s)
+// Atoi parses s as an integer. Invalid input is an error, not a silent zero.
+func Atoi(s string) (int, error) {
+	return strconv.Atoi(s)
+}
+
+// AtoiOrDefault parses s and returns fallback when s is not an integer. It is
+// the explicit tolerant form used by the template `atoi` contract, which has
+// always rendered 0 for an unparseable value.
+func AtoiOrDefault(s string, fallback int) int {
+	i, err := Atoi(s)
+	if err != nil {
+		return fallback
+	}
 	return i
 }
 
 // Append appends v to a slice (any slice kind) and returns the result as
-// []any. It panics on a non-slice, which text/template surfaces as a
-// render error.
-func Append(list any, v any) []any {
+// []any. A non-slice is a returned error rather than a panic; text/template
+// surfaces either as a render error.
+func Append(list any, v any) ([]any, error) {
 	val := reflect.ValueOf(list)
 	switch val.Kind() {
 	case reflect.Slice, reflect.Array:
@@ -93,9 +103,9 @@ func Append(list any, v any) []any {
 		for i := range l {
 			nl[i] = val.Index(i).Interface()
 		}
-		return append(nl, v)
+		return append(nl, v), nil
 	default:
-		panic("append: not a slice")
+		return nil, fmt.Errorf("append: not a slice, got %T", list)
 	}
 }
 

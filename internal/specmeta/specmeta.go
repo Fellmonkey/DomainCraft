@@ -11,8 +11,15 @@ import (
 // retyping the literals from the spec.
 const (
 	FieldTypeRelation = "relation"
-	FieldTypeArray    = "array"
-	FieldTypeEnum     = "enum"
+
+	// Relation types are part of the IR contract. Bridges compare these strings,
+	// so only their names may be centralized — their values must not change.
+	RelationTypeOneToOne   = "one-to-one"
+	RelationTypeManyToOne  = "many-to-one"
+	RelationTypeOneToMany  = "one-to-many"
+	RelationTypeManyToMany = "many-to-many"
+	FieldTypeArray         = "array"
+	FieldTypeEnum          = "enum"
 
 	FieldTypeString   = "string"
 	FieldTypeText     = "text"
@@ -27,12 +34,12 @@ const (
 	FieldTypeJSON     = "json"
 	FieldTypeJSONB    = "jsonb"
 
-	AuthTypeJWT       = "jwt"
-	AuthTypeNone      = "none"
-	OnDeleteCascade   = "cascade"
-	OnDeleteSetNull   = "set_null"
-	OnDeleteRestrict  = "restrict"
-	OnDeleteNoAction  = "no_action"
+	AuthTypeJWT      = "jwt"
+	AuthTypeNone     = "none"
+	OnDeleteCascade  = "cascade"
+	OnDeleteSetNull  = "set_null"
+	OnDeleteRestrict = "restrict"
+	OnDeleteNoAction = "no_action"
 )
 
 // FeatureFieldDef describes a field auto-injected by a feature macro.
@@ -48,8 +55,15 @@ type FeatureFieldDef struct {
 // Databases lists the supported database backends.
 var Databases = []string{"postgresql", "mysql", "sqlite", "mssql", "mongodb", "appwrite"}
 
+// DefaultDatabase is the parser default. It is a name, not an index into
+// Databases, so reordering the list cannot silently change the default.
+const DefaultDatabase = "postgresql"
+
 // APIStyles lists the supported API styles.
 var APIStyles = []string{"rest", "graphql", "grpc"}
+
+// DefaultAPIStyle is the parser default, independent of APIStyles ordering.
+const DefaultAPIStyle = "rest"
 
 // AuthTypes lists the supported authentication types.
 var AuthTypes = []string{AuthTypeJWT, AuthTypeNone}
@@ -120,8 +134,8 @@ var StringFieldTypes = []string{FieldTypeString, FieldTypeText}
 var NumericValidationModifiers = []string{"gte", "gt", "lte", "lt"}
 
 // stringValidationModifiers lists string validation modifier names. It is
-// private so another package cannot mutate the spec at runtime; callers that
-// need an extended spec inject it explicitly (lexer.ParseWithStringModifiers).
+// private so another package cannot mutate the spec at runtime; the lexer's
+// internal parse seam accepts explicit extras for extended specs.
 // min/max are also valid on numeric fields (length vs value bounds).
 var stringValidationModifiers = []string{"min", "max", "email", "url", "ipv4", "regex"}
 
@@ -149,6 +163,10 @@ var RateLimitPolicies = []string{"fixed", "sliding"}
 // PermissionKeys lists the four permission operations.
 var PermissionKeys = []string{"read", "create", "update", "delete"}
 
+// IndexKeys lists the accepted keys of an index block. The parser uses it for
+// strict decoding and for the error message, so both stay in sync.
+var IndexKeys = []string{"fields", "type", "sort", "unique"}
+
 // SortDirections lists the valid sort directions.
 var SortDirections = []string{"asc", "desc"}
 
@@ -167,7 +185,9 @@ const DefaultFieldType = FieldTypeString
 // ContractVersion is the bridge-contract version this core implements. Bridges
 // declare their own version via `contract_version` in bridge.yaml; a declared
 // version above this constant is not supported.
-const ContractVersion = 1
+// v2 drops the uppercase IR helper aliases (IsUUID/IsJSON/IsJSONB): templates
+// use IsUuid/IsJson/IsJsonB, now the only spelling.
+const ContractVersion = 2
 
 // EffectiveContractVersion returns the contract version to use for a declared
 // value. An absent or zero declaration (the legacy default) resolves to
@@ -196,6 +216,7 @@ var (
 	rateLimitPolicySet         map[string]bool
 	permissionKeySet           map[string]bool
 	numericValidationModSet    map[string]bool
+	stringValidationModSet     map[string]bool
 	stringOnlyValidationModSet map[string]bool
 	stringFlagValidationModSet map[string]bool
 	sortDirectionSet           map[string]bool
@@ -225,6 +246,7 @@ func init() {
 	rateLimitPolicySet = SliceToSet(RateLimitPolicies)
 	permissionKeySet = SliceToSet(PermissionKeys)
 	numericValidationModSet = SliceToSet(NumericValidationModifiers)
+	stringValidationModSet = SliceToSet(stringValidationModifiers)
 	stringOnlyValidationModSet = SliceToSet(StringOnlyValidationModifiers)
 	stringFlagValidationModSet = SliceToSet(StringFlagValidationModifiers)
 	sortDirectionSet = SliceToSet(SortDirections)
@@ -295,7 +317,7 @@ func IsAuthType(value string) bool { return authTypeSet[value] }
 // IsAuthEnabled reports whether an auth type enables the auth flow. An unset
 // type is disabled, matching the parser default ("none"), so hand-built
 // schemas behave like parsed ones.
-func IsAuthEnabled(value string) bool { return value != "" && value != "none" }
+func IsAuthEnabled(value string) bool { return value != "" && value != AuthTypeNone }
 
 // IsAddon reports whether value is a known infrastructure addon.
 func IsAddon(value string) bool { return addonSet[value] }
@@ -313,8 +335,13 @@ func IsInfraSecretStore(value string) bool { return infraSecretStoreSet[value] }
 func IsInfraStore(value string) bool { return infraStoreSet[value] }
 
 // IsStringValidationModifier reports whether mod applies to string fields.
-func IsStringValidationModifier(mod string) bool {
-	return slices.Contains(stringValidationModifiers, mod)
+func IsStringValidationModifier(mod string) bool { return stringValidationModSet[mod] }
+
+// IsValidationModifier reports whether mod may appear as a `mod:value`
+// modifier, including bridge-provided extras. Validation rules and the lexer
+// share this predicate so the accepted vocabulary cannot drift.
+func IsValidationModifier(mod string, extra []string) bool {
+	return IsStringValidationModifier(mod) || IsNumericValidationModifier(mod) || slices.Contains(extra, mod)
 }
 
 // IsStringOnlyValidationModifier reports whether mod is invalid on numeric fields.
@@ -350,6 +377,50 @@ func ParseArrayInner(dbType string) string {
 	return strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(dbType), FieldTypeArray+"("), ")")
 }
 
+// SplitRespectingQuotes splits on commas that are outside quotes and outside
+// square brackets. It is the single splitter for modifier clauses and array
+// defaults, so a comma inside a quoted value cannot be read as a separator by
+// one consumer and as data by another.
+func SplitRespectingQuotes(s string) []string {
+	var out []string
+	var cur strings.Builder
+	depth := 0
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if quote != 0 {
+			cur.WriteByte(c)
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch c {
+		case '\'', '"':
+			quote = c
+			cur.WriteByte(c)
+		case '[':
+			depth++
+			cur.WriteByte(c)
+		case ']':
+			if depth > 0 {
+				depth--
+			}
+			cur.WriteByte(c)
+		case ',':
+			if depth == 0 {
+				out = append(out, cur.String())
+				cur.Reset()
+				continue
+			}
+			cur.WriteByte(c)
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	return append(out, cur.String())
+}
+
 // SplitArrayDefault splits an array literal into its elements. A scalar is
 // returned as a single element; an unclosed literal fails closed as one element
 // so the type checker can reject it. Shared by validation and seed generation
@@ -362,7 +433,7 @@ func SplitArrayDefault(defaultVal string) []string {
 	if inner == "" {
 		return nil
 	}
-	parts := strings.Split(inner, ",")
+	parts := SplitRespectingQuotes(inner)
 	for i := range parts {
 		parts[i] = strings.TrimSpace(parts[i])
 	}
@@ -382,6 +453,15 @@ func IsSingleBackRelationField(isRelation, isMany bool, targetName, sourceName s
 func HasIDSuffix(name string) bool {
 	return len(name) > 2 && (strings.HasSuffix(name, "Id") || strings.HasSuffix(name, "ID"))
 }
+
+// FieldKindJSON is the value kind returned for json and jsonb columns. It is
+// shared by the validator and seed generator so a rename cannot silently
+// disconnect either consumer from FieldKind.
+const FieldKindJSON = "json"
+
+// FieldKindEnum is the value kind returned for non-primitive (user-declared)
+// types.
+const FieldKindEnum = "enum"
 
 // FieldKind returns the language-agnostic value kind of a primitive type.
 func FieldKind(dbType string) string {
@@ -405,10 +485,13 @@ func FieldKind(dbType string) string {
 	case dbType == FieldTypeUUID:
 		return "uuid"
 	case dbType == FieldTypeJSON || dbType == FieldTypeJSONB:
-		return "json"
+		return FieldKindJSON
 	case !IsPrimitive(dbType):
-		return "enum"
+		return FieldKindEnum
 	default:
+		// Defensive fallback for a future primitive added to specmeta without
+		// a matching case above. TestFieldKindCoversEveryPrimitive makes that
+		// omission visible instead of letting it pass silently as "text".
 		return "text"
 	}
 }

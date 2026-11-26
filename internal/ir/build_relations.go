@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/DomainCraft/DomainCraft/internal/parser"
+	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 	"github.com/DomainCraft/DomainCraft/pkg/textutil"
 )
 
@@ -109,7 +110,7 @@ func reconcileOneToMany(entities []Entity, index map[string]*relationIndex) {
 			if pair == nil {
 				continue
 			}
-			rel.RelationType = "one-to-many"
+			rel.RelationType = specmeta.RelationTypeOneToMany
 			rel.PairFieldName = pair.FieldName
 			rel.PairNavigationName = pair.NavigationName
 			rel.OnDeleteBehavior = pair.OnDeleteBehavior
@@ -153,7 +154,7 @@ func buildIncomingRelations(entities []Entity, index map[string]*relationIndex) 
 			}
 			// A double-declared one-to-many: the collection already exists as the
 			// forward [many] field — no separate inverse collection on target.
-			if rel.IsMany && rel.RelationType == "one-to-many" {
+			if rel.IsMany && rel.RelationType == specmeta.RelationTypeOneToMany {
 				continue
 			}
 			// If the target already declares its own forward IsMany relation back

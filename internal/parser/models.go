@@ -89,60 +89,20 @@ type DeployConfig struct {
 	portSet bool
 }
 
-// yamlMergeKeyNames returns the key names contributed by a YAML merge value
-// ("<<"), which is either an alias to a mapping or a sequence of such aliases.
-// The alias decode below applies the merged values; this walk only records
-// which keys were present so an explicit zero in a merged block survives.
-func yamlMergeKeyNames(value *yaml.Node) []string {
-	var names []string
-	var collect func(*yaml.Node)
-	collect = func(node *yaml.Node) {
-		switch node.Kind {
-		case yaml.AliasNode:
-			if node.Alias != nil {
-				collect(node.Alias)
-			}
-		case yaml.SequenceNode:
-			for _, item := range node.Content {
-				collect(item)
-			}
-		case yaml.MappingNode:
-			for i := 0; i < len(node.Content)-1; i += 2 {
-				if node.Content[i].Value == "<<" {
-					collect(node.Content[i+1])
-					continue
-				}
-				names = append(names, node.Content[i].Value)
-			}
-		}
-	}
-	collect(value)
-	return names
-}
-
-// fieldDefPair is one field name together with its definition node, as
-// contributed by a YAML merge ("<<") in an entity's `fields` mapping.
-type fieldDefPair struct {
-	name  string
-	value *yaml.Node
-}
-
-// yamlMergeFieldPairs walks a YAML merge value using the same alias/sequence/
-// mapping handling style as yamlMergeKeyNames, but keeps both the key and the
-// value node so each merged field definition can be decoded into a string.
-// A merge value may be a mapping, an alias to a mapping, or a sequence of such
-// nodes; nested merge keys are resolved recursively. Duplicate names keep the
-// first occurrence (earlier entries in a sequence win), matching YAML merge
-// semantics. A value that resolves to anything but a mapping is an error.
-func yamlMergeFieldPairs(value *yaml.Node, mergeKey *yaml.Node) ([]fieldDefPair, error) {
-	var pairs []fieldDefPair
+// walkYAMLMerge is the single alias/sequence/mapping traversal for YAML merge
+// values ("<<"). Callers supply what to collect and how to report an invalid
+// node; dedupe selects YAML's "earlier entries win" rule.
+func walkYAMLMerge(value *yaml.Node, dedupe bool, visit func(key, val *yaml.Node), invalid func(*yaml.Node) error) error {
 	seen := make(map[string]bool)
 	var collect func(*yaml.Node) error
 	collect = func(node *yaml.Node) error {
 		switch node.Kind {
 		case yaml.AliasNode:
 			if node.Alias == nil {
-				return fmt.Errorf("line %d: '<<' in fields resolves to an undefined alias", mergeKey.Line)
+				if invalid != nil {
+					return invalid(node)
+				}
+				return nil
 			}
 			return collect(node.Alias)
 		case yaml.SequenceNode:
@@ -161,19 +121,60 @@ func yamlMergeFieldPairs(value *yaml.Node, mergeKey *yaml.Node) ([]fieldDefPair,
 					}
 					continue
 				}
-				if seen[key.Value] {
+				if dedupe && seen[key.Value] {
 					continue
 				}
 				seen[key.Value] = true
-				pairs = append(pairs, fieldDefPair{name: key.Value, value: val})
+				visit(key, val)
 			}
 			return nil
 		default:
-			return fmt.Errorf("line %d: '<<' in fields must be a mapping or a sequence of mappings, got %s",
-				mergeKey.Line, strings.ToLower(strings.TrimPrefix(node.ShortTag(), "!!")))
+			if invalid != nil {
+				return invalid(node)
+			}
+			return nil
 		}
 	}
-	if err := collect(value); err != nil {
+	return collect(value)
+}
+
+// yamlMergeKeyNames returns the key names contributed by a YAML merge value.
+// The alias decode applies the merged values; this walk only records which
+// keys were present so an explicit zero in a merged block survives.
+func yamlMergeKeyNames(value *yaml.Node) []string {
+	var names []string
+	_ = walkYAMLMerge(value, false, func(key, _ *yaml.Node) {
+		names = append(names, key.Value)
+	}, nil)
+	return names
+}
+
+// fieldDefPair is one field name together with its definition node, as
+// contributed by a YAML merge ("<<") in an entity's `fields` mapping.
+type fieldDefPair struct {
+	name  string
+	value *yaml.Node
+}
+
+// yamlMergeFieldPairs keeps both the key and the value node so each merged
+// field definition can be decoded into a string. A merge value may be a
+// mapping, an alias to a mapping, or a sequence of such nodes; nested merge
+// keys are resolved recursively. Duplicate names keep the first occurrence.
+func yamlMergeFieldPairs(value *yaml.Node, mergeKey *yaml.Node) ([]fieldDefPair, error) {
+	var pairs []fieldDefPair
+	err := walkYAMLMerge(value, true,
+		func(key, val *yaml.Node) {
+			pairs = append(pairs, fieldDefPair{name: key.Value, value: val})
+		},
+		func(node *yaml.Node) error {
+			if node.Kind == yaml.AliasNode {
+				return fmt.Errorf("line %d: '<<' in fields resolves to an undefined alias", mergeKey.Line)
+			}
+			return fmt.Errorf("line %d: '<<' in fields must be a mapping or a sequence of mappings, got %s",
+				mergeKey.Line, strings.ToLower(strings.TrimPrefix(node.ShortTag(), "!!")))
+		},
+	)
+	if err != nil {
 		return nil, err
 	}
 	return pairs, nil
@@ -212,17 +213,22 @@ func checkStrictKeys(value *yaml.Node, allowed []string, errFn func(string, int)
 	return nil
 }
 
-// decodeStrict decodes a block into an alias target, rejecting unknown keys.
-// It shares the non-mapping fallback and the strict-key walk so types that only
-// reject unknown keys do not each repeat them.
-func decodeStrict(value *yaml.Node, target any, allowed []string, reject func(string, int) error) error {
+// decodeWithStrictKeys is the shared decode skeleton: non-mapping values are
+// decoded as-is, mapping values are checked first. Callers only supply the
+// rejection message and an optional presence marker.
+func decodeWithStrictKeys(value *yaml.Node, target any, allowed []string, errFn func(string, int) error, mark func(string)) error {
 	if value.Kind != yaml.MappingNode {
 		return value.Decode(target)
 	}
-	if err := checkStrictKeys(value, allowed, reject, nil); err != nil {
+	if err := checkStrictKeys(value, allowed, errFn, mark); err != nil {
 		return err
 	}
 	return value.Decode(target)
+}
+
+// decodeStrict decodes a block into an alias target, rejecting unknown keys.
+func decodeStrict(value *yaml.Node, target any, allowed []string, reject func(string, int) error) error {
+	return decodeWithStrictKeys(value, target, allowed, reject, nil)
 }
 
 // unmarshalYAMLWithPresence decodes a config block through target — an alias
@@ -235,9 +241,6 @@ func decodeStrict(value *yaml.Node, target any, allowed []string, reject func(st
 // KnownFields(true), so strict decoding is enforced here to keep the root
 // decoder's unknown-key behavior inside the block.
 func unmarshalYAMLWithPresence(value *yaml.Node, target any, typeName string, allowed []string, presence map[string]func()) error {
-	if value.Kind != yaml.MappingNode {
-		return value.Decode(target)
-	}
 	errFn := func(key string, line int) error {
 		return fmt.Errorf("line %d: field %s not found in type parser.%s", line, key, typeName)
 	}
@@ -246,10 +249,7 @@ func unmarshalYAMLWithPresence(value *yaml.Node, target any, typeName string, al
 			fn()
 		}
 	}
-	if err := checkStrictKeys(value, allowed, errFn, mark); err != nil {
-		return err
-	}
-	return value.Decode(target)
+	return decodeWithStrictKeys(value, target, allowed, errFn, mark)
 }
 
 type deployConfigAlias DeployConfig
@@ -491,9 +491,9 @@ type RawIndex struct {
 // UnmarshalYAML rejects unknown index keys instead of silently ignoring them.
 func (r *RawIndex) UnmarshalYAML(value *yaml.Node) error {
 	reject := func(key string, _ int) error {
-		return fmt.Errorf("unknown index key %q; valid keys: fields, type, sort, unique", key)
+		return fmt.Errorf("unknown index key %q; valid keys: %s", key, strings.Join(specmeta.IndexKeys, ", "))
 	}
-	return decodeStrict(value, (*rawIndexAlias)(r), []string{"fields", "type", "sort", "unique"}, reject)
+	return decodeStrict(value, (*rawIndexAlias)(r), specmeta.IndexKeys, reject)
 }
 
 type rawIndexAlias RawIndex
@@ -509,13 +509,13 @@ func ParseRawSchema(data []byte) (*RawSchema, error) {
 
 	// Set defaults
 	if schema.Database == "" {
-		schema.Database = specmeta.Databases[0]
+		schema.Database = specmeta.DefaultDatabase
 	}
 	if schema.Auth.Type == "" {
-		schema.Auth.Type = specmeta.AuthTypes[len(specmeta.AuthTypes)-1] // "none"
+		schema.Auth.Type = specmeta.AuthTypeNone
 	}
 	if schema.APIStyle == "" {
-		schema.APIStyle = specmeta.APIStyles[0]
+		schema.APIStyle = specmeta.DefaultAPIStyle
 	}
 	// Deploy defaults — consistent with parser setting other defaults.
 	if schema.Project.Deploy == nil {

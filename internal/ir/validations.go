@@ -39,36 +39,49 @@ type ValidationRule struct {
 	Message string
 }
 
+// ruleMeta is the single description of a normalized rule: wire code,
+// ordering rank and default message. Adding a rule touches one table instead
+// of three switches that can silently drift apart.
+type ruleMeta struct {
+	code    string
+	rank    int
+	message func(value string, exclusive bool) string
+}
+
+var validationRules = map[string]ruleMeta{
+	"required":   {"REQUIRED", 0, func(_ string, _ bool) string { return "is required" }},
+	"email":      {"EMAIL", 1, func(_ string, _ bool) string { return "must be a valid email address" }},
+	"url":        {"URL", 2, func(_ string, _ bool) string { return "must be a valid URL" }},
+	"ipv4":       {"IPV4", 3, func(_ string, _ bool) string { return "must be a valid IPv4 address" }},
+	"regex":      {"REGEX", 4, func(_ string, _ bool) string { return "must match the required format" }},
+	"min_length": {"MIN_LENGTH", 5, func(v string, _ bool) string { return "must be at least " + v + " characters" }},
+	"max_length": {"MAX_LENGTH", 6, func(v string, _ bool) string { return "must be at most " + v + " characters" }},
+	"min_value":  {"MIN_VALUE", 7, minValueMessage},
+	"max_value":  {"MAX_VALUE", 8, maxValueMessage},
+}
+
+func minValueMessage(value string, exclusive bool) string {
+	if exclusive {
+		return "must be greater than " + value
+	}
+	return "must be greater than or equal to " + value
+}
+
+func maxValueMessage(value string, exclusive bool) string {
+	if exclusive {
+		return "must be less than " + value
+	}
+	return "must be less than or equal to " + value
+}
+
 // validationRuleMeta returns the stable wire code and default message for a
 // normalized rule kind. The value is interpolated into length/numeric messages.
 func validationRuleMeta(kind, value string, exclusive bool) (code, message string) {
-	switch kind {
-	case "required":
-		return "REQUIRED", "is required"
-	case "email":
-		return "EMAIL", "must be a valid email address"
-	case "url":
-		return "URL", "must be a valid URL"
-	case "ipv4":
-		return "IPV4", "must be a valid IPv4 address"
-	case "regex":
-		return "REGEX", "must match the required format"
-	case "min_length":
-		return "MIN_LENGTH", "must be at least " + value + " characters"
-	case "max_length":
-		return "MAX_LENGTH", "must be at most " + value + " characters"
-	case "min_value":
-		if exclusive {
-			return "MIN_VALUE", "must be greater than " + value
-		}
-		return "MIN_VALUE", "must be greater than or equal to " + value
-	case "max_value":
-		if exclusive {
-			return "MAX_VALUE", "must be less than " + value
-		}
-		return "MAX_VALUE", "must be less than or equal to " + value
+	meta, ok := validationRules[kind]
+	if !ok {
+		return strings.ToUpper(kind), ""
 	}
-	return strings.ToUpper(kind), ""
+	return meta.code, meta.message(value, exclusive)
 }
 
 // newRule builds a normalized rule with its stable code and default message.
@@ -83,28 +96,10 @@ func newRule(kind, value string, exclusive bool) ValidationRule {
 // modifiers were declared (convertValidations sorts keys alphabetically, so
 // declaration order cannot be relied on here).
 func validationRuleOrder(kind string) int {
-	switch kind {
-	case "required":
-		return 0
-	case "email":
-		return 1
-	case "url":
-		return 2
-	case "ipv4":
-		return 3
-	case "regex":
-		return 4
-	case "min_length":
-		return 5
-	case "max_length":
-		return 6
-	case "min_value":
-		return 7
-	case "max_value":
-		return 8
-	default:
-		return 9
+	if meta, ok := validationRules[kind]; ok {
+		return meta.rank
 	}
+	return 9
 }
 
 // ValidationRules returns the field's validations as a normalized, ordered list

@@ -31,6 +31,15 @@ const (
 	OpEndsWith   FilterOp = "endsWith"
 )
 
+// filterOpsByKind is the single source for which operators apply to which
+// field kind. FilterOperators and the canonical vocabulary both derive from it.
+var filterOpsByKind = map[string][]FilterOp{
+	"text":    {OpEq, OpNe, OpContains, OpStartsWith, OpEndsWith, OpIn},
+	"boolean": {OpEq, OpNe},
+	"ordered": {OpEq, OpNe, OpGt, OpGte, OpLt, OpLte, OpIn},
+	"scalar":  {OpEq, OpNe, OpIn},
+}
+
 // allFilterOps is the canonical operator vocabulary. Every caller gets a clone
 // so a bridge cannot mutate the core's contract at runtime.
 var allFilterOps = []FilterOp{OpEq, OpNe, OpGt, OpGte, OpLt, OpLte, OpIn, OpContains, OpStartsWith, OpEndsWith}
@@ -82,18 +91,22 @@ const (
 // a canonical order. Bridges use this to emit a field's allowed-filter map
 // without re-deriving which operator is valid for which type.
 func (f Field) FilterOperators() []FilterOp {
+	var kind string
 	switch {
 	case f.IsText():
-		return []FilterOp{OpEq, OpNe, OpContains, OpStartsWith, OpEndsWith, OpIn}
+		kind = "text"
 	case f.IsBoolean():
-		return []FilterOp{OpEq, OpNe}
+		kind = "boolean"
 	case f.IsInteger() || f.IsFloat() || f.IsDate() || f.IsDateTime():
-		return []FilterOp{OpEq, OpNe, OpGt, OpGte, OpLt, OpLte, OpIn}
+		kind = "ordered"
 	case f.IsUuid(), f.IsEnum():
-		return []FilterOp{OpEq, OpNe, OpIn}
-	default:
+		kind = "scalar"
+	}
+	ops, ok := filterOpsByKind[kind]
+	if !ok {
 		return nil
 	}
+	return slices.Clone(ops)
 }
 
 // SearchableFields returns the scalar text fields eligible for a free-text

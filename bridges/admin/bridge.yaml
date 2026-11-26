@@ -1,8 +1,9 @@
 name: admin-alpine
+contract_version: 2
 description: Admin panel with Alpine.js + 0build UIkit for DomainCraft
 version: "1.1.0"
 output_dir: admin
-helpers: templates/_helpers.html.tmpl
+helpers: templates/helpers.html.tmpl
 
 templates:
   - for: project

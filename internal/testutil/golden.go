@@ -31,7 +31,9 @@ func CheckGolden(t *testing.T, name, got string, update bool) {
 		t.Fatalf("read golden %s (run this package's tests with -update to create): %v", path, err)
 	}
 	data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
-	if want := strings.TrimRight(string(data), "\n"); want != got {
+	// CheckGolden writes exactly one trailing newline; trimming only that one
+	// keeps an accidental extra blank line in a golden visible.
+	if want := strings.TrimSuffix(string(data), "\n"); want != got {
 		t.Errorf("output differs from golden %s\nwant:\n%s\ngot:\n%s", path, want, got)
 	}
 }

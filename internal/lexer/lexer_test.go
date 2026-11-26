@@ -4,25 +4,30 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 )
 
 func TestParsePrimitiveTypes(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	// Generate the positive cases from specmeta so a new primitive cannot be
+	// added to the spec without this test covering it.
+	tests := make([]struct {
 		input    string
 		wantType string
 		wantErr  bool
-	}{
-		{"string", "string", false},
-		{"int", "int", false},
-		{"uuid", "uuid", false},
-		{"boolean", "boolean", false},
-		{"datetime", "datetime", false},
-		{"decimal", "decimal", false},
-		{"text", "text", false},
-		{"json", "json", false},
-		{"unknown_type", "", true},
+	}, 0, len(specmeta.PrimitiveFieldTypes)+1)
+	for _, name := range specmeta.PrimitiveFieldTypes {
+		tests = append(tests, struct {
+			input    string
+			wantType string
+			wantErr  bool
+		}{input: name, wantType: name})
 	}
+	tests = append(tests, struct {
+		input    string
+		wantType string
+		wantErr  bool
+	}{input: "unknown_type", wantErr: true})
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -472,9 +477,9 @@ func TestLexerRejectsUnclosedTypeDeclaration(t *testing.T) {
 
 func TestLexerAcceptsInjectedStringModifier(t *testing.T) {
 	t.Parallel()
-	fd, err := ParseWithStringModifiers("string [startsWith:foo]", []string{"startsWith"})
+	fd, err := parse("string [startsWith:foo]", []string{"startsWith"})
 	if err != nil {
-		t.Fatalf("ParseFieldString() error = %v", err)
+		t.Fatalf("parse() error = %v", err)
 	}
 	if got := fd.Validations["startsWith"]; got != "foo" {
 		t.Errorf("Validations[startsWith] = %q, want foo", got)

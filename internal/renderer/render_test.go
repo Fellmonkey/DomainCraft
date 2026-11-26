@@ -15,12 +15,8 @@ import (
 func TestRenderEntityTemplate(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
-	bridgeDir := filepath.Join(tmpDir, "bridge")
-	if err := os.MkdirAll(filepath.Join(bridgeDir, "templates"), 0o755); err != nil {
-		t.Fatalf("mkdir bridge: %v", err)
-	}
-
-	bridgeYAML := []byte(`name: demo
+	bridgeDir := writeBridge(t, map[string]string{
+		"bridge.yaml": `name: demo
 output_dir: generated
 templates:
   - for: entity
@@ -28,14 +24,9 @@ templates:
     targets:
       - "{{ .Entity.Name }}.txt"
       - "nested/{{ .Entity.Name }}.txt"
-`)
-	templateBytes := []byte(`{{ .Entity.Name }} -> {{ .Project.Name }}`)
-	if err := os.WriteFile(filepath.Join(bridgeDir, "bridge.yaml"), bridgeYAML, 0o644); err != nil {
-		t.Fatalf("write bridge: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(bridgeDir, "templates", "entity.tmpl"), templateBytes, 0o644); err != nil {
-		t.Fatalf("write template: %v", err)
-	}
+`,
+		"templates/entity.tmpl": `{{ .Entity.Name }} -> {{ .Project.Name }}`,
+	})
 
 	r, err := New(bridgeDir, nil)
 	if err != nil {
@@ -66,11 +57,8 @@ templates:
 func TestRenderTargetPathsUsePerEntityContext(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
-	bridgeDir := filepath.Join(tmpDir, "bridge")
-	if err := os.MkdirAll(filepath.Join(bridgeDir, "templates"), 0o755); err != nil {
-		t.Fatalf("mkdir bridge: %v", err)
-	}
-	bridgeYAML := []byte(`name: demo
+	bridgeDir := writeBridge(t, map[string]string{
+		"bridge.yaml": `name: demo
 output_dir: generated
 templates:
   - for: entity
@@ -78,13 +66,9 @@ templates:
     targets:
       - "{{ .Entity.Name }}.txt"
       - "nested/{{ lower .Entity.Name }}.txt"
-`)
-	if err := os.WriteFile(filepath.Join(bridgeDir, "bridge.yaml"), bridgeYAML, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(bridgeDir, "templates", "entity.tmpl"), []byte(`{{ .Entity.Name }}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+`,
+		"templates/entity.tmpl": `{{ .Entity.Name }}`,
+	})
 
 	r, err := New(bridgeDir, nil)
 	if err != nil {
@@ -289,35 +273,6 @@ templates:
 	}
 }
 
-func TestRenderContext_HasFeature(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name     string
-		features map[string]bool
-		feature  string
-		want     bool
-	}{
-		{"audit enabled", map[string]bool{"audit": true}, "audit", true},
-		{"audit disabled", map[string]bool{"audit": false}, "audit", false},
-		{"nil features", nil, "audit", false},
-		{"nil entity", nil, "audit", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			ctx := RenderContext{
-				Entity: &ir.Entity{Features: tt.features},
-			}
-			if tt.name == "nil entity" {
-				ctx.Entity = nil
-			}
-			if got := ctx.HasFeature(tt.feature); got != tt.want {
-				t.Errorf("HasFeature(%q) = %v, want %v", tt.feature, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestRenderContext_HasAudit(t *testing.T) {
 	t.Parallel()
 	ctx := RenderContext{
@@ -417,7 +372,7 @@ func TestResolvePackagesHasNoLanguageSpecificFrameworkDefault(t *testing.T) {
 
 	bridge := &Renderer{sources: []sourceConfig{
 		{config: BridgeConfig{TargetFramework: "net10.0"}}, // base
-		{config: BridgeConfig{}},                            // adapter, silent
+		{config: BridgeConfig{}},                           // adapter, silent
 	}}
 	if got := bridge.targetFramework(&ir.Project{}); got != "net10.0" {
 		t.Errorf("targetFramework() = %q, want the bridge-declared net10.0", got)

@@ -212,11 +212,6 @@ func (c RenderContext) HasSeedData() bool {
 	return false
 }
 
-// HasFeature reports whether the current entity has the named feature enabled.
-func (c RenderContext) HasFeature(name string) bool {
-	return c.Entity != nil && c.Entity.HasFeature(name)
-}
-
 // HasAddon reports whether the named infrastructure addon is enabled at the
 // project level (e.g. "dapr"). Templates use this to toggle addon-specific code.
 func (c RenderContext) HasAddon(name string) bool {
@@ -290,15 +285,6 @@ func (c RenderContext) FilterableFields() []ir.Field {
 		return nil
 	}
 	return c.Entity.FilterableFields()
-}
-
-// FilterablePaths exposes the complete filter path schema: scalar fields,
-// one-hop relation paths and JSON roots, each with its allowed operators.
-func (c RenderContext) FilterablePaths() []ir.FilterPathSpec {
-	if c.Entity == nil {
-		return nil
-	}
-	return c.Entity.FilterablePaths()
 }
 
 // QuerySchema exposes the entity's whole list-query surface (search + sort +

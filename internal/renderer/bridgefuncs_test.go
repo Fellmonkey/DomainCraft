@@ -2,10 +2,13 @@ package renderer
 
 import (
 	"bytes"
+	"io"
 	"maps"
+	"math"
 	"slices"
 	"strings"
 	"testing"
+	"text/template"
 
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
 )
@@ -409,6 +412,31 @@ func TestMergeTypeMappingsClonesValueTypes(t *testing.T) {
 	merged.ValueTypes[0] = "Mutated"
 	if base.ValueTypes[0] != "BaseId" {
 		t.Errorf("merged mapping aliased the base value types: %v", base.ValueTypes)
+	}
+}
+
+func TestJSONValueReturnsErrorOnUnsupportedValue(t *testing.T) {
+	t.Parallel()
+	if _, err := jsonValue(make(chan int)); err == nil {
+		t.Error("jsonValue on an unsupported value must return an error")
+	}
+	tpl := template.Must(template.New("t").Funcs(template.FuncMap{"jsonValue": jsonValue}).Parse(`{{ jsonValue . }}`))
+	if err := tpl.Execute(io.Discard, math.NaN()); err == nil {
+		t.Error("jsonValue in a template must surface the marshal error")
+	}
+}
+
+func TestLiteralValueWarnsAndFallsBackOnUnencodableValue(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	log := logger.New()
+	log.SetWriter(&out)
+	fn := buildBridgeFuncs(testMappings(), log)["literalValue"].(func(string, any) string)
+	if got := fn("string", math.NaN()); got != "NaN" {
+		t.Errorf("literalValue(NaN) = %q, want the plain fallback NaN", got)
+	}
+	if !strings.Contains(out.String(), "NaN") {
+		t.Errorf("expected a warning about the unencodable value, got %q", out.String())
 	}
 }
 

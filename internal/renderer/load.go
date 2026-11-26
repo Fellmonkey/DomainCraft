@@ -47,10 +47,10 @@ type Renderer struct {
 	beforeCommitHook func()
 }
 
-// SetBeforeCommitHook installs a hook called once between staging and commit.
-// Production code never calls it; tests use it to mutate the filesystem at the
-// exact point where the commit's path checks must still hold.
-func (r *Renderer) SetBeforeCommitHook(fn func()) { r.beforeCommitHook = fn }
+// setBeforeCommitHook installs a hook called once between staging and commit.
+// Production code never calls it; tests in this package use it to mutate the
+// filesystem at the exact point where the commit's path checks must hold.
+func (r *Renderer) setBeforeCommitHook(fn func()) { r.beforeCommitHook = fn }
 
 // config returns the topmost (adapter) bridge config, which owns the effective
 // output_dir, name, delimiters and migration commands.
@@ -85,40 +85,83 @@ const (
 	whenNotAddon    = "notHasAddon"
 )
 
-var (
-	simpleWhenConditions = []string{whenSeed, whenEnums, whenOwnerTokens, whenAuth, whenMigration, whenMockData, whenAddon, whenNotAddon}
-	addonWhenPrefixes    = []string{whenAddon, whenNotAddon}
-)
+// whenSpec is one entry of the closed `when:` vocabulary. Validation and
+// evaluation both read this table, so a condition can never be accepted by one
+// and rejected (or silently rendered) by the other.
+type whenSpec struct {
+	eval  func(RenderContext, string) bool
+	colon bool // accepts a name after ':' (addon conditions)
+}
+
+var whenSpecs = map[string]whenSpec{
+	whenSeed:  {eval: func(c RenderContext, _ string) bool { return c.HasSeedData() }},
+	whenEnums: {eval: func(c RenderContext, _ string) bool { return c.Project != nil && len(c.Project.Enums) > 0 }},
+	whenOwnerTokens: {eval: func(c RenderContext, _ string) bool {
+		if c.Project == nil {
+			return false
+		}
+		for _, e := range c.Project.Entities {
+			if e.Permissions != nil && e.Permissions.HasOwnerToken() {
+				return true
+			}
+		}
+		return false
+	}},
+	whenAuth:      {eval: func(c RenderContext, _ string) bool { return c.Project != nil && c.Project.HasAuth() }},
+	whenMigration: {eval: func(c RenderContext, _ string) bool { return c.HasMigration() }},
+	whenMockData:  {eval: func(c RenderContext, _ string) bool { return c.HasMockData() }},
+	whenAddon: {colon: true, eval: func(c RenderContext, name string) bool {
+		if c.Project == nil {
+			return false
+		}
+		if name == "" {
+			return len(c.Project.Addons) > 0
+		}
+		return c.Project.HasAddon(strings.TrimSpace(name))
+	}},
+	whenNotAddon: {colon: true, eval: func(c RenderContext, name string) bool {
+		if c.Project == nil {
+			return true
+		}
+		if name == "" {
+			return len(c.Project.Addons) == 0
+		}
+		return !c.Project.HasAddon(strings.TrimSpace(name))
+	}},
+}
+
+// allowedWhenConditions builds the diagnostic from the same table that drives
+// validation and evaluation.
+func allowedWhenConditions() string {
+	names := make([]string, 0, len(whenSpecs))
+	for name, spec := range whenSpecs {
+		if spec.colon {
+			names = append(names, name+":<name>")
+		} else {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return strings.Join(names, ", ")
+}
 
 // validateWhenConditions rejects any condition outside the closed vocabulary,
 // including unknown colon-prefixed forms such as "hasFeature:audit". Bare
-// prefix names stay valid: the evaluator treats them as "any addon".
+// addon names stay valid: the evaluator treats them as "any addon".
 func validateWhenConditions(bridgeName string, templates []TemplateSpec) error {
 	for i, spec := range templates {
 		when := spec.When
 		if when == "" {
 			continue
 		}
-		prefix, _, hasColon := strings.Cut(when, ":")
-		known := false
-		if hasColon {
-			known = slices.Contains(addonWhenPrefixes, strings.TrimSpace(prefix))
-		} else {
-			known = slices.Contains(simpleWhenConditions, when)
+		prefix, name, hasColon := strings.Cut(when, ":")
+		entry, ok := whenSpecs[strings.TrimSpace(prefix)]
+		if !ok || (hasColon && !entry.colon) || (!hasColon && strings.TrimSpace(when) != prefix) {
+			return fmt.Errorf("bridge %q template %d: unknown when condition %q (allowed: %s)", bridgeName, i, when, allowedWhenConditions())
 		}
-		if !known {
-			return fmt.Errorf("bridge %q template %d: unknown when condition %q (allowed: hasSeed, hasEnums, hasOwnerTokens, hasAuth, hasMigration, hasMockData, hasAddon:<name>, notHasAddon:<name>)", bridgeName, i, when)
-		}
+		_ = name
 	}
 	return nil
-}
-
-// parsedBridgeSource is the cacheable part of sourceConfig. The bridge path is
-// part of the cache key, so the dir is stored here too.
-type parsedBridgeSource struct {
-	dir              string
-	config           BridgeConfig
-	contractDeclared bool
 }
 
 // maxParsedSourceCacheEntries bounds the parse cache. In a one-shot CLI it
@@ -131,36 +174,35 @@ const maxParsedSourceCacheEntries = 64
 // for the same configs again). The key includes the file bytes: a bridge
 // updated mid-command — by --update-bridges or a manual edit — gets a new key
 // and is parsed again, so a cached config can never go stale.
-var parsedSourceCache sync.Map // map[string]parsedBridgeSource
+//
+// A plain map under an RWMutex makes the cap check + clear + store one atomic
+// operation; concurrent loads take the read lock.
+var parsedSourceCache = struct {
+	sync.RWMutex
+	entries map[string]sourceConfig
+}{entries: make(map[string]sourceConfig)}
 
-// parsedSourceCacheMu makes the cap check + clear + store atomic. Loads stay
-// lock-free through sync.Map: a concurrent load can only cause an extra parse,
-// never a wrong config.
-var parsedSourceCacheMu sync.Mutex
+// loadParsedSource looks up one cached config by its content-derived key.
+func loadParsedSource(key string) (sourceConfig, bool) {
+	parsedSourceCache.RLock()
+	src, ok := parsedSourceCache.entries[key]
+	parsedSourceCache.RUnlock()
+	return src, ok
+}
 
 // storeParsedSource inserts into the parse cache, clearing it once the cap is
 // reached. Clearing is safe: the key includes the bridge path and the full
 // config bytes, so an entry is only ever reused for an identical manifest. No
 // correctness depends on older entries — evicting them just makes the next
 // identical load re-parse once.
-func storeParsedSource(key string, src parsedBridgeSource) {
-	parsedSourceCacheMu.Lock()
-	defer parsedSourceCacheMu.Unlock()
+func storeParsedSource(key string, src sourceConfig) {
+	parsedSourceCache.Lock()
+	defer parsedSourceCache.Unlock()
 
-	n := 0
-	parsedSourceCache.Range(func(_, _ any) bool {
-		n++
-		// Range stops when f returns false; keep walking until the cap is
-		// reached so n becomes the current entry count (capped at the limit).
-		return n < maxParsedSourceCacheEntries
-	})
-	if n >= maxParsedSourceCacheEntries {
-		parsedSourceCache.Range(func(k, _ any) bool {
-			parsedSourceCache.Delete(k)
-			return true
-		})
+	if len(parsedSourceCache.entries) >= maxParsedSourceCacheEntries {
+		parsedSourceCache.entries = make(map[string]sourceConfig, maxParsedSourceCacheEntries)
 	}
-	parsedSourceCache.Store(key, src)
+	parsedSourceCache.entries[key] = src
 }
 
 // loadSource loads a single bridge directory (its bridge.yaml).
@@ -175,9 +217,8 @@ func loadSource(bridgePath string) (sourceConfig, error) {
 	}
 
 	key := bridgeDir + "\x00" + configPath + "\x00" + string(data)
-	if cached, ok := parsedSourceCache.Load(key); ok {
-		src := cached.(parsedBridgeSource)
-		return sourceConfig(src), nil
+	if src, ok := loadParsedSource(key); ok {
+		return src, nil
 	}
 
 	var config BridgeConfig
@@ -205,10 +246,9 @@ func loadSource(bridgePath string) (sourceConfig, error) {
 		return sourceConfig{}, fmt.Errorf("bridge %q: %w", config.Name, err)
 	}
 	config.ContractVersion = contractVersion
-	storeParsedSource(key, parsedBridgeSource{
-		dir: bridgeDir, config: config, contractDeclared: contractDeclared,
-	})
-	return sourceConfig{dir: bridgeDir, config: config, contractDeclared: contractDeclared}, nil
+	src := sourceConfig{dir: bridgeDir, config: config, contractDeclared: contractDeclared}
+	storeParsedSource(key, src)
+	return src, nil
 }
 
 // New loads a single (leaf) bridge.

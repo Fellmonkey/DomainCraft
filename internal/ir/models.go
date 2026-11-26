@@ -181,26 +181,25 @@ type Field struct {
 	Validations           []Validation
 }
 
-// NonRelationFields returns only scalar/non-relation fields (excludes relation FK fields).
-func (e Entity) NonRelationFields() []Field {
+// fieldsWhere is the single ordered field filter behind the relation views.
+func (e Entity) fieldsWhere(pred func(Field) bool) []Field {
 	var result []Field
 	for _, f := range e.Fields {
-		if !f.IsRelation {
+		if pred(f) {
 			result = append(result, f)
 		}
 	}
 	return result
 }
 
+// NonRelationFields returns only scalar/non-relation fields (excludes relation FK fields).
+func (e Entity) NonRelationFields() []Field {
+	return e.fieldsWhere(func(f Field) bool { return !f.IsRelation })
+}
+
 // RelationFields returns only relation fields.
 func (e Entity) RelationFields() []Field {
-	var result []Field
-	for _, f := range e.Fields {
-		if f.IsRelation {
-			result = append(result, f)
-		}
-	}
-	return result
+	return e.fieldsWhere(func(f Field) bool { return f.IsRelation })
 }
 
 // EagerLoadRelations returns the relations a bridge should eager-load when
@@ -228,21 +227,14 @@ func (r Relation) EagerLoadNavigation() string {
 // (the template `snakecase` diverges from textutil.ToDatabaseColumnName on
 // acronyms, e.g. `IPv4Address` -> `i_pv4address`).
 func TableNameFor(name string) string {
-	return toTableName(textutil.Pluralize(name))
-}
-
-// toTableName applies the canonical snake_case conversion to an already-plural
-// name. The parser stores the plural in Entity.NamePlural, so the two entry
-// points share this one conversion instead of each re-deriving it.
-func toTableName(plural string) string {
-	return textutil.ToDatabaseColumnName(plural)
+	return textutil.ToDatabaseColumnName(textutil.Pluralize(name))
 }
 
 // TableName returns the entity's snake_case database table name. It stays based
 // on the parser-provided NamePlural (which may be an irregular plural); callers
 // that only have a singular name use TableNameFor.
 func (e Entity) TableName() string {
-	return toTableName(e.NamePlural)
+	return textutil.ToDatabaseColumnName(e.NamePlural)
 }
 
 // ForeignKeyColumnName returns the snake_case DB column name of this relation's

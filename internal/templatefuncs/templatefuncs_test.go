@@ -1,8 +1,10 @@
 package templatefuncs
 
 import (
+	"io"
 	"reflect"
 	"testing"
+	"text/template"
 
 	"github.com/DomainCraft/DomainCraft/pkg/textutil"
 )
@@ -28,11 +30,28 @@ func TestAdd(t *testing.T) {
 
 func TestAtoi(t *testing.T) {
 	t.Parallel()
-	if got := Atoi("42"); got != 42 {
-		t.Errorf("Atoi('42') = %d, want 42", got)
+	if got, err := Atoi("42"); err != nil || got != 42 {
+		t.Errorf("Atoi('42') = (%d, %v), want (42, nil)", got, err)
 	}
-	if got := Atoi("nope"); got != 0 {
-		t.Errorf("Atoi('nope') = %d, want 0", got)
+	if got, err := Atoi("nope"); err == nil || got != 0 {
+		t.Errorf("Atoi('nope') = (%d, %v), want an error", got, err)
+	}
+	if got := AtoiOrDefault("nope", 7); got != 7 {
+		t.Errorf("AtoiOrDefault('nope', 7) = %d, want 7", got)
+	}
+	if got := AtoiOrDefault("42", 7); got != 42 {
+		t.Errorf("AtoiOrDefault('42', 7) = %d, want 42", got)
+	}
+}
+
+func TestTemplateAtoiKeepsZeroFallback(t *testing.T) {
+	t.Parallel()
+	fn := FuncMap()["atoi"].(func(string) int)
+	if got := fn("nope"); got != 0 {
+		t.Errorf("template atoi('nope') = %d, want 0", got)
+	}
+	if got := fn("42"); got != 42 {
+		t.Errorf("template atoi('42') = %d, want 42", got)
 	}
 }
 
@@ -78,14 +97,38 @@ func TestListAppend(t *testing.T) {
 	if len(l) != 0 {
 		t.Errorf("List() = %v, want empty", l)
 	}
-	l = Append(l, "a")
-	l = Append(l, 2)
+	var err error
+	l, err = Append(l, "a")
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	l, err = Append(l, 2)
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
 	if !reflect.DeepEqual(l, []any{"a", 2}) {
 		t.Errorf("Append chain = %v, want [a 2]", l)
 	}
 	// Append also works on typed slices (converted via reflection).
-	if got := Append([]string{"x", "y"}, "z"); !reflect.DeepEqual(got, []any{"x", "y", "z"}) {
-		t.Errorf("Append([]string) = %v, want [x y z]", got)
+	got, err := Append([]string{"x", "y"}, "z")
+	if err != nil || !reflect.DeepEqual(got, []any{"x", "y", "z"}) {
+		t.Errorf("Append([]string) = (%v, %v), want ([x y z], nil)", got, err)
+	}
+	if _, err := Append(42, "z"); err == nil {
+		t.Error("Append(non-slice) should return an error, not panic")
+	}
+}
+
+func TestTemplateAppendReturnsErrorOnNonSlice(t *testing.T) {
+	t.Parallel()
+	fm := FuncMap()
+	// Execution of a two-result function is valid in a pipeline; the error
+	// surfaces here instead of a panic from the Go helper.
+	if err := template.Must(template.New("t").Funcs(fm).Parse(`{{ $_ := append 42 "z" }}`)).Execute(io.Discard, nil); err == nil {
+		t.Error("template append on a non-slice should fail")
+	}
+	if err := template.Must(template.New("t").Funcs(fm).Parse(`{{ $_ := append (list "a") "b" }}`)).Execute(io.Discard, nil); err != nil {
+		t.Errorf("template append on a list failed: %v", err)
 	}
 }
 

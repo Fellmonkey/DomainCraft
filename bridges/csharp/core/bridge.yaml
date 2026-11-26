@@ -1,11 +1,12 @@
 name: csharp-core
+contract_version: 2
 description: C# language core — enum wire values, entity types, query schema, permission matrix. Certified once per language.
 version: "1.0.0"
 layer: core
 # C#-specific target framework. The core never bakes in a TFM: a bridge that
 # resolves NuGet versions must declare the framework its templates generate.
 target_framework: net10.0
-helpers: templates/_helpers.cs.tmpl
+helpers: templates/helpers.cs.tmpl
 templates:
   - for: entity
     source: templates/entity.cs.tmpl

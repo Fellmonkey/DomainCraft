@@ -49,11 +49,6 @@ func (e Endpoint) AuthPolicy() string {
 	return ""
 }
 
-// HasStatus reports whether status is among the endpoint's possible statuses.
-func (e Endpoint) HasStatus(status int) bool {
-	return e.SuccessStatus == status || slices.Contains(e.ErrorStatuses, status)
-}
-
 // Endpoints returns the standard REST endpoint contract for the entity, in a
 // stable order (list, get, create, update, patch, delete).
 func (e Entity) Endpoints() []Endpoint {
@@ -71,40 +66,36 @@ func (e Entity) Endpoints() []Endpoint {
 		slices.Sort(updateErrors)
 	}
 
-	eps := []Endpoint{
-		{
-			Method: "GET", Path: base, Operation: "list",
-			HasBody: false, SuccessStatus: 200,
-			ErrorStatuses: slices.Clone(common), Auth: e.PermissionPlan("read"),
-			Paginated: true, Concurrency: false,
-		},
-		{
-			Method: "GET", Path: base + "/{id}", Operation: "get",
-			HasBody: false, SuccessStatus: 200,
-			ErrorStatuses: slices.Clone(getErrors), Auth: e.PermissionPlan("read"),
-		},
-		{
-			Method: "POST", Path: base, Operation: "create",
-			HasBody: true, SuccessStatus: 201,
-			ErrorStatuses: slices.Clone(common), Auth: e.PermissionPlan("create"),
-		},
-		{
-			Method: "PUT", Path: base + "/{id}", Operation: "update",
-			HasBody: true, SuccessStatus: 200,
-			ErrorStatuses: slices.Clone(updateErrors), Auth: e.PermissionPlan("update"),
-			Concurrency: e.HasOptimisticLock(),
-		},
-		{
-			Method: "PATCH", Path: base + "/{id}", Operation: "patch",
-			HasBody: true, SuccessStatus: 200,
-			ErrorStatuses: slices.Clone(updateErrors), Auth: e.PermissionPlan("update"),
-			Concurrency: e.HasOptimisticLock(),
-		},
-		{
-			Method: "DELETE", Path: base + "/{id}", Operation: "delete",
-			HasBody: false, SuccessStatus: 204,
-			ErrorStatuses: slices.Clone(getErrors), Auth: e.PermissionPlan("delete"),
-		},
+	// The order of decls is the endpoint contract order; each row is one
+	// standard REST operation. ErrorStatuses are cloned per endpoint so a
+	// bridge mutating one route cannot corrupt its sibling.
+	decls := []struct {
+		method, operation, suffix, authOperation string
+		hasBody, paginated, concurrent           bool
+		success                                  int
+		errors                                   []int
+	}{
+		{method: "GET", operation: "list", authOperation: "read", paginated: true, success: 200, errors: common},
+		{method: "GET", operation: "get", suffix: "/{id}", authOperation: "read", success: 200, errors: getErrors},
+		{method: "POST", operation: "create", authOperation: "create", hasBody: true, success: 201, errors: common},
+		{method: "PUT", operation: "update", suffix: "/{id}", authOperation: "update", hasBody: true, concurrent: true, success: 200, errors: updateErrors},
+		{method: "PATCH", operation: "patch", suffix: "/{id}", authOperation: "update", hasBody: true, concurrent: true, success: 200, errors: updateErrors},
+		{method: "DELETE", operation: "delete", suffix: "/{id}", authOperation: "delete", success: 204, errors: getErrors},
+	}
+
+	eps := make([]Endpoint, 0, len(decls))
+	for _, d := range decls {
+		eps = append(eps, Endpoint{
+			Method:        d.method,
+			Path:          base + d.suffix,
+			Operation:     d.operation,
+			HasBody:       d.hasBody,
+			SuccessStatus: d.success,
+			ErrorStatuses: slices.Clone(d.errors),
+			Auth:          e.PermissionPlan(d.authOperation),
+			Paginated:     d.paginated,
+			Concurrency:   d.concurrent && e.HasOptimisticLock(),
+		})
 	}
 	return eps
 }
@@ -123,34 +114,35 @@ func (p *Project) AuthEndpoints() []Endpoint {
 	}
 	base := "api/" + entity
 
-	var decls []Endpoint
-	if p.Auth.Endpoints.HasLogin {
-		decls = append(decls, Endpoint{
-			Method: "POST", Path: base + "/login", Operation: "login",
-			HasBody: true, SuccessStatus: 200,
-			ErrorStatuses: []int{400, 401, 429}, Anonymous: true,
+	// Same shape as entity routes, but no permission plan: anonymous routes are
+	// marked with Anonymous and /me stays authenticated.
+	decls := []struct {
+		enabled                  bool
+		method, operation, route string
+		hasBody, anonymous       bool
+		success                  int
+		errors                   []int
+	}{
+		{p.Auth.Endpoints.HasLogin, "POST", "login", "/login", true, true, 200, []int{400, 401, 429}},
+		{p.Auth.Endpoints.HasRegister, "POST", "register", "/register", true, true, 201, []int{400, 409, 429}},
+		{p.Auth.Endpoints.HasMe, "GET", "me", "/me", false, false, 200, []int{401, 404, 429}},
+		{p.Auth.Endpoints.HasSetup, "POST", "setup", "/setup", true, true, 201, []int{400, 409, 429}},
+	}
+
+	var endpoints []Endpoint
+	for _, d := range decls {
+		if !d.enabled {
+			continue
+		}
+		endpoints = append(endpoints, Endpoint{
+			Method:        d.method,
+			Path:          base + d.route,
+			Operation:     d.operation,
+			HasBody:       d.hasBody,
+			SuccessStatus: d.success,
+			ErrorStatuses: slices.Clone(d.errors),
+			Anonymous:     d.anonymous,
 		})
 	}
-	if p.Auth.Endpoints.HasRegister {
-		decls = append(decls, Endpoint{
-			Method: "POST", Path: base + "/register", Operation: "register",
-			HasBody: true, SuccessStatus: 201,
-			ErrorStatuses: []int{400, 409, 429}, Anonymous: true,
-		})
-	}
-	if p.Auth.Endpoints.HasMe {
-		decls = append(decls, Endpoint{
-			Method: "GET", Path: base + "/me", Operation: "me",
-			HasBody: false, SuccessStatus: 200,
-			ErrorStatuses: []int{401, 404, 429},
-		})
-	}
-	if p.Auth.Endpoints.HasSetup {
-		decls = append(decls, Endpoint{
-			Method: "POST", Path: base + "/setup", Operation: "setup",
-			HasBody: true, SuccessStatus: 201,
-			ErrorStatuses: []int{400, 409, 429}, Anonymous: true,
-		})
-	}
-	return decls
+	return endpoints
 }
