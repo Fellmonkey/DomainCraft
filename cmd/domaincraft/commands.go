@@ -329,7 +329,7 @@ func loadAndValidateDomain(opts *cliOptions, cmd *cobra.Command, log *logger.Log
 // through the same validation, rendering and migration pipeline.
 func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
 	log := commandLogger(cmd)
-	ctx := newCommandContext(opts, cmd, log)
+	ctx := &commandContext{opts: opts, cmd: cmd, log: log}
 
 	irProject, bridgeName, err := loadAndValidateDomain(opts, cmd, log, func() (string, error) {
 		resolvedPath, name, err := resolveBridgeInteractive(opts, log)
@@ -387,10 +387,15 @@ func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
 		}
 	}
 	log.Info("Rendering via %s", opts.bridgePath)
-	writtenFiles, manifest, rendererInstance, err := renderBridge(
-		opts.bridgePath, irProject, opts.outputDir, seedData, mockDataset,
-		basePaths, migrationPlan, log,
-	)
+	writtenFiles, manifest, rendererInstance, err := renderBridge(irProject, renderOptions{
+		path:        opts.bridgePath,
+		outDir:      opts.outputDir,
+		bases:       basePaths,
+		plan:        migrationPlan,
+		seedData:    seedData,
+		mockDataset: mockDataset,
+		log:         log,
+	})
 	if err != nil {
 		return err
 	}
@@ -411,7 +416,9 @@ func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
 	}
 
 	// --- Database migrations ---
-	if err := runBridgeDatabaseMigrations(ctx, migrationDiff, chainHasCommunity, applied, rendererInstance.MigrationConfig()); err != nil {
+	ctx.chainHasCommunity = chainHasCommunity
+	ctx.cleanupApplied = applied
+	if err := runBridgeDatabaseMigrations(ctx, migrationDiff, rendererInstance.MigrationConfig()); err != nil {
 		return err
 	}
 
@@ -558,29 +565,20 @@ func newBridgesCmd(opts *cliOptions) *cobra.Command {
 
 // --- helpers ---
 
-// commandContext groups the three values threaded through the generation
-// pipeline's helper steps: parsed flags, the command (for stdio) and its
-// logger. runGenerate creates one and passes it by pointer.
+// commandContext groups the state threaded through the generation pipeline's
+// helper steps: parsed flags, the command (for stdio), its logger, and the two
+// chain/cleanup facts the migration helpers act on.
 type commandContext struct {
-	opts *cliOptions
-	cmd  *cobra.Command
-	log  *logger.Logger
-}
-
-func newCommandContext(opts *cliOptions, cmd *cobra.Command, log *logger.Logger) *commandContext {
-	return &commandContext{opts: opts, cmd: cmd, log: log}
+	opts              *cliOptions
+	cmd               *cobra.Command
+	log               *logger.Logger
+	chainHasCommunity bool
+	cleanupApplied    bool
 }
 
 // newBridgeResolver builds a resolver with the CLI's bridge cache/update options.
 func newBridgeResolver(opts *cliOptions, log *logger.Logger) *bridge.Resolver {
 	return bridge.NewResolver(bridge.Default()).WithEnsureOptions(bridgeEnsureOptions(opts, log))
-}
-
-// walkBridgeChain resolves ref relative to fromDir and follows `extends` to the
-// deepest base. The resolution itself lives in the importable bridgechain
-// package so the CLI and the contract tests share one chain order.
-func walkBridgeChain(opts *cliOptions, ref, fromDir string, log *logger.Logger) ([]string, error) {
-	return bridgechain.Walk(ref, fromDir, newBridgeResolver(opts, log), log)
 }
 
 // resolveBridgeInteractive resolves the bridge from the --bridge flag, or
@@ -620,7 +618,7 @@ func resolveBridgeInteractive(opts *cliOptions, log *logger.Logger) (string, str
 // paths, ordered outermost base first (so the deepest base renders first). Each
 // base is resolved the same way --bridge is: a path, registry ID or owner/repo.
 func resolveBaseChain(opts *cliOptions, adapterDir, baseRef string, log *logger.Logger) ([]string, error) {
-	chain, err := walkBridgeChain(opts, baseRef, adapterDir, log)
+	chain, err := bridgechain.Walk(baseRef, adapterDir, newBridgeResolver(opts, log), log)
 	if err != nil {
 		return nil, err
 	}
@@ -649,11 +647,6 @@ func parseReplaceFlags(raw []string) ([]replaceEntry, error) {
 }
 
 
-// buildFullChainTopFirst builds the full chain top-first: [entry, base1, base2, ... deepest].
-func buildFullChainTopFirst(opts *cliOptions, entryDir string, log *logger.Logger) ([]string, error) {
-	return walkBridgeChain(opts, entryDir, entryDir, log)
-}
-
 // resolveChainWithReplacements resolves the extends chain with --replace overrides.
 // It returns the (possibly replaced) entry dir and base paths outermost-first.
 func resolveChainWithReplacements(opts *cliOptions, entryDir string, reps []replaceEntry, log *logger.Logger) (string, []string, error) {
@@ -680,7 +673,7 @@ func resolveChainWithReplacements(opts *cliOptions, entryDir string, reps []repl
 		return entryDir, bases, err
 	}
 	resolver := newBridgeResolver(opts, log)
-	fullChain, err := buildFullChainTopFirst(opts, entryDir, log)
+	fullChain, err := bridgechain.Walk(entryDir, entryDir, newBridgeResolver(opts, log), log)
 	if err != nil {
 		return "", nil, err
 	}
@@ -719,7 +712,7 @@ func resolveChainWithReplacements(opts *cliOptions, entryDir string, reps []repl
 			log.Warn("layer mismatch: replacing %q (layer=%q) with %q (layer=%q)", rep.left, targetLayer, rightMeta.Name, rightMeta.Layer)
 		}
 		// Build replacement's full chain top-first.
-		rightChain, err := buildFullChainTopFirst(opts, rightPath, log)
+		rightChain, err := bridgechain.Walk(rightPath, rightPath, newBridgeResolver(opts, log), log)
 		if err != nil {
 			return "", nil, err
 		}
@@ -899,17 +892,17 @@ func bridgeUpdateNotice(entryID string, _ *bridge.Update) string {
 // explicit --migrate still needs --allow-bridge-commands consent. A failure is
 // hard with --migrate and best-effort under --prune (the container can apply
 // pending migrations at startup).
-func runBridgeDatabaseMigrations(ctx *commandContext, diff *snapshot.Diff, chainHasCommunity, applied bool, cfg *renderer.MigrationConfig) error {
+func runBridgeDatabaseMigrations(ctx *commandContext, diff *snapshot.Diff, cfg *renderer.MigrationConfig) error {
 	autoMigrate := ctx.opts.prune && diff.HasSchemaChanges()
-	if autoMigrate && chainHasCommunity {
+	if autoMigrate && ctx.chainHasCommunity {
 		ctx.log.Warn("community bridge(s) in the resolved chain — not auto-running database migrations; use --migrate explicitly")
 		autoMigrate = false
 	}
 	shouldMigrate := ctx.opts.migrate || autoMigrate
-	if !applied || !shouldMigrate || cfg == nil || !cfg.Enabled {
+	if !ctx.cleanupApplied || !shouldMigrate || cfg == nil || !cfg.Enabled {
 		return nil
 	}
-	if !bridgeCommandsAllowed(chainHasCommunity, ctx.opts.allowBridgeCommands) {
+	if !bridgeCommandsAllowed(ctx.chainHasCommunity, ctx.opts.allowBridgeCommands) {
 		return fmt.Errorf("community bridge(s) declared database migrations; re-run with --allow-bridge-commands to execute them")
 	}
 	if err := runDatabaseMigrations(cfg, ctx.opts.outputDir, ctx.cmd, ctx.log); err != nil {
@@ -979,11 +972,16 @@ func generateAdminPanel(ctx *commandContext, args []string, irProject *ir.Projec
 
 	ctx.log.Info("Rendering admin panel via %s", adminID)
 	// The admin bridge has no extends chain of its own and no schema-migration
-	// plan, so both parameters stay empty. Success wording stays admin-specific.
-	adminFiles, adminManifest, _, err := renderBridge(
-		adminPath, irProject, ctx.opts.outputDir, seedData, mockDataset,
-		nil, nil, ctx.log,
-	)
+	// plan, so both stay explicitly empty. Success wording stays admin-specific.
+	adminFiles, adminManifest, _, err := renderBridge(irProject, renderOptions{
+		path:        adminPath,
+		outDir:      ctx.opts.outputDir,
+		bases:       nil,
+		plan:        nil,
+		seedData:    seedData,
+		mockDataset: mockDataset,
+		log:         ctx.log,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -992,25 +990,36 @@ func generateAdminPanel(ctx *commandContext, args []string, irProject *ir.Projec
 	return adminManifest, nil
 }
 
+// renderOptions groups the renderer inputs that differ between the generate and
+// admin paths. Empty Bases/Plan is explicit for the admin bridge, which has no
+// extends chain and no schema-migration plan.
+type renderOptions struct {
+	path        string
+	outDir      string
+	bases       []string
+	plan        *ir.MigrationPlan
+	seedData    *ir.SeedDataset
+	mockDataset *ir.SeedDataset
+	log         *logger.Logger
+}
+
 // renderBridge performs the renderer setup shared by `generate` and the admin
 // panel: New → AttachBases → SetMigration → SetSeedData → SetMockData → Render.
-// The main path passes the resolved extends chain and the core-computed
-// migration plan; the admin path passes empty values. The renderer is returned
-// so the caller can read its declared migration config. Success logging stays
-// with the callers because the two paths use different wording.
-func renderBridge(path string, irProject *ir.Project, outDir string, seedData, mockDataset *ir.SeedDataset, bases []string, plan *ir.MigrationPlan, log *logger.Logger) ([]string, []renderer.RenderedFile, *renderer.Renderer, error) {
-	r, err := renderer.New(path, log)
+// The renderer is returned so the caller can read its declared migration config.
+// Success logging stays with the callers because the two paths use different wording.
+func renderBridge(irProject *ir.Project, o renderOptions) ([]string, []renderer.RenderedFile, *renderer.Renderer, error) {
+	r, err := renderer.New(o.path, o.log)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if err := r.AttachBases(bases); err != nil {
+	if err := r.AttachBases(o.bases); err != nil {
 		return nil, nil, nil, err
 	}
-	r.SetMigration(plan)
-	r.SetSeedData(seedData)
-	r.SetMockData(mockDataset)
+	r.SetMigration(o.plan)
+	r.SetSeedData(o.seedData)
+	r.SetMockData(o.mockDataset)
 
-	files, manifest, err := r.Render(irProject, outDir)
+	files, manifest, err := r.Render(irProject, o.outDir)
 	if err != nil {
 		return nil, nil, nil, err
 	}
