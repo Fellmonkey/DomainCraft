@@ -84,10 +84,7 @@ func TestCachedLatestCoreVersionSurfacesCacheWriteFailure(t *testing.T) {
 	base := t.TempDir()
 	appdir.SetBaseForTesting(base)
 	t.Cleanup(func() { appdir.SetBaseForTesting("") })
-	cacheDir, err := appdir.CacheDir("core")
-	if err != nil {
-		t.Fatal(err)
-	}
+	cacheDir := appdir.CacheDir("core")
 	if err := os.MkdirAll(filepath.Join(cacheDir, "core-update.json"), 0o755); err != nil {
 		t.Fatal(err)
 	}

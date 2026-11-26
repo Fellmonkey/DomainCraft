@@ -15,6 +15,7 @@ package main
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +28,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/DomainCraft/DomainCraft/internal/bridge"
@@ -49,6 +51,12 @@ import (
 const (
 	defaultDomainFile = "domain.yaml"
 	defaultOutputDir  = "generated"
+
+	// databaseMigrationTimeout bounds one batch of bridge-declared database
+	// migration commands. The signal context from main stays the parent, so an
+	// interrupt still cancels a child immediately; this only stops a hung
+	// command from blocking a generation run forever.
+	databaseMigrationTimeout = 10 * time.Minute
 )
 
 // cliOptions holds the flag values of one command tree. A fresh instance is
@@ -366,29 +374,23 @@ func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
 		return err
 	}
 	opts.bridgePath = newBridgePath
+	// One resolved chain drives both the trust decision and the lock file.
+	chainPaths := append([]string{opts.bridgePath}, basePaths...)
 	// Phase 3.5: a community bridge (not a bundled official bridge) must
 	// never have migrations auto-run — that would execute arbitrary shell
 	// lines from an untrusted bridge.yaml during a code-generation run.
 	chainHasCommunity := false
-	for _, p := range append([]string{opts.bridgePath}, basePaths...) {
+	for _, p := range chainPaths {
 		if !bridge.IsOfficialBundled(p) {
 			chainHasCommunity = true
 			break
 		}
 	}
 	log.Info("Rendering via %s", opts.bridgePath)
-	rendererInstance, err := renderer.New(opts.bridgePath, log)
-	if err != nil {
-		return err
-	}
-	if err := rendererInstance.AttachBases(basePaths); err != nil {
-		return err
-	}
-	rendererInstance.SetMigration(migrationPlan)
-	rendererInstance.SetSeedData(seedData)
-	rendererInstance.SetMockData(mockDataset)
-
-	writtenFiles, manifest, err := rendererInstance.Render(irProject, opts.outputDir)
+	writtenFiles, manifest, rendererInstance, err := renderBridge(
+		opts.bridgePath, irProject, opts.outputDir, seedData, mockDataset,
+		basePaths, migrationPlan, log,
+	)
 	if err != nil {
 		return err
 	}
@@ -444,7 +446,7 @@ func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
 	}
 	// Record the resolved bridge chain next to domain.yaml (Phase 0.4).
 	// Best-effort: a lock-write failure must never abort generation.
-	if err := writeDomainLock(opts.domainFile, append([]string{opts.bridgePath}, basePaths...)); err != nil {
+	if err := writeDomainLock(opts.domainFile, chainPaths); err != nil {
 		log.Warn("could not write domaincraft.lock.json: %v", err)
 	}
 	if err := snapshot.Save(snapPath, snapshot.New(bridgeID, irProject, manifest)); err != nil {
@@ -587,13 +589,10 @@ func resolveBridgeInteractive(opts *cliOptions, log *logger.Logger) (string, str
 	resolver := newBridgeResolver(opts, log)
 
 	if opts.bridgePath != "" {
-		// Monorepo-first: an official bridge ID resolves to the local
-		// <root>/bridges/<path> copy when it exists (same order as `extends`).
-		if entry := bridge.Default().ByID(opts.bridgePath); entry != nil && entry.Path != "" {
-			if wd, err := os.Getwd(); err == nil {
-				if p := bridge.FindMonorepoBridge(wd, entry.Path); p != "" {
-					return p, "", nil
-				}
+		// Monorepo-first, through the same step `extends` uses.
+		if wd, err := os.Getwd(); err == nil {
+			if p := bridge.ResolveOfficialLocal(opts.bridgePath, wd); p != "" {
+				return p, "", nil
 			}
 		}
 		resolved, err := resolver.Resolve(opts.bridgePath)
@@ -649,15 +648,6 @@ func parseReplaceFlags(raw []string) ([]replaceEntry, error) {
 	return out, nil
 }
 
-// bridgeLayerAndName loads bridge.yaml for dir and returns layer and name.
-func bridgeLayerAndName(dir string, log *logger.Logger) (string, string, error) {
-	r, err := renderer.New(dir, log)
-	if err != nil {
-		return "", "", err
-	}
-	cfg := r.Config()
-	return cfg.Layer, cfg.Name, nil
-}
 
 // buildFullChainTopFirst builds the full chain top-first: [entry, base1, base2, ... deepest].
 func buildFullChainTopFirst(opts *cliOptions, entryDir string, log *logger.Logger) ([]string, error) {
@@ -667,12 +657,26 @@ func buildFullChainTopFirst(opts *cliOptions, entryDir string, log *logger.Logge
 // resolveChainWithReplacements resolves the extends chain with --replace overrides.
 // It returns the (possibly replaced) entry dir and base paths outermost-first.
 func resolveChainWithReplacements(opts *cliOptions, entryDir string, reps []replaceEntry, log *logger.Logger) (string, []string, error) {
+	// One read per directory. A chain with N --replace flags used to parse
+	// every manifest N+1 times through renderer.New and a second YAML reader.
+	metaCache := make(map[string]bridgeManifest)
+	metaFor := func(dir string) (bridgeManifest, error) {
+		if m, ok := metaCache[dir]; ok {
+			return m, nil
+		}
+		m, err := readBridgeManifest(dir)
+		if err != nil {
+			return bridgeManifest{}, err
+		}
+		metaCache[dir] = m
+		return m, nil
+	}
 	if len(reps) == 0 {
-		r, err := renderer.New(entryDir, log)
+		m, err := metaFor(entryDir)
 		if err != nil {
 			return "", nil, err
 		}
-		bases, err := resolveBaseChain(opts, entryDir, r.Extends(), log)
+		bases, err := resolveBaseChain(opts, entryDir, m.Extends, log)
 		return entryDir, bases, err
 	}
 	resolver := newBridgeResolver(opts, log)
@@ -685,13 +689,13 @@ func resolveChainWithReplacements(opts *cliOptions, entryDir string, reps []repl
 		targetIdx := -1
 		var targetLayer string
 		for i, dir := range fullChain {
-			layer, name, err := bridgeLayerAndName(dir, log)
+			m, err := metaFor(dir)
 			if err != nil {
 				return "", nil, err
 			}
-			if layer == rep.left || name == rep.left {
+			if m.Layer == rep.left || m.Name == rep.left {
 				targetIdx = i
-				targetLayer = layer
+				targetLayer = m.Layer
 				break
 			}
 		}
@@ -706,13 +710,13 @@ func resolveChainWithReplacements(opts *cliOptions, entryDir string, reps []repl
 		if abs, err := filepath.Abs(rightPath); err == nil {
 			rightPath = abs
 		}
-		rightLayer, rightName, err := bridgeLayerAndName(rightPath, log)
+		rightMeta, err := metaFor(rightPath)
 		if err != nil {
 			return "", nil, err
 		}
 		// Warn on layer mismatch (both non-empty and different).
-		if targetLayer != "" && rightLayer != "" && targetLayer != rightLayer && log != nil {
-			log.Warn("layer mismatch: replacing %q (layer=%q) with %q (layer=%q)", rep.left, targetLayer, rightName, rightLayer)
+		if targetLayer != "" && rightMeta.Layer != "" && targetLayer != rightMeta.Layer && log != nil {
+			log.Warn("layer mismatch: replacing %q (layer=%q) with %q (layer=%q)", rep.left, targetLayer, rightMeta.Name, rightMeta.Layer)
 		}
 		// Build replacement's full chain top-first.
 		rightChain, err := buildFullChainTopFirst(opts, rightPath, log)
@@ -735,15 +739,15 @@ func resolveChainWithReplacements(opts *cliOptions, entryDir string, reps []repl
 				return "", nil, asUsageError(fmt.Errorf("bridge `extends` cycle detected at %q", d))
 			}
 			seenPaths = append(seenPaths, abs)
-			layer, _, err := bridgeLayerAndName(d, log)
+			m, err := metaFor(d)
 			if err != nil {
 				return "", nil, fmt.Errorf("read layer of %s: %w", d, err)
 			}
-			if layer != "" {
-				if prev, ok := seenLayer[layer]; ok {
-					return "", nil, asUsageError(fmt.Errorf("duplicate layer %q: %q and %q", layer, prev, d))
+			if m.Layer != "" {
+				if prev, ok := seenLayer[m.Layer]; ok {
+					return "", nil, asUsageError(fmt.Errorf("duplicate layer %q: %q and %q", m.Layer, prev, d))
 				}
-				seenLayer[layer] = d
+				seenLayer[m.Layer] = d
 			}
 		}
 		fullChain = newChain
@@ -807,25 +811,49 @@ func writeDomainLock(domainPath string, dirs []string) error {
 	return fsutil.WriteJSON(filepath.Join(filepath.Dir(domainPath), "domaincraft.lock.json"), domainLock{Bridges: out})
 }
 
-// bridgeMetadata reads the identifying fields out of a bridge directory's
-// bridge.yaml for the lock file.
-func bridgeMetadata(dir string) (id, version string, contractVersion int, err error) {
+// bridgeManifest is the identifying part of bridge.yaml. One reader serves
+// --replace matching and the lock file, so defaults and contract parsing
+// cannot diverge between the two consumers.
+type bridgeManifest struct {
+	Layer           string
+	Name            string
+	Version         string
+	Extends         string
+	ContractVersion int
+}
+
+// readBridgeManifest reads bridge.yaml once per directory.
+func readBridgeManifest(dir string) (bridgeManifest, error) {
 	data, err := os.ReadFile(filepath.Join(dir, "bridge.yaml")) //nolint:gosec // dir comes from validated bridge resolution
+	if err != nil {
+		return bridgeManifest{}, err
+	}
+	var cfg struct {
+		Name    string `yaml:"name"`
+		Layer   string `yaml:"layer"`
+		Version string `yaml:"version"`
+		Extends string `yaml:"extends"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return bridgeManifest{}, err
+	}
+	contractVersion, _, err := bridge.ParseContractVersion(data)
+	if err != nil {
+		return bridgeManifest{}, err
+	}
+	return bridgeManifest{
+		Layer: cfg.Layer, Name: cfg.Name, Version: cfg.Version,
+		Extends: cfg.Extends, ContractVersion: contractVersion,
+	}, nil
+}
+
+// bridgeMetadata is the lock-file view of the shared manifest reader.
+func bridgeMetadata(dir string) (string, string, int, error) {
+	m, err := readBridgeManifest(dir)
 	if err != nil {
 		return "", "", 0, err
 	}
-	var cfg struct {
-		Name            string `yaml:"name"`
-		Version         string `yaml:"version"`
-		ContractVersion int    `yaml:"contract_version"`
-	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return "", "", 0, err
-	}
-	if cfg.ContractVersion == 0 {
-		cfg.ContractVersion = specmeta.ContractVersion
-	}
-	return cfg.Name, cfg.Version, cfg.ContractVersion, nil
+	return m.Name, m.Version, m.ContractVersion, nil
 }
 
 // bridgeEnsureOptions builds the bridge caching/update policy from the CLI
@@ -950,20 +978,43 @@ func generateAdminPanel(ctx *commandContext, args []string, irProject *ir.Projec
 	}
 
 	ctx.log.Info("Rendering admin panel via %s", adminID)
-	adminRenderer, err := renderer.New(adminPath, ctx.log)
-	if err != nil {
-		return nil, err
-	}
-	adminRenderer.SetSeedData(seedData)
-	adminRenderer.SetMockData(mockDataset)
-
-	adminFiles, adminManifest, err := adminRenderer.Render(irProject, ctx.opts.outputDir)
+	// The admin bridge has no extends chain of its own and no schema-migration
+	// plan, so both parameters stay empty. Success wording stays admin-specific.
+	adminFiles, adminManifest, _, err := renderBridge(
+		adminPath, irProject, ctx.opts.outputDir, seedData, mockDataset,
+		nil, nil, ctx.log,
+	)
 	if err != nil {
 		return nil, err
 	}
 
 	ctx.log.Success("Generated %d admin file(s)", len(adminFiles))
 	return adminManifest, nil
+}
+
+// renderBridge performs the renderer setup shared by `generate` and the admin
+// panel: New → AttachBases → SetMigration → SetSeedData → SetMockData → Render.
+// The main path passes the resolved extends chain and the core-computed
+// migration plan; the admin path passes empty values. The renderer is returned
+// so the caller can read its declared migration config. Success logging stays
+// with the callers because the two paths use different wording.
+func renderBridge(path string, irProject *ir.Project, outDir string, seedData, mockDataset *ir.SeedDataset, bases []string, plan *ir.MigrationPlan, log *logger.Logger) ([]string, []renderer.RenderedFile, *renderer.Renderer, error) {
+	r, err := renderer.New(path, log)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if err := r.AttachBases(bases); err != nil {
+		return nil, nil, nil, err
+	}
+	r.SetMigration(plan)
+	r.SetSeedData(seedData)
+	r.SetMockData(mockDataset)
+
+	files, manifest, err := r.Render(irProject, outDir)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return files, manifest, r, nil
 }
 
 // bridgeCommandsAllowed reports whether shell lines from a community bridge
@@ -984,7 +1035,6 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 	// Migration progress and child-process output are diagnostics, not
 	// machine-readable data: stdout stays clean for piping.
 	out := cmd.ErrOrStderr()
-	errOut := cmd.ErrOrStderr()
 	// The resolved command lines are printed before they run, so the developer
 	// always sees exactly what will be executed (Phase 3.5 safety). Bridge YAML
 	// is untrusted input: strip terminal controls before showing or logging a
@@ -993,6 +1043,20 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 	for i, command := range cfg.Commands {
 		_, _ = fmt.Fprintf(out, "    %d) %s\n", i+1, sanitizeCommandLine(command))
 	}
+
+	// The signal context from main stays the parent: an interrupt still
+	// cancels the child at once. Add a deadline so a hung bridge command
+	// cannot block a generation run forever. An already-finished parent is
+	// passed through unchanged — no child starts anyway, and callers can
+	// observe the exact cancellation they installed.
+	parent := bridge.CommandContext()
+	migrationCtx := parent
+	if parent.Err() == nil {
+		var cancel context.CancelFunc
+		migrationCtx, cancel = context.WithTimeout(parent, databaseMigrationTimeout)
+		defer cancel()
+	}
+
 	for i, command := range cfg.Commands {
 		log.Info("Migration %d/%d", i+1, len(cfg.Commands))
 		var argv []string
@@ -1004,11 +1068,14 @@ func runDatabaseMigrations(cfg *renderer.MigrationConfig, outDir string, cmd *co
 			shell = "sh"
 			argv = []string{"-c", command}
 		}
-		c := execCommandFn(bridge.CommandContext(), shell, argv...)
+		c := execCommandFn(migrationCtx, shell, argv...)
 		c.Dir = outDir
 		c.Stdout = out
-		c.Stderr = errOut
+		c.Stderr = out
 		if err := c.Run(); err != nil {
+			if errors.Is(migrationCtx.Err(), context.DeadlineExceeded) {
+				return fmt.Errorf("database migration %d (%s) timed out after %s: %w", i+1, sanitizeCommandLine(command), databaseMigrationTimeout, err)
+			}
 			return fmt.Errorf("database migration %d failed: %w", i+1, err)
 		}
 	}
@@ -1091,21 +1158,64 @@ func sanitizeCommandLine(s string) string {
 
 // migrationContext bundles the state shared by every cleanup handler.
 type migrationContext struct {
-	opts  *cliOptions
-	fresh map[string]bool
-	log   *logger.Logger
-	out   io.Writer // stdout: orphan lists are command data, progress goes to log
+	opts     *cliOptions
+	fresh    map[string]bool
+	log      *logger.Logger
+	out      io.Writer // stdout: orphan lists are command data, progress goes to log
+	failures []error   // hard failures under --prune, joined once at the end
 }
+
+// recordedError marks a failure that record has already turned into a hard
+// error. A caller joining several recorded failures can then hand the aggregate
+// back to fail without applying the policy (or the message prefix) twice.
+type recordedError struct{ err error }
+
+func (e recordedError) Error() string { return e.err.Error() }
+func (e recordedError) Unwrap() error { return e.err }
 
 // record handles a cleanup failure: --prune wraps it for the caller to join,
 // other modes warn and continue. This keeps the single-failure contract in one
 // place so every cleanup handler behaves the same way.
 func (mc *migrationContext) record(err error, what string) error {
 	if mc.opts.prune {
-		return fmt.Errorf("%s: %w", what, err)
+		return recordedError{fmt.Errorf("%s: %w", what, err)}
 	}
 	mc.log.Warn("could not %s: %v", what, err)
 	return nil
+}
+
+// fail applies the cleanup failure policy at one failure site and remembers
+// hard failures for the final errors.Join. It answers whether the caller may
+// continue: under --prune the error is recorded (so the snapshot is not
+// advanced) and the loop carries on collecting failures; an aggregate of
+// already-recorded failures is likewise safe to continue from. Without --prune
+// only a warning was emitted, so a caller that owns a hard error (a failed
+// prompt, for example) must still return it.
+func (mc *migrationContext) fail(err error, what string) bool {
+	if _, ok := errors.AsType[recordedError](err); ok {
+		return true
+	}
+	recorded := mc.record(err, what)
+	if recorded == nil {
+		return false
+	}
+	mc.failures = append(mc.failures, recorded)
+	return true
+}
+
+// failCall applies the policy to an error returned by a cleanup handler. Its
+// file-level failures are already recorded, so under --prune the aggregate only
+// marks the run incomplete. Without --prune the error stays the caller's to
+// return: logging it here would duplicate the report at the CLI boundary.
+func (mc *migrationContext) failCall(err error, what string) bool {
+	if _, ok := errors.AsType[recordedError](err); ok {
+		return true
+	}
+	if !mc.opts.prune {
+		return false
+	}
+	mc.failures = append(mc.failures, fmt.Errorf("%s: %w", what, err))
+	return true
 }
 
 // cleanupDeferred reports whether a run must keep cleanup pending: non-interactive
@@ -1135,7 +1245,6 @@ func applyMigrationActions(opts *cliOptions, diff *snapshot.Diff, fresh map[stri
 		return true, nil
 	}
 	mc := &migrationContext{opts: opts, fresh: fresh, log: log, out: cmd.OutOrStdout()}
-	var failures []error
 
 	// In --prune mode the tool owns the whole cleanup, so it also rewrites
 	// identifier references in developer-owned files: the project's root
@@ -1150,7 +1259,7 @@ func applyMigrationActions(opts *cliOptions, diff *snapshot.Diff, fresh map[stri
 				}
 				rewrote, err := snapshot.RewriteFile(opts.outputDir, rel, snapshot.NamespaceTransform(diff.NamespaceRename))
 				if err != nil {
-					failures = append(failures, mc.record(err, fmt.Sprintf("rewrite namespace in %s", rel)))
+					mc.fail(err, fmt.Sprintf("rewrite namespace in %s", rel))
 					continue
 				}
 				if rewrote {
@@ -1165,7 +1274,7 @@ func applyMigrationActions(opts *cliOptions, diff *snapshot.Diff, fresh map[stri
 				}
 				rewrote, err := snapshot.RewriteFile(opts.outputDir, rel, snapshot.FieldTransform(fr))
 				if err != nil {
-					failures = append(failures, mc.record(err, fmt.Sprintf("rewrite field references in %s", rel)))
+					mc.fail(err, fmt.Sprintf("rewrite field references in %s", rel))
 					continue
 				}
 				if rewrote {
@@ -1182,10 +1291,9 @@ func applyMigrationActions(opts *cliOptions, diff *snapshot.Diff, fresh map[stri
 		}
 		done, err := handleDeletedEntity(mc, del)
 		if err != nil {
-			if !opts.prune {
+			if !mc.failCall(err, fmt.Sprintf("clean up removed entity %q", del.Name)) {
 				return false, err
 			}
-			failures = append(failures, err)
 			applied = false
 			continue
 		}
@@ -1198,16 +1306,15 @@ func applyMigrationActions(opts *cliOptions, diff *snapshot.Diff, fresh map[stri
 		}
 		done, err := handleRename(mc, ren, diff)
 		if err != nil {
-			if !opts.prune {
+			if !mc.failCall(err, fmt.Sprintf("clean up renamed entity %q", ren.NewName)) {
 				return false, err
 			}
-			failures = append(failures, err)
 			applied = false
 			continue
 		}
 		applied = applied && done
 	}
-	if err := errors.Join(failures...); err != nil {
+	if err := errors.Join(mc.failures...); err != nil {
 		return false, err
 	}
 	return applied, nil
@@ -1238,40 +1345,67 @@ func chooseMigrationFiles(opts *cliOptions, files []snapshot.FileRef, prompt fun
 	return selected, nil
 }
 
-// handleDeletedEntity deletes generated files automatically and asks (or warns)
-// about custom files of a removed entity. Returns false when cleanup was
-// deferred (non-interactive without --prune). Under --prune, delete failures are
-// returned so the snapshot is not advanced past an unrecoverable cleanup.
-func handleDeletedEntity(mc *migrationContext, del snapshot.DeletedEntity) (bool, error) {
+// cleanupPrompt carries the operation-specific wording of one cleanup kind.
+// The frame is shared by deletes and renames; only the prompt, the deferred
+// warning and the way a deferred file is listed differ.
+type cleanupPrompt struct {
+	selectFiles     func([]interactive.FileChoice) ([]string, error)
+	deferredWarning string
+	deferredLine    func(snapshot.FileRef) string
+}
+
+// runCleanup owns the frame shared by the delete and rename handlers: defer
+// cleanup with a warning when there is no prompt to ask, otherwise select the
+// files, skip freshly generated ones, run opFn per file and join the failures
+// it recorded. Returns false when cleanup was deferred or a hard failure was
+// recorded, so the caller keeps the previous snapshot.
+func runCleanup(mc *migrationContext, files []snapshot.FileRef, p cleanupPrompt, opFn func(snapshot.FileRef)) (bool, error) {
 	if cleanupDeferred(mc.opts) {
-		mc.log.Warn("Entity %q was removed from domain.yaml — orphaned files kept (re-run with --prune to delete):", del.Name)
-		for _, f := range del.Files {
-			_, _ = fmt.Fprintf(mc.out, "    - %s%s\n", f.Path, customMark(f))
+		mc.log.Warn("%s", p.deferredWarning)
+		for _, f := range files {
+			_, _ = fmt.Fprintf(mc.out, "    - %s\n", p.deferredLine(f))
 		}
 		return false, nil
 	}
-	selected, err := chooseMigrationFiles(mc.opts, del.Files, func(choices []interactive.FileChoice) ([]string, error) {
-		return interactive.PromptDeleteFiles(del.Name, choices)
-	})
+	selected, err := chooseMigrationFiles(mc.opts, files, p.selectFiles)
 	if err != nil {
 		return false, err
 	}
 
-	var failures []error
-	for _, f := range del.Files {
+	// Only failures recorded by this invocation count as its result; earlier
+	// namespace/field rewrites are joined once at the end by the caller.
+	start := len(mc.failures)
+	for _, f := range files {
 		if !selected[f.Path] || mc.fresh[f.Path] {
 			continue
 		}
-		if err := snapshot.DeleteFile(mc.opts.outputDir, f.Path); err != nil {
-			failures = append(failures, mc.record(err, fmt.Sprintf("delete %s", f.Path)))
-			continue
-		}
-		mc.log.Info("deleted %s", f.Path)
+		opFn(f)
 	}
-	if err := errors.Join(failures...); err != nil {
+	if err := errors.Join(mc.failures[start:]...); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// handleDeletedEntity deletes files of a removed entity. The delete itself is
+// the only operation-specific step; selection, deferred cleanup and failure
+// policy live in runCleanup.
+func handleDeletedEntity(mc *migrationContext, del snapshot.DeletedEntity) (bool, error) {
+	return runCleanup(mc, del.Files, cleanupPrompt{
+		selectFiles: func(choices []interactive.FileChoice) ([]string, error) {
+			return interactive.PromptDeleteFiles(del.Name, choices)
+		},
+		deferredWarning: fmt.Sprintf("Entity %q was removed from domain.yaml — orphaned files kept (re-run with --prune to delete):", del.Name),
+		deferredLine: func(f snapshot.FileRef) string {
+			return f.Path + customMark(f)
+		},
+	}, func(f snapshot.FileRef) {
+		if err := snapshot.DeleteFile(mc.opts.outputDir, f.Path); err != nil {
+			mc.fail(err, fmt.Sprintf("delete %s", f.Path))
+			return
+		}
+		mc.log.Info("deleted %s", f.Path)
+	})
 }
 
 // handleRename renames custom files after a prompt and removes stale generated
@@ -1280,25 +1414,15 @@ func handleDeletedEntity(mc *migrationContext, del snapshot.DeletedEntity) (bool
 // identifiers), so the developer-owned file keeps compiling after the rename.
 // Returns false when cleanup was deferred (non-interactive without --prune).
 func handleRename(mc *migrationContext, ren snapshot.Rename, d *snapshot.Diff) (bool, error) {
-	if cleanupDeferred(mc.opts) {
-		mc.log.Warn("Entity %q was renamed to %q — files kept (re-run with --prune to rename):", ren.OldName, ren.NewName)
-		for _, f := range ren.Files {
-			_, _ = fmt.Fprintf(mc.out, "    - %s -> %s\n", f.Path, snapshot.RenameRelPath(f.Path, ren.OldName, ren.NewName))
-		}
-		return false, nil
-	}
-	selected, err := chooseMigrationFiles(mc.opts, ren.Files, func(choices []interactive.FileChoice) ([]string, error) {
-		return interactive.PromptRenameFiles(ren.OldName, ren.NewName, choices)
-	})
-	if err != nil {
-		return false, err
-	}
-
-	var failures []error
-	for _, f := range ren.Files {
-		if !selected[f.Path] || mc.fresh[f.Path] {
-			continue
-		}
+	return runCleanup(mc, ren.Files, cleanupPrompt{
+		selectFiles: func(choices []interactive.FileChoice) ([]string, error) {
+			return interactive.PromptRenameFiles(ren.OldName, ren.NewName, choices)
+		},
+		deferredWarning: fmt.Sprintf("Entity %q was renamed to %q — files kept (re-run with --prune to rename):", ren.OldName, ren.NewName),
+		deferredLine: func(f snapshot.FileRef) string {
+			return f.Path + " -> " + snapshot.RenameRelPath(f.Path, ren.OldName, ren.NewName)
+		},
+	}, func(f snapshot.FileRef) {
 		if f.Custom {
 			newRel := snapshot.RenameRelPath(f.Path, ren.OldName, ren.NewName)
 			if mc.fresh[newRel] {
@@ -1310,41 +1434,37 @@ func handleRename(mc *migrationContext, ren snapshot.Rename, d *snapshot.Diff) (
 				// either copy, and poisoned snapshot paths stay inside outputDir.
 				transforms := snapshot.RenameTransforms(ren.OldName, ren.NewName, d)
 				if err := snapshot.ReplaceScaffoldedFile(mc.opts.outputDir, f.Path, newRel, transforms...); err != nil {
-					failures = append(failures, mc.record(err, fmt.Sprintf("replace scaffolded %s", newRel)))
-					continue
+					mc.fail(err, fmt.Sprintf("replace scaffolded %s", newRel))
+					return
 				}
 				mc.log.Info("renamed %s -> %s (content updated)", f.Path, newRel)
-				continue
+				return
 			}
 			newRel, renamed, err := snapshot.RenameEntityFile(mc.opts.outputDir, f.Path, ren.OldName, ren.NewName)
 			if err != nil {
-				failures = append(failures, mc.record(err, fmt.Sprintf("rename %s", f.Path)))
-				continue
+				mc.fail(err, fmt.Sprintf("rename %s", f.Path))
+				return
 			}
 			if renamed {
 				if rewrote, rerr := snapshot.RewriteFile(mc.opts.outputDir, newRel, snapshot.RenameTransforms(ren.OldName, ren.NewName, d)...); rerr != nil {
-					// No early continue: the rename itself succeeded, so the
+					// No early return: the rename itself succeeded, so the
 					// final Info line still reports it.
-					failures = append(failures, mc.record(rerr, fmt.Sprintf("rewrite content of %s", newRel)))
+					mc.fail(rerr, fmt.Sprintf("rewrite content of %s", newRel))
 				} else if rewrote {
 					mc.log.Info("renamed %s -> %s (content updated)", f.Path, newRel)
-					continue
+					return
 				}
 				mc.log.Info("renamed %s -> %s", f.Path, newRel)
 			}
-			continue
+			return
 		}
 		// Generated files have been regenerated under the new name — remove the stale copy.
 		if err := snapshot.DeleteFile(mc.opts.outputDir, f.Path); err != nil {
-			failures = append(failures, mc.record(err, fmt.Sprintf("delete stale generated file %s", f.Path)))
-			continue
+			mc.fail(err, fmt.Sprintf("delete stale generated file %s", f.Path))
+			return
 		}
 		mc.log.Info("removed stale generated file %s", f.Path)
-	}
-	if err := errors.Join(failures...); err != nil {
-		return false, err
-	}
-	return true, nil
+	})
 }
 
 // fileLabel renders a file choice label, annotating developer-owned files.

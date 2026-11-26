@@ -93,11 +93,20 @@ type updateCheckCache struct {
 	Latest    string    `json:"latest"`
 }
 
+// releaseVersion strips the optional v prefix from the stamped CLI version.
+func releaseVersion() string { return strings.TrimPrefix(version, "v") }
+
+// updateAvailableMessage is the single wording for "a newer core exists",
+// shared by the passive notice and `update --check`.
+func updateAvailableMessage(latest, current string) string {
+	return fmt.Sprintf("A new domaincraft version is available: v%s (current v%s). Run `domaincraft update` to install it.", latest, current)
+}
+
 // maybeNotifyUpdate prints a one-line notice to the command's error stream when
 // a newer core release exists. It is best-effort, throttled by a local cache,
 // and skipped for development builds and for the `update` command itself.
 func maybeNotifyUpdate(cmd *cobra.Command) {
-	current := strings.TrimPrefix(version, "v")
+	current := releaseVersion()
 	if current == "" || current == "dev" || cmd.Name() == "update" {
 		return
 	}
@@ -106,17 +115,14 @@ func maybeNotifyUpdate(cmd *cobra.Command) {
 		return
 	}
 	if packages.VersionGreater(latest, current) {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "ℹ A new domaincraft version is available: v%s (current v%s). Run `domaincraft update` to install it.\n", latest, current)
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "ℹ %s\n", updateAvailableMessage(latest, current))
 	}
 }
 
 // cachedLatestCoreVersion returns the latest released core version, using the
 // throttled cache when it is fresh and otherwise querying GitHub.
 func cachedLatestCoreVersion() (string, error) {
-	cacheDir, err := appdir.CacheDir("core")
-	if err != nil {
-		cacheDir = os.TempDir()
-	}
+	cacheDir := appdir.CacheDir("core")
 	cachePath := filepath.Join(cacheDir, "core-update.json")
 	if data, rerr := os.ReadFile(cachePath); rerr == nil { //nolint:gosec // cachePath is built by appdir helpers
 		var c updateCheckCache
@@ -170,7 +176,7 @@ func newUpdateCmd() *cobra.Command {
 
 // runCoreUpdate implements `domaincraft update` (and `domaincraft update --check`).
 func runCoreUpdate(log *logger.Logger, checkOnly bool) error {
-	current := strings.TrimPrefix(version, "v")
+	current := releaseVersion()
 	if current == "" || current == "dev" {
 		log.Info("Running a development build (v%s).", version)
 		if !checkOnly {
@@ -192,7 +198,7 @@ func runCoreUpdate(log *logger.Logger, checkOnly bool) error {
 	}
 
 	if checkOnly {
-		log.Info("A newer version is available: v%s (current: v%s). Run `domaincraft update` to install it.", latest, current)
+		log.Info("%s", updateAvailableMessage(latest, current))
 		return nil
 	}
 
