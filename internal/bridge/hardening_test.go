@@ -539,16 +539,25 @@ func TestCheckForUpdateJoinsCacheWriteFailure(t *testing.T) {
 // --check-updates is a status query: probing the remote must not rewrite
 // .domaincraft-meta.json. Generation-time probes still record the attempt.
 func TestStatusCheckDoesNotMutateCacheMeta(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
 	// No t.Parallel: the cache base and httpGetBodyFn are package globals.
 	root := t.TempDir()
 	appdir.SetBaseForTesting(root)
 	t.Cleanup(func() { appdir.SetBaseForTesting("") })
 
 	entry := cacheEntry("status-readonly", "owner/status-readonly")
+	dir := CachePath(entry)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	makeBridgeRepo(t, dir, "main")
+	head := testGit(t, dir, "rev-parse", "HEAD")
 	checkedAt := time.Now().Add(-time.Hour).UTC().Truncate(time.Millisecond)
 	if err := WriteMeta(entry, &CacheMeta{
 		ID: entry.ID, Source: entry.GitHub, Version: "1.0.0",
-		Commit: "local-head", Branch: "main", LastCheckedAt: checkedAt,
+		Commit: head, Branch: "main", LastCheckedAt: checkedAt,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -579,8 +588,8 @@ func TestStatusCheckDoesNotMutateCacheMeta(t *testing.T) {
 	if after == nil {
 		t.Fatal("cache metadata disappeared after a status check")
 	}
-	if !after.LastCheckedAt.Equal(checkedAt) || after.Commit != "local-head" {
-		t.Fatalf("status check mutated cache metadata: got %+v, want LastCheckedAt %v and Commit local-head", after, checkedAt)
+	if !after.LastCheckedAt.Equal(checkedAt) || after.Commit != head {
+		t.Fatalf("status check mutated cache metadata: got %+v, want LastCheckedAt %v and Commit %s", after, checkedAt, head)
 	}
 
 	// The ordinary (generation-time) probe must keep its previous behavior.

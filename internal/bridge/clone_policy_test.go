@@ -91,6 +91,9 @@ func TestMaybeUpdatePolicies(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if !gitAvailable() {
+				t.Skip("git not installed")
+			}
 			root := t.TempDir()
 			appdir.SetBaseForTesting(root)
 			t.Cleanup(func() { appdir.SetBaseForTesting("") })
@@ -100,9 +103,10 @@ func TestMaybeUpdatePolicies(t *testing.T) {
 			if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(cacheDir, "bridge.yaml"), []byte("name: test\nversion: \"1.0.0\"\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			// Update detection must read a real HEAD: a stale metadata commit
+			// is deliberately ignored when git cannot be consulted.
+			makeBridgeRepo(t, cacheDir, "main")
+			head := testGit(t, cacheDir, "rev-parse", "HEAD")
 			lastChecked := time.Now().Add(-48 * time.Hour)
 			if tt.name == "fresh cache skips the remote" {
 				lastChecked = time.Now()
@@ -111,7 +115,7 @@ func TestMaybeUpdatePolicies(t *testing.T) {
 				ID:            entry.ID,
 				Source:        entry.GitHub,
 				Version:       "1.0.0",
-				Commit:        "cached-head",
+				Commit:        head,
 				Branch:        "main",
 				Pin:           tt.pin,
 				LastCheckedAt: lastChecked,

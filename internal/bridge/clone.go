@@ -12,14 +12,11 @@ import (
 	"github.com/DomainCraft/DomainCraft/internal/appdir"
 )
 
-// CacheDir returns ~/.domaincraft/bridges/.
-// Falls back to .domaincraft/bridges in the current directory if the home directory is unavailable.
+// CacheDir returns ~/.domaincraft/bridges/, or .domaincraft/bridges relative
+// to the current directory when the home directory is unavailable. appdir owns
+// that fallback, so there is no second policy here.
 func CacheDir() string {
-	dir, err := appdir.UnionDir("bridges")
-	if err != nil {
-		return filepath.Join(".domaincraft", "bridges")
-	}
-	return dir
+	return appdir.UnionDir("bridges")
 }
 
 // CachePath returns the local cache directory for a bridge entry.
@@ -45,22 +42,39 @@ func cacheIDForGitHub(repo string) string {
 // can carry another owner's templates, migrations and metadata.
 func cacheSourceMatches(entry RegistryEntry) bool {
 	meta, err := ReadMeta(entry)
-	if err != nil {
-		return false // unreadable metadata is not proof of ownership
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		// A corrupt or unreadable metadata file is not proof of ownership —
+		// but neither is proof of foreign ownership. The checkout's origin can
+		// still prove it; on success rebuild the metadata instead of letting
+		// the caller discard a working checkout and re-clone it.
+		if !cacheOriginMatches(entry) {
+			return false
+		}
+		// Metadata is advisory: proven ownership must not be thrown away
+		// because the rewrite failed. A later run retries the rewrite.
+		_ = WriteMeta(entry, newMetaFromCache(entry))
+		return true
 	}
 	if meta == nil {
 		// Legacy cache without metadata: fall back to git's origin. Fail closed
 		// when there is no remote or it names a different repository.
-		out, gitErr := runGit(CachePath(entry), "remote", "get-url", "origin")
-		if gitErr != nil {
-			return false
-		}
-		return githubOriginMatches(out, entry.GitHub)
+		return cacheOriginMatches(entry)
 	}
 	if meta.Source == "" {
 		return false // metadata without a source cannot prove ownership
 	}
 	return meta.Source == entry.GitHub
+}
+
+// cacheOriginMatches checks the checkout's git origin against the expected
+// repository. It is the ownership proof for legacy caches and for metadata
+// that could not be read. Fail closed on a missing or foreign origin.
+func cacheOriginMatches(entry RegistryEntry) bool {
+	out, err := runGit(CachePath(entry), "remote", "get-url", "origin")
+	if err != nil {
+		return false
+	}
+	return githubOriginMatches(out, entry.GitHub)
 }
 
 // githubOriginMatches compares a git origin with the expected GitHub slug.

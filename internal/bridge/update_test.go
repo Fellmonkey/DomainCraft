@@ -143,10 +143,11 @@ func TestEnsureMetaSynthesizesForLegacyCache(t *testing.T) {
 	}
 }
 
-// TestCheckForUpdateViaGitHubAPI verifies update detection through the GitHub
-// REST API for a cached bridge that has no usable git checkout (e.g. a bridge
-// directory copied without its .git).
-func TestCheckForUpdateViaGitHubAPI(t *testing.T) {
+// TestCheckForUpdateSkippedWithoutGitCheckout pins the F22 rule: a cache whose
+// HEAD cannot be read has no trustworthy local commit. Even when the GitHub API
+// reports a different SHA, that stale metadata commit must not produce a false
+// "update available" (the same outcome as an offline probe).
+func TestCheckForUpdateSkippedWithoutGitCheckout(t *testing.T) {
 	root := t.TempDir()
 	appdir.SetBaseForTesting(root)
 	defer appdir.SetBaseForTesting("")
@@ -187,13 +188,17 @@ func TestCheckForUpdateViaGitHubAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CheckForUpdate: %v", err)
 	}
-	if upd == nil {
-		t.Fatal("expected an update to be detected via the GitHub API")
+	if upd != nil {
+		t.Fatalf("a cache without a readable HEAD must not offer an update: %+v", upd)
 	}
-	if upd.RemoteCommit != "new-remote-commit" || upd.RemoteBranch != "main" {
-		t.Fatalf("unexpected update info: %+v", upd)
+	after, err := ReadMeta(entry)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
 	}
-	if upd.LocalVersion != "1.0.0" {
-		t.Fatalf("wrong local version: %q", upd.LocalVersion)
+	if after.Commit != "old-local-commit" {
+		t.Fatalf("stale commit was overwritten despite git failing: %q", after.Commit)
+	}
+	if after.LastCheckedAt.Equal(meta.LastCheckedAt) {
+		t.Fatal("CheckForUpdate stopped recording the probe attempt")
 	}
 }

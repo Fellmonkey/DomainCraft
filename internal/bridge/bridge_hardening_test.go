@@ -79,6 +79,183 @@ func TestCacheSourceMatchesFailsClosedWithoutProof(t *testing.T) {
 	}
 }
 
+// TestCacheSourceMatchesRepairsCorruptMeta pins F21: a truncated metadata file
+// must not cost a working checkout. If git's origin proves ownership, the cache
+// is kept and the metadata rebuilt. A foreign origin still fails closed.
+func TestCacheSourceMatchesRepairsCorruptMeta(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	root := t.TempDir()
+	appdir.SetBaseForTesting(root)
+	defer appdir.SetBaseForTesting("")
+
+	entry := cacheEntry("corrupt-meta", "owner/corrupt-meta")
+	dir := CachePath(entry)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	makeBridgeRepo(t, dir, "main")
+	origin := "https://github.com/owner/corrupt-meta.git"
+	if out := testGit(t, dir, "remote", "add", "origin", origin); out != "" {
+		t.Fatalf("unexpected git output: %q", out)
+	}
+	// Simulate a truncated/partially written metadata file.
+	if err := os.WriteFile(filepath.Join(dir, MetaFileName), []byte("{\"id\":\"corrupt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadMeta(entry); err == nil {
+		t.Fatal("test fixture: corrupt metadata should not decode")
+	}
+	if !cacheSourceMatches(entry) {
+		t.Fatal("a matching git origin should prove ownership of a corrupt-meta cache")
+	}
+	meta, err := ReadMeta(entry)
+	if err != nil || meta == nil {
+		t.Fatalf("metadata was not rebuilt: %+v, %v", meta, err)
+	}
+	if meta.Source != entry.GitHub {
+		t.Fatalf("rebuilt source = %q, want %q", meta.Source, entry.GitHub)
+	}
+	if meta.Version != "1.0.0" || meta.Commit == "" || meta.Branch != "main" {
+		t.Fatalf("metadata not rebuilt from checkout: %+v", meta)
+	}
+
+	// A foreign origin must stay fail-closed and must not be repaired.
+	testGit(t, dir, "remote", "set-url", "origin", "https://github.com/other/foreign.git")
+	if err := os.WriteFile(filepath.Join(dir, MetaFileName), []byte(`{"id":"corrupt`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if cacheSourceMatches(entry) {
+		t.Fatal("a foreign origin was accepted as proof of ownership")
+	}
+	if _, err := ReadMeta(entry); err == nil {
+		t.Fatal("foreign metadata was rewritten despite a mismatched origin")
+	}
+}
+
+// TestGitHeadResultDistinguishesFailure pins F22's seam: a missing or damaged
+// checkout is an error, never an empty but successfully read HEAD.
+func TestGitHeadResultDistinguishesFailure(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	root := t.TempDir()
+	appdir.SetBaseForTesting(root)
+	defer appdir.SetBaseForTesting("")
+
+	entry := cacheEntry("head-result", "owner/head-result")
+	dir := CachePath(entry)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if head, err := gitHeadResult(entry); err == nil {
+		t.Fatalf("gitHeadResult on a non-repo = (%q, nil), want an error", head)
+	}
+	makeBridgeRepo(t, dir, "main")
+	head, err := gitHeadResult(entry)
+	if err != nil || head == "" {
+		t.Fatalf("gitHeadResult on a valid checkout = (%q, %v)", head, err)
+	}
+	if want := testGit(t, dir, "rev-parse", "HEAD"); head != want {
+		t.Fatalf("gitHeadResult = %q, want %q", head, want)
+	}
+}
+
+// TestCheckForUpdateRejectsStaleCommitWhenGitFails pins F22: with no readable
+// HEAD, a stale metadata commit must not be compared against the remote tip.
+func TestCheckForUpdateRejectsStaleCommitWhenGitFails(t *testing.T) {
+	root := t.TempDir()
+	appdir.SetBaseForTesting(root)
+	defer appdir.SetBaseForTesting("")
+
+	entry := cacheEntry("stale-commit", "owner/stale-commit")
+	if err := os.MkdirAll(CachePath(entry), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeBridgeYAML(t, CachePath(entry), "1.0.0")
+	if err := WriteMeta(entry, &CacheMeta{
+		ID: entry.ID, Source: entry.GitHub, Version: "1.0.0", Commit: "stale-commit",
+		Branch: "main", LastCheckedAt: time.Now().Add(-48 * time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	orig := httpGetBodyFn
+	defer func() { httpGetBodyFn = orig }()
+	httpGetBodyFn = func(url string) ([]byte, error) {
+		switch {
+		case strings.Contains(url, "/commits/main"):
+			return []byte(`{"sha":"new-remote-commit"}`), nil
+		case strings.Contains(url, "/repos/"):
+			return []byte(`{"default_branch":"main"}`), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	upd, err := CheckForUpdate(entry, 0)
+	if err != nil || upd != nil {
+		t.Fatalf("CheckForUpdate = (%+v, %v), want no update when HEAD is unreadable", upd, err)
+	}
+	meta, err := ReadMeta(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Commit != "stale-commit" {
+		t.Fatalf("stale commit was overwritten: %q", meta.Commit)
+	}
+	if meta.LastCheckedAt.Before(time.Now().Add(-time.Hour)) {
+		t.Fatal("probe attempt was not recorded")
+	}
+}
+
+// TestCheckForUpdateSyncsHeadBeforeComparing pins the other half of F22: a
+// valid checkout is authoritative even when metadata carries an older commit.
+func TestCheckForUpdateSyncsHeadBeforeComparing(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	root := t.TempDir()
+	appdir.SetBaseForTesting(root)
+	defer appdir.SetBaseForTesting("")
+
+	entry := cacheEntry("head-sync", "owner/head-sync")
+	dir := CachePath(entry)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	makeBridgeRepo(t, dir, "main")
+	head := testGit(t, dir, "rev-parse", "HEAD")
+	if err := WriteMeta(entry, &CacheMeta{
+		ID: entry.ID, Source: entry.GitHub, Version: "1.0.0", Commit: "stale-commit",
+		Branch: "main", LastCheckedAt: time.Now().Add(-48 * time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	orig := httpGetBodyFn
+	defer func() { httpGetBodyFn = orig }()
+	httpGetBodyFn = func(url string) ([]byte, error) {
+		switch {
+		case strings.Contains(url, "/commits/main"):
+			return []byte(`{"sha":"` + head + `"}`), nil
+		case strings.Contains(url, "/repos/"):
+			return []byte(`{"default_branch":"main"}`), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	upd, err := CheckForUpdate(entry, 0)
+	if err != nil || upd != nil {
+		t.Fatalf("CheckForUpdate = (%+v, %v), want no update after syncing HEAD", upd, err)
+	}
+	meta, err := ReadMeta(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Commit != head {
+		t.Fatalf("metadata commit = %q, want %q", meta.Commit, head)
+	}
+}
+
 func TestFinishUpdateChecksPinnedContract(t *testing.T) {
 	if !gitAvailable() {
 		t.Skip("git not installed")
@@ -102,6 +279,14 @@ func TestFinishUpdateChecksPinnedContract(t *testing.T) {
 
 	if _, err := finishUpdate(entry, "main", pin); err == nil || !strings.Contains(err.Error(), "contract") {
 		t.Fatalf("finishUpdate accepted an unsupported pinned contract: %v", err)
+	}
+	// Fail closed: an unsupported pinned tree must not stay in the cache with a
+	// pin that would make the next run skip its checks.
+	if _, err := os.Stat(filepath.Join(dir, "bridge.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unsupported pinned cache was left behind: %v", err)
+	}
+	if meta, err := ReadMeta(entry); err != nil || (meta != nil && meta.Pin != "") {
+		t.Fatalf("unsupported pin was kept in metadata: %+v, %v", meta, err)
 	}
 }
 

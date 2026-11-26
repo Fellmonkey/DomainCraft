@@ -169,8 +169,9 @@ func LocalBridgePaths(input string) (dir, configFile string, err error) {
 // splitPinRef splits a `owner/repo@ref` shorthand into the repository and the
 // pinned ref (commit SHA, tag or branch). A bare `owner/repo` has no ref.
 func splitPinRef(s string) (repo, ref string) {
-	if i := strings.LastIndexByte(s, '@'); i > 0 {
-		return s[:i], s[i+1:]
+	before, after, found := strings.CutLast(s, "@")
+	if found && before != "" {
+		return before, after
 	}
 	return s, ""
 }
@@ -224,17 +225,11 @@ func checkoutPinnedRef(dir, ref string) error {
 // checkout off the requested ref. Legacy metadata without the field decodes to
 // an empty pin and is left untouched.
 func recordPin(entry RegistryEntry, ref string) error {
-	meta, err := ensureMeta(entry)
-	if err != nil {
-		return err
-	}
-	if meta == nil {
-		meta = newMetaFromCache(entry)
-	}
-	meta.Pin = ref
-	meta.Commit = gitHead(entry)
-	meta.LastCheckedAt = time.Now()
-	return WriteMeta(entry, meta)
+	return modifyMeta(entry, func(meta *CacheMeta) {
+		meta.Pin = ref
+		meta.Commit = gitHead(entry)
+		meta.LastCheckedAt = time.Now()
+	})
 }
 
 // looksLikePath reports whether input is path-like — relative ("../x", "./x"),

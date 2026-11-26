@@ -8,6 +8,18 @@ import (
 	domaincraft "github.com/DomainCraft/DomainCraft"
 )
 
+// ResolveOfficialLocal returns the local monorepo checkout for a registered
+// bridge ID, or "" when the ref is not an official ID or no local tree exists.
+// Both --bridge and extends use this step, so a registered ID resolves to the
+// same directory regardless of the entry point.
+func ResolveOfficialLocal(ref, fromDir string) string {
+	entry := Default().ByID(ref)
+	if entry == nil {
+		return ""
+	}
+	return FindMonorepoBridge(fromDir, entry.Path)
+}
+
 // ResolveExtendsRef resolves one `extends` reference. It shares the loader
 // order with the top-level `--bridge` entry, from most to least preferred:
 //
@@ -21,10 +33,10 @@ import (
 //
 // Finally, the normal path/ID/owner-repo resolution (cache + clone).
 func ResolveExtendsRef(ref, fromDir string, resolver *Resolver) (string, error) {
+	if p := ResolveOfficialLocal(ref, fromDir); p != "" {
+		return p, nil
+	}
 	if entry := Default().ByID(ref); entry != nil {
-		if p := FindMonorepoBridge(fromDir, entry.Path); p != "" {
-			return p, nil
-		}
 		repo := filepath.Base(entry.GitHub)
 		for _, candidate := range []string{
 			filepath.Join(filepath.Dir(fromDir), repo), // sibling of the adapter (monorepo)

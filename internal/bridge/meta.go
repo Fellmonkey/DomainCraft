@@ -103,6 +103,21 @@ func ensureMeta(entry RegistryEntry) (*CacheMeta, error) {
 	return newMetaFromCache(entry), nil
 }
 
+// modifyMeta performs one read-modify-write of a bridge's cache metadata.
+// A bridge cached before metadata existed is synthesized first, so callers
+// never have to repeat the ensure/mutate/write sequence.
+func modifyMeta(entry RegistryEntry, mutate func(*CacheMeta)) error {
+	meta, err := ensureMeta(entry)
+	if err != nil {
+		return err
+	}
+	if meta == nil {
+		meta = newMetaFromCache(entry)
+	}
+	mutate(meta)
+	return WriteMeta(entry, meta)
+}
+
 // newMetaFromCache builds metadata from the current on-disk checkout. It is
 // best-effort: missing git or an unreadable bridge.yaml degrade gracefully.
 func newMetaFromCache(entry RegistryEntry) *CacheMeta {
@@ -135,13 +150,23 @@ func readBridgeVersion(entry RegistryEntry) string {
 	return cfg.Version
 }
 
-// gitHead returns the current git HEAD commit of the cached checkout, or "".
+// gitHead returns the current git HEAD commit of the cached checkout, or ""
+// when it cannot be read. Callers that must tell "no commit" from "git failed"
+// use gitHeadResult; a failed probe must not be mistaken for an empty HEAD.
 func gitHead(entry RegistryEntry) string {
+	head, _ := gitHeadResult(entry)
+	return head
+}
+
+// gitHeadResult returns the cached checkout's HEAD commit and reports git
+// failures separately. An error means the local commit is unknown — callers
+// must not fall back to a stale metadata commit and compare it with the remote.
+func gitHeadResult(entry RegistryEntry) (string, error) {
 	out, err := runGit(CachePath(entry), "rev-parse", "HEAD")
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("read local bridge HEAD in %q: %w", CachePath(entry), err)
 	}
-	return out
+	return out, nil
 }
 
 // gitBranch returns the current branch of the cached checkout, or "".

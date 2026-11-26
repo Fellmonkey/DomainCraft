@@ -161,8 +161,11 @@ func checkForUpdate(entry RegistryEntry, interval time.Duration, recordCheck boo
 	}
 
 	// Keep the local commit in sync with the actual checkout so a manual pull
-	// of the cache does not incorrectly report an update.
-	if head := gitHead(entry); head != "" {
+	// of the cache does not incorrectly report an update. A git failure (no
+	// binary, broken checkout) leaves the local commit unknown: a stale
+	// metadata commit compared with the remote tip would be a false update.
+	head, headErr := gitHeadResult(entry)
+	if headErr == nil && head != "" {
 		meta.Commit = head
 	}
 
@@ -182,8 +185,10 @@ func checkForUpdate(entry RegistryEntry, interval time.Duration, recordCheck boo
 		}
 	}
 
-	if err != nil || remoteCommit == "" {
-		return nil, nil // can't reach the remote — assume up to date
+	if headErr != nil || err != nil || remoteCommit == "" {
+		// No trustworthy local commit or no reachable remote: assume up to
+		// date. The attempt has already been recorded above.
+		return nil, nil
 	}
 	if remoteCommit == meta.Commit {
 		return nil, nil // local checkout already at the remote tip
@@ -297,41 +302,57 @@ func checkCachedContract(entry RegistryEntry) error {
 // updated cache never drifts from the ref the user asked for.
 func finishUpdate(entry RegistryEntry, branch, pin string) (string, error) {
 	if pin != "" {
-		if err := checkoutPinnedRef(CachePath(entry), pin); err != nil {
-			return "", fmt.Errorf("restore pinned ref %q after update: %w", pin, err)
+		dir := CachePath(entry)
+		pinErr := checkoutPinnedRef(dir, pin)
+		if pinErr != nil {
+			// A shallow clone/fetch often lacks an arbitrary tag or commit.
+			// Try to bring that exact ref in before declaring the pin lost.
+			if verr := validatePinRef(pin); verr == nil {
+				// Fetch into a local ref named exactly like the pin: a plain
+				// `fetch origin <tag>` only fills FETCH_HEAD, which checkout by
+				// name cannot resolve. A '+' allows refreshing an existing ref.
+				refspec := "+" + pin + ":refs/heads/" + pin
+				if _, ferr := runGit(dir, "fetch", "--depth", "1", "origin", refspec); ferr == nil {
+					pinErr = checkoutPinnedRef(dir, pin)
+				} else {
+					pinErr = errors.Join(pinErr, fmt.Errorf("fetch pinned ref %q: %w", pin, ferr))
+				}
+			}
+		}
+		if pinErr != nil {
+			// The branch checkout already passed the contract gate. Keep it,
+			// but drop the pin: metadata claiming a pin the checkout does not
+			// hold would make the next run skip every freshness check.
+			if _, werr := syncMetaAfterUpdate(entry, branch, ""); werr != nil {
+				pinErr = errors.Join(pinErr, fmt.Errorf("clear stale pin after update: %w", werr))
+			}
+			return "", fmt.Errorf("restore pinned ref %q after update: %w", pin, pinErr)
 		}
 		// The gate above checked FETCH_HEAD, not the ref we actually keep.
 		// Re-check the pinned manifest before recording the cache.
 		if err := checkCachedContract(entry); err != nil {
-			return "", fmt.Errorf("check pinned bridge %q contract: %w", pin, err)
+			// The checkout now holds an unsupported pinned tree. Remove it so
+			// a later run cannot treat it as an already-certified pin.
+			cerr := fmt.Errorf("check pinned bridge %q contract: %w", pin, err)
+			if rerr := os.RemoveAll(dir); rerr != nil {
+				cerr = errors.Join(cerr, fmt.Errorf("remove unsupported pinned cache %q: %w", dir, rerr))
+			}
+			return "", cerr
 		}
 	}
-	version, err := syncMetaAfterUpdate(entry, branch)
-	if err != nil || pin == "" {
-		return version, err
-	}
-	meta, err := ReadMeta(entry)
-	if err != nil {
-		return version, err
-	}
-	if meta == nil {
-		meta = &CacheMeta{ID: entry.ID, Source: entry.GitHub}
-	}
-	meta.Pin = pin
-	meta.Commit = gitHead(entry)
-	if err := WriteMeta(entry, meta); err != nil {
-		return version, err
-	}
-	return version, nil
+	// One write records version, branch and pin together. The old flow wrote
+	// metadata twice and briefly persisted a cache with no pin at all.
+	return syncMetaAfterUpdate(entry, branch, pin)
 }
 
 // syncMetaAfterUpdate refreshes the cached checkout's metadata after a
 // successful download/update and returns the new bridge version.
-func syncMetaAfterUpdate(entry RegistryEntry, branch string) (string, error) {
+func syncMetaAfterUpdate(entry RegistryEntry, branch, pin string) (string, error) {
 	meta := newMetaFromCache(entry)
 	if branch != "" {
 		meta.Branch = branch
 	}
+	meta.Pin = pin
 	if err := WriteMeta(entry, meta); err != nil {
 		return meta.Version, err
 	}

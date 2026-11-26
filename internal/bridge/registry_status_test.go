@@ -37,6 +37,9 @@ func TestStatusLocalFacts(t *testing.T) {
 // TestStatusRemoteOnlyWhenRequested ensures CheckRemote=true contacts the remote
 // and reports outdated only for a supported (not newer-contract) bridge.
 func TestStatusRemoteOnlyWhenRequested(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
 	appdir.SetBaseForTesting(t.TempDir())
 	t.Cleanup(func() { appdir.SetBaseForTesting("") })
 
@@ -64,6 +67,9 @@ func TestStatusRemoteOnlyWhenRequested(t *testing.T) {
 	if ok, err := TryMaterializeEmbedded(entry, nil); err != nil || !ok {
 		t.Fatalf("materialize embedded: %v, %v", ok, err)
 	}
+	// An embedded copy has no git history; without a HEAD the remote probe
+	// cannot tell a stale commit from the real one, so give the fixture one.
+	makeBridgeRepo(t, CachePath(entry), "main")
 
 	st := entry.Status(true)
 	if !st.Embedded || !st.Cached {
