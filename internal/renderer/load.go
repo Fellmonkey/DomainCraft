@@ -9,7 +9,7 @@ import (
 	"sync"
 	"text/template"
 
-	"github.com/DomainCraft/DomainCraft/internal/bridge"
+	"github.com/DomainCraft/DomainCraft/internal/bridgecontract"
 	"github.com/DomainCraft/DomainCraft/internal/ir"
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
 
@@ -24,6 +24,19 @@ type sourceConfig struct {
 	// contractDeclared records whether bridge.yaml explicitly declared
 	// `contract_version` (vs. being absent → treated as 1).
 	contractDeclared bool
+	// readSource loads a bridge file by relative path. Nil means the real
+	// filesystem; an embedded fs.FS supplies the in-browser implementation.
+	readSource func(dir, rel string) ([]byte, error)
+}
+
+// readBridgeFile is the single reader for templates, helpers and mappings.
+// Disk sources keep the symlink-safe os.Root path; embedded sources read
+// through fs.ReadFile with the same lexical containment rule.
+func readBridgeFile(src sourceConfig, rel string) ([]byte, error) {
+	if src.readSource != nil {
+		return src.readSource(src.dir, rel)
+	}
+	return readBridgeSource(src.dir, rel)
 }
 
 // Renderer reads bridge.yaml and renders files from IR.
@@ -207,7 +220,7 @@ func storeParsedSource(key string, src sourceConfig) {
 
 // loadSource loads a single bridge directory (its bridge.yaml).
 func loadSource(bridgePath string) (sourceConfig, error) {
-	bridgeDir, configPath, err := bridge.LocalBridgePaths(bridgePath)
+	bridgeDir, configPath, err := localBridgePaths(bridgePath)
 	if err != nil {
 		return sourceConfig{}, err
 	}
@@ -221,6 +234,18 @@ func loadSource(bridgePath string) (sourceConfig, error) {
 		return src, nil
 	}
 
+	src, err := parseSourceConfig(data, bridgeDir)
+	if err != nil {
+		return sourceConfig{}, err
+	}
+	storeParsedSource(key, src)
+	return src, nil
+}
+
+// parseSourceConfig validates one bridge.yaml. Both the disk loader and the
+// in-memory (embedded fs.FS) loader go through here so contract and condition
+// rules can never diverge between CLI and browser generation.
+func parseSourceConfig(data []byte, dir string) (sourceConfig, error) {
 	var config BridgeConfig
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return sourceConfig{}, fmt.Errorf("parse bridge config: %w", err)
@@ -236,19 +261,15 @@ func loadSource(bridgePath string) (sourceConfig, error) {
 	}
 	// Contract version: use the same parser/gate as the bridge update path so
 	// a manifest cannot be accepted on one side and rejected on the other.
-	// An absent declaration defaults to the core's version (with a deprecation
-	// notice from the caller); a negative or newer declaration is a hard error.
-	contractVersion, contractDeclared, err := bridge.ParseContractVersion(data)
+	contractVersion, contractDeclared, err := bridgecontract.ParseContractVersion(data)
 	if err != nil {
 		return sourceConfig{}, err
 	}
-	if err := bridge.CheckContractVersion(contractVersion); err != nil {
+	if err := bridgecontract.CheckContractVersion(contractVersion); err != nil {
 		return sourceConfig{}, fmt.Errorf("bridge %q: %w", config.Name, err)
 	}
 	config.ContractVersion = contractVersion
-	src := sourceConfig{dir: bridgeDir, config: config, contractDeclared: contractDeclared}
-	storeParsedSource(key, src)
-	return src, nil
+	return sourceConfig{dir: dir, config: config, contractDeclared: contractDeclared}, nil
 }
 
 // New loads a single (leaf) bridge.
@@ -257,10 +278,16 @@ func New(bridgePath string, log *logger.Logger) (*Renderer, error) {
 	if err != nil {
 		return nil, err
 	}
+	warnUndeclaredContract(src, log)
+	return &Renderer{sources: []sourceConfig{src}, log: log}, nil
+}
+
+// warnUndeclaredContract keeps CLI and in-browser bridge loading diagnostics
+// identical. A nil logger is a silent host, which is the WASM case.
+func warnUndeclaredContract(src sourceConfig, log *logger.Logger) {
 	if !src.contractDeclared && log != nil {
 		log.Warn("bridge %q does not declare `contract_version`; assuming contract v%d (deprecated — please add it)", src.config.Name, src.config.ContractVersion)
 	}
-	return &Renderer{sources: []sourceConfig{src}, log: log}, nil
 }
 
 // Extends reports the base bridge this bridge composes on top of (a path,

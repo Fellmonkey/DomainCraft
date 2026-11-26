@@ -4,7 +4,6 @@
 package fsutil
 
 import (
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -180,7 +179,7 @@ func (o rootAtomicOps) mkdir(dir string) error { return o.root.MkdirAll(dir, 0o7
 func (o rootAtomicOps) lstat(name string) (os.FileInfo, error) { return o.root.Lstat(name) }
 
 func (o rootAtomicOps) createTemp(_, name string) (*os.File, string, error) {
-	tmp := name + ".tmp-" + rand.Text()
+	tmp := name + ".tmp-" + atomicTempSuffix()
 	f, err := o.root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return nil, "", err

@@ -61,6 +61,15 @@ func PascalCase(value string) string {
 	if value == "" {
 		return ""
 	}
+	// The common path (a plain lowercase identifier) needs one allocation,
+	// not the parts slice plus per-part strings of the general path.
+	if isSimpleIdentifier(value) {
+		b := []byte(value)
+		if b[0] >= 'a' && b[0] <= 'z' {
+			b[0] -= 'a' - 'A'
+		}
+		return string(b)
+	}
 	parts := SplitIdentifier(value)
 	for i := range parts {
 		if parts[i] == "" {
@@ -99,6 +108,11 @@ func FKName(name string) string {
 // ToDatabaseColumnName converts camelCase/PascalCase to snake_case.
 // Uses SplitIdentifier to correctly handle acronyms (e.g. "HTTPPort" -> "http_port").
 func ToDatabaseColumnName(fieldName string) string {
+	// Already canonical: no separator, no camel/acronym boundary, no uppercase.
+	// Returning the input avoids a parts slice and a Builder allocation.
+	if isSimpleIdentifier(fieldName) {
+		return fieldName
+	}
 	return strings.ToLower(strings.Join(SplitIdentifier(fieldName), "_"))
 }
 
@@ -106,39 +120,60 @@ func ToDatabaseColumnName(fieldName string) string {
 // and camelCase boundaries (e.g. "firstName" -> ["first", "Name"],
 // "HTMLParser" -> ["HTML", "Parser"]).
 func SplitIdentifier(value string) []string {
-	// Normalize separators
-	normalized := strings.ReplaceAll(value, "-", "_")
-	normalized = strings.ReplaceAll(normalized, " ", "_")
+	// Plain lowercase ASCII identifiers (the overwhelming majority of field
+	// names) have no boundary to split on.
+	if isSimpleIdentifier(value) {
+		return []string{value}
+	}
 
-	// Insert separator at camelCase boundaries
-	runes := []rune(normalized)
-	var withSeps []rune
+	// Treat '-' and ' ' as separators in the same pass; the previous two
+	// ReplaceAll calls allocated a copy of the whole string each.
+	runes := []rune(value)
+	parts := make([]string, 0, 4)
+	var cur strings.Builder
+	flush := func() {
+		if cur.Len() > 0 {
+			parts = append(parts, cur.String())
+			cur.Reset()
+		}
+	}
 	for i, r := range runes {
+		switch r {
+		case '-', ' ', '_':
+			flush()
+			continue
+		}
 		if i > 0 {
 			prev := runes[i-1]
 			// camelCase boundary: lowercase -> Uppercase
 			if unicode.IsUpper(r) && unicode.IsLower(prev) {
-				withSeps = append(withSeps, '_')
+				flush()
 			}
 			// ACRONYM boundary: UPPERCASE -> Uppercase+lowercase (e.g., HTMLParser -> HTML_Parser)
 			if i+1 < len(runes) && unicode.IsUpper(r) && unicode.IsUpper(prev) && unicode.IsLower(runes[i+1]) {
-				withSeps = append(withSeps, '_')
+				flush()
 			}
 		}
-		withSeps = append(withSeps, r)
+		cur.WriteRune(r)
 	}
-
-	parts := strings.Split(string(withSeps), "_")
-	var result []string
-	for _, p := range parts {
-		if p != "" {
-			result = append(result, p)
-		}
-	}
-	if len(result) == 0 {
+	flush()
+	if len(parts) == 0 {
 		return []string{value}
 	}
-	return result
+	return parts
+}
+
+// isSimpleIdentifier reports whether value is already in canonical lowercase
+// form with no separators and no camel/acronym boundary. Such a string is
+// returned unchanged by ToDatabaseColumnName and splits into one part.
+func isSimpleIdentifier(value string) bool {
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if c == '-' || c == ' ' || c == '_' || c >= utf8.RuneSelf || (c >= 'A' && c <= 'Z') {
+			return false
+		}
+	}
+	return true
 }
 
 func isVowel(r rune) bool {

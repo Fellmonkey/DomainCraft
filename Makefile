@@ -165,18 +165,23 @@ contract-golden-update:
 #   - timing runs here. No baseline is committed: a number from one CPU says
 #     nothing about another. bench.yml runs the same command on base and PR in
 #     one runner and compares with benchstat.
-BENCH_PACKAGES ?= ./internal/renderer ./internal/ir ./internal/snapshot
-BENCH_PATTERN ?= RenderWarm|SafeOutputPathWarm|SortEntities|BuildHubRelations
+BENCH_PACKAGES ?= ./internal/renderer ./internal/ir ./internal/snapshot ./internal/parser ./internal/validator ./internal/lexer ./pkg/textutil
+# The WASM exports package builds natively only after the js-free api.go. The
+# base commit of a PR contains just the js/wasm main.go, so bench.yml clears
+# this variable on the base checkout; both sides still share BENCH_CMD.
+BENCH_WASM_PACKAGE ?= ./cmd/wasm-validator
+BENCH_PATTERN ?= RenderWarm|SafeOutputPathWarm|RenderMemory|SortEntities|BuildHubRelations|ParseYAMLString|ValidateOnly|ParseDefinition|Validate|ParseDomain|ParseField|GenerateYAML|StudioValidationCycle|SplitIdentifier|ToDatabaseColumnName|PascalCase
 # CI overrides the count for a noisier runner; the command itself stays shared.
 BENCH_COUNT ?= 1
-BENCH_CMD = go test -run "^$$" -bench "$(BENCH_PATTERN)" -benchmem -benchtime=1x -count=$(BENCH_COUNT) $(BENCH_PACKAGES)
+BENCH_ALL_PACKAGES = $(BENCH_PACKAGES) $(BENCH_WASM_PACKAGE)
+BENCH_CMD = go test -run "^$$" -bench "$(BENCH_PATTERN)" -benchmem -benchtime=1x -count=$(BENCH_COUNT) $(BENCH_ALL_PACKAGES)
 
 bench:
 	@$(BENCH_CMD)
 
 # Includes BenchmarkComputeDiff: ~157 s for one full pass.
 bench-full:
-	@go test -run "^$$" -bench . -benchmem -benchtime=1x -count=1 $(BENCH_PACKAGES)
+	@go test -run "^$$" -bench . -benchmem -benchtime=1x -count=1 $(BENCH_ALL_PACKAGES)
 
 bench-golden-update:
 	@go test $(BENCH_PACKAGES) -update

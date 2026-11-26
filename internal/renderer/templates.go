@@ -105,10 +105,10 @@ func (r *Renderer) buildFuncMap() (template.FuncMap, error) {
 // loadTypeMappings reads a bridge directory's type_mappings.yaml. It returns nil
 // (no error) when the file is absent — a bridge with no mappings contributes
 // nothing, and the merged result drives the language functions.
-func (r *Renderer) loadTypeMappings(dir string) (*typeMappings, error) {
+func (r *Renderer) loadTypeMappings(src sourceConfig) (*typeMappings, error) {
 	// Same guard as templates and helpers: a symlinked mapping file must not
 	// pull configuration from outside the bridge directory.
-	data, err := readBridgeSource(dir, "type_mappings.yaml")
+	data, err := readBridgeFile(src, "type_mappings.yaml")
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
@@ -172,7 +172,7 @@ func mergeMaps[V any](dst, src map[string]V) map[string]V {
 func (r *Renderer) getBridgeSpecificFuncs() (map[string]any, error) {
 	var merged *typeMappings
 	for _, src := range r.sources {
-		m, err := r.loadTypeMappings(src.dir)
+		m, err := r.loadTypeMappings(src)
 		if err != nil {
 			return nil, err
 		}

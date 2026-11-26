@@ -3,6 +3,7 @@ package parser
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/DomainCraft/DomainCraft/internal/specmeta"
@@ -407,8 +408,12 @@ func (e *RawEntity) UnmarshalYAML(value *yaml.Node) error {
 			order := make([]string, 0, len(valNode.Content)/2)
 			merged := make(map[string]bool)
 			addField := func(name string, defNode *yaml.Node, fromMerge bool) error {
+				// A plain string scalar is already decoded in Node.Value. Going
+				// through Node.Decode allocates a fresh decoder per field.
 				var def string
-				if err := defNode.Decode(&def); err != nil {
+				if defNode.Kind == yaml.ScalarNode && defNode.Tag == "!!str" {
+					def = defNode.Value
+				} else if err := defNode.Decode(&def); err != nil {
 					return fmt.Errorf("field %q: %w", name, err)
 				}
 				if _, exists := fields[name]; exists {
@@ -498,10 +503,21 @@ func (r *RawIndex) UnmarshalYAML(value *yaml.Node) error {
 
 type rawIndexAlias RawIndex
 
-// ParseRawSchema reads YAML and converts it to RawSchema
+// ParseRawSchema reads YAML bytes and converts them to RawSchema.
 func ParseRawSchema(data []byte) (*RawSchema, error) {
+	return parseRawSchema(bytes.NewReader(data))
+}
+
+// ParseRawSchemaString decodes YAML text without copying it into a []byte.
+// WASM exports receive a Go string from JS; copying multi-hundred-kilobyte
+// models on every keystroke showed up as a measurable share of total bytes.
+func ParseRawSchemaString(data string) (*RawSchema, error) {
+	return parseRawSchema(strings.NewReader(data))
+}
+
+func parseRawSchema(reader io.Reader) (*RawSchema, error) {
 	schema := &RawSchema{}
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder := yaml.NewDecoder(reader)
 	decoder.KnownFields(true)
 	if err := decoder.Decode(schema); err != nil {
 		return nil, err

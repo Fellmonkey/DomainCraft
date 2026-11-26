@@ -4,16 +4,15 @@ package renderer
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"text/template"
 
 	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 	"github.com/DomainCraft/DomainCraft/internal/ir"
-	"github.com/DomainCraft/DomainCraft/internal/packages"
 )
 
 // readBridgeSource reads a template, helper or mapping declared by bridge.yaml.
@@ -181,7 +180,7 @@ func (r *Renderer) parseHelpers(funcMap template.FuncMap) (*template.Template, e
 		if src.config.Helpers == "" {
 			continue
 		}
-		helperBytes, err := readBridgeSource(src.dir, src.config.Helpers)
+		helperBytes, err := readBridgeFile(src, src.config.Helpers)
 		if err != nil {
 			return nil, fmt.Errorf("read helpers %s: %w", src.config.Helpers, err)
 		}
@@ -263,6 +262,50 @@ func (s *renderSession) fail(err error) error {
 	return rollbackError(err, rollbackWrites(s.staged, s.committed))
 }
 
+// compiledSpec is the static part of a template spec: the body and its target
+// path templates. It depends only on bridge files, not on the domain model, so
+// both the disk and in-memory renderers compile it the same way.
+type compiledSpec struct {
+	body    *template.Template
+	targets []*template.Template
+	// sizeHint is the output length of the most recent render with this spec.
+	// Growing the destination builder once avoids repeated geometric growth on
+	// the hot path; it never affects the rendered bytes.
+	sizeHint atomic.Int64
+}
+
+func (r *Renderer) compileSpec(src sourceConfig, spec TemplateSpec, funcMap template.FuncMap, helpers *template.Template) (*compiledSpec, error) {
+	tplBytes, err := readBridgeFile(src, spec.Source)
+	if err != nil {
+		return nil, fmt.Errorf("read template %s: %w", spec.Source, err)
+	}
+
+	tplName := filepath.Base(spec.Source)
+	var body *template.Template
+	if helpers != nil {
+		body, err = helpers.Clone()
+		if err != nil {
+			return nil, fmt.Errorf("clone helpers for %s: %w", spec.Source, err)
+		}
+		body, err = r.applyDelimiters(body.New(tplName)).Parse(string(tplBytes))
+	} else {
+		body, err = r.applyDelimiters(template.New(tplName).Funcs(funcMap)).Parse(string(tplBytes))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("parse template %s: %w", spec.Source, err)
+	}
+
+	patterns := spec.TargetPatterns()
+	targets := make([]*template.Template, len(patterns))
+	for i, pattern := range patterns {
+		targets[i], err = template.New("path").Funcs(funcMap).Parse(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("parse target path %q: %w", pattern, err)
+		}
+	}
+	return &compiledSpec{body: body, targets: targets}, nil
+}
+
 // stageTemplates parses each selected template and renders every target into a
 // temp file next to it. Nothing is written to outputDir until all templates
 // executed successfully; a failure drops the temp files staged so far.
@@ -274,41 +317,16 @@ func (r *Renderer) stageTemplates(s *renderSession) error {
 				continue
 			}
 
-			tplBytes, err := readBridgeSource(src.dir, spec.Source)
+			compiled, err := r.compileSpec(src, spec, s.funcMap, s.helpers)
 			if err != nil {
-				return s.fail(fmt.Errorf("read template %s: %w", spec.Source, err))
+				return s.fail(err)
 			}
-
-			tplName := filepath.Base(spec.Source)
-			var parsedTemplate *template.Template
-			if s.helpers != nil {
-				// Clone helpers so all named templates are available
-				parsedTemplate, err = s.helpers.Clone()
-				if err != nil {
-					return s.fail(fmt.Errorf("clone helpers for %s: %w", spec.Source, err))
-				}
-				parsedTemplate, err = r.applyDelimiters(parsedTemplate.New(tplName)).Parse(string(tplBytes))
-			} else {
-				parsedTemplate, err = r.applyDelimiters(template.New(tplName).Funcs(s.funcMap)).Parse(string(tplBytes))
-			}
-			if err != nil {
-				return s.fail(fmt.Errorf("parse template %s: %w", spec.Source, err))
-			}
+			parsedTemplate := compiled.body
+			targetTemplates := compiled.targets
 
 			contexts, err := r.renderContexts(spec.For, s.project, s.pkgs)
 			if err != nil {
 				return s.fail(err)
-			}
-
-			// A target pattern is static for the spec; only the context changes.
-			// Parse once instead of once per (entity, pattern) pair.
-			targetPatterns := spec.TargetPatterns()
-			targetTemplates := make([]*template.Template, len(targetPatterns))
-			for i, pattern := range targetPatterns {
-				targetTemplates[i], err = template.New("path").Funcs(s.funcMap).Parse(pattern)
-				if err != nil {
-					return s.fail(fmt.Errorf("parse target path %q: %w", pattern, err))
-				}
 			}
 
 			for _, context := range contexts {
@@ -633,11 +651,6 @@ func (r *Renderer) shouldRenderContext(spec TemplateSpec, context RenderContext)
 	return entry.eval(context, name)
 }
 
-// resolvePackages resolves all package versions from the package registry,
-// cached per bridge so repeated runs don't hit the registry every time.
-// When the renderer is composed (extends chain), registry_packages from all
-// bridges are merged base-first so inner layers can declare their own
-// dependencies; the adapter's values win on conflicts.
 // targetFramework returns the project's declared platform, then the framework
 // declared by the bridge chain (adapter first, base later). An absent framework
 // leaves version selection unconstrained — the core bakes in no TFM.
@@ -651,50 +664,6 @@ func (r *Renderer) targetFramework(project *ir.Project) string {
 		}
 	}
 	return ""
-}
-
-func (r *Renderer) resolvePackages(project *ir.Project) map[string]string {
-	framework := r.targetFramework(project)
-
-	// Merge registry_packages from all sources in the chain (base-first,
-	// adapter wins on conflicts — consistent with type_mappings merge).
-	merged := make(map[string]string)
-	for _, src := range r.sources {
-		maps.Copy(merged, src.config.RegistryPackages)
-	}
-	if len(merged) == 0 {
-		return nil
-	}
-
-	// Use the adapter's registry_url; fall back to any source with one.
-	registryURL := r.config().RegistryURL
-	if registryURL == "" {
-		for _, src := range slices.Backward(r.sources) {
-			if src.config.RegistryURL != "" {
-				registryURL = src.config.RegistryURL
-				break
-			}
-		}
-	}
-	if registryURL == "" {
-		r.log.Warn("no registry_url configured in any bridge in the chain; skipping package resolution")
-		return nil
-	}
-
-	result := make(map[string]string, len(merged))
-	for _, key := range slices.Sorted(maps.Keys(merged)) {
-		packageID := merged[key]
-		version, err := packages.ResolveVersionCachedForFramework(r.cacheNamespace(), registryURL, packageID, framework)
-		if err != nil {
-			// A cache-write failure still carries the resolved version; warn
-			// once and use it instead of emitting a package-less project.
-			r.log.Warn("failed to resolve package %s: %v", packageID, err)
-		}
-		if version != "" {
-			result[key] = version
-		}
-	}
-	return result
 }
 
 // cacheNamespace returns a stable, filesystem-safe identifier for this bridge,

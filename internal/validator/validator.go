@@ -278,24 +278,19 @@ func validateInfrastructureConfig(p parser.ProjectConfig) []ValidationError {
 func (v *Validator) validateCircularRelations() []ValidationError {
 	var errs []ValidationError
 
-	// Build adjacency: entity -> list of target entities it references via an FK.
-	adj := make(map[string][]string)
-	for _, entityName := range v.schema.EntityOrder {
-		entity := v.schema.Entities[entityName]
-		if entity == nil {
-			continue
-		}
-		for _, fieldName := range entity.FieldOrder {
-			field := entity.Fields[fieldName]
-			if field == nil || !field.IsRelation() || field.TargetEntity == "" {
-				continue
-			}
-			// Skip many-to-many links (no FK on this side) and self-references.
-			if field.IsMany || field.TargetEntity == entityName {
-				continue
-			}
-			adj[entityName] = append(adj[entityName], field.TargetEntity)
-		}
+	order := v.schema.EntityOrder
+	n := len(order)
+	if n == 0 {
+		return nil
+	}
+
+	// Walk the FK graph directly instead of materializing an adjacency map.
+	// EntityOrder is sorted, so index positions double as deterministic node
+	// ids; one name->index map plus flat slices replace the adjacency/color/
+	// inCycle maps and one slice per outgoing edge.
+	index := make(map[string]int, n)
+	for i, name := range order {
+		index[name] = i
 	}
 
 	// Standard DFS cycle detection (white/gray/black). All nodes on a gray stack
@@ -305,23 +300,41 @@ func (v *Validator) validateCircularRelations() []ValidationError {
 		gray
 		black
 	)
-	color := make(map[string]int)
-	inCycle := make(map[string]bool)
-	stack := make([]string, 0, len(v.schema.EntityOrder))
+	color := make([]uint8, n)
+	inCycle := make([]bool, n)
+	stack := make([]int, 0, n)
 
-	var dfs func(node string)
-	dfs = func(node string) {
+	var dfs func(node int)
+	dfs = func(node int) {
 		color[node] = gray
 		stack = append(stack, node)
-		for _, target := range adj[node] {
-			switch color[target] {
-			case white:
-				dfs(target)
-			case gray:
-				// Back-edge found: target is gray, so it is on the stack.
-				// Mark everything from target up to the current node.
-				for _, n := range stack[slices.Index(stack, target):] {
-					inCycle[n] = true
+		name := order[node]
+		entity := v.schema.Entities[name]
+		if entity != nil {
+			for _, fieldName := range entity.FieldOrder {
+				field := entity.Fields[fieldName]
+				if field == nil || !field.IsRelation() || field.TargetEntity == "" {
+					continue
+				}
+				// Skip many-to-many links (no FK on this side) and self-references.
+				if field.IsMany || field.TargetEntity == name {
+					continue
+				}
+				target, ok := index[field.TargetEntity]
+				if !ok {
+					// A missing target is reported by validateRelationField; it
+					// cannot close a cycle because it has no outgoing edges here.
+					continue
+				}
+				switch color[target] {
+				case white:
+					dfs(target)
+				case gray:
+					// Back-edge found: target is gray, so it is on the stack.
+					// Mark everything from target up to the current node.
+					for _, i := range stack[slices.Index(stack, target):] {
+						inCycle[i] = true
+					}
 				}
 			}
 		}
@@ -329,15 +342,17 @@ func (v *Validator) validateCircularRelations() []ValidationError {
 		color[node] = black
 	}
 
-	for _, entityName := range v.schema.EntityOrder {
-		if color[entityName] == white {
-			dfs(entityName)
+	for i := range order {
+		if color[i] == white {
+			dfs(i)
 		}
 	}
 
-	for _, entityName := range slices.Sorted(maps.Keys(inCycle)) {
-		errs = append(errs, warn(entityName, "",
-			"entity is part of a circular relation chain (A → B → … → A); generated delete/seed ordering may be ambiguous"))
+	for i, entityName := range order {
+		if inCycle[i] {
+			errs = append(errs, warn(entityName, "",
+				"entity is part of a circular relation chain (A → B → … → A); generated delete/seed ordering may be ambiguous"))
+		}
 	}
 
 	return errs
@@ -803,7 +818,7 @@ func validateFieldValidations(entityName, fieldName string, field *parser.Parsed
 	isNumeric := specmeta.IsNumeric(ftype)
 	isString := specmeta.IsStringType(ftype)
 
-	for _, mod := range slices.Sorted(maps.Keys(field.Validations)) {
+	for _, mod := range sortedMapKeys(field.Validations) {
 		val := field.Validations[mod]
 		if specmeta.IsStringOnlyValidationModifier(mod) && !isString {
 			errs = append(errs, warnf(entityName, fieldName,
@@ -1379,6 +1394,19 @@ func isValidJSON(s string) bool {
 }
 
 // --- helpers ---
+
+// sortedMapKeys returns a map's keys in deterministic order. It replaces
+// slices.Sorted(maps.Keys(m)) in hot per-field loops: the iterator form grows
+// its result through AppendSeq and allocates more than the single make+sort
+// below. A nil or empty map returns an empty slice without allocating.
+func sortedMapKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
+}
 
 // countPrimaryKeys returns the number of primary key fields in the entity.
 func countPrimaryKeys(entity *parser.ParsedEntity) int {

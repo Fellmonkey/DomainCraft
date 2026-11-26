@@ -382,6 +382,11 @@ func ParseArrayInner(dbType string) string {
 // defaults, so a comma inside a quoted value cannot be read as a separator by
 // one consumer and as data by another.
 func SplitRespectingQuotes(s string) []string {
+	// Most modifier clauses have neither quotes nor nested defaults. A single
+	// Split allocates only the result slice and reuses the input backing array.
+	if !strings.ContainsAny(s, "'\"[]") {
+		return strings.Split(s, ",")
+	}
 	var out []string
 	var cur strings.Builder
 	depth := 0

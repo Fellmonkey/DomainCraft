@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 )
@@ -47,9 +48,9 @@ func Parse(input string) (*FieldDefinition, error) {
 
 func parse(input string, extraStringMods []string) (*FieldDefinition, error) {
 	input = strings.TrimSpace(input)
-	fd := &FieldDefinition{
-		Validations: make(map[string]string),
-	}
+	// Validations is created on first use. Most field definitions carry no
+	// validation modifiers, so the map would be pure garbage.
+	fd := &FieldDefinition{}
 
 	// Split into type and modifiers: "string [required, max:255]". Split at the
 	// first "[" only; the rest (modifiers, which may themselves contain brackets,
@@ -169,6 +170,9 @@ func parseModifiers(modStr string, fd *FieldDefinition, extraStringMods []string
 
 			switch {
 			case specmeta.IsValidationModifier(key, extraStringMods):
+				if fd.Validations == nil {
+					fd.Validations = make(map[string]string, 2)
+				}
 				fd.Validations[key] = value
 			case key == "default":
 				// Check for function-style defaults like now(), uuid()
@@ -199,6 +203,9 @@ func parseModifiers(modStr string, fd *FieldDefinition, extraStringMods []string
 
 		// Bare string flags live in specmeta alongside their key:value forms.
 		if specmeta.IsStringFlagValidationModifier(mod) {
+			if fd.Validations == nil {
+				fd.Validations = make(map[string]string, 2)
+			}
 			fd.Validations[mod] = "true"
 			continue
 		}
@@ -220,6 +227,29 @@ func parseModifiers(modStr string, fd *FieldDefinition, extraStringMods []string
 // default value would never round-trip through parse → serialize → parse.
 func splitModifiers(s string) []string {
 	return specmeta.SplitRespectingQuotes(s)
+}
+
+// lastRegex caches the result of the most recent regexp.Compile call. Studio
+// re-parses the same field definition on every keystroke, and compiling even a
+// short pattern allocates hundreds of bytes and dominates goParseField when a
+// regex modifier is present. One entry is enough for that pattern and keeps
+// the cache bounded regardless of user input.
+var lastRegex = struct {
+	sync.Mutex
+	pattern string
+	re      *regexp.Regexp
+	err     error
+}{}
+
+func compileRegex(pattern string) (*regexp.Regexp, error) {
+	lastRegex.Lock()
+	defer lastRegex.Unlock()
+	if lastRegex.pattern == pattern {
+		return lastRegex.re, lastRegex.err
+	}
+	re, err := regexp.Compile(pattern)
+	lastRegex.pattern, lastRegex.re, lastRegex.err = pattern, re, err
+	return re, err
 }
 
 // Validate checks the logical consistency of a FieldDefinition
@@ -251,7 +281,7 @@ func (fd *FieldDefinition) Validate() error {
 
 	// Validate regex if present
 	if regex, ok := fd.Validations["regex"]; ok {
-		if _, err := regexp.Compile(regex); err != nil {
+		if _, err := compileRegex(regex); err != nil {
 			return fmt.Errorf("invalid regex %q: %w", regex, err)
 		}
 	}

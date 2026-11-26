@@ -1,7 +1,9 @@
 package textutil
 
 import (
+	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -192,5 +194,77 @@ func TestSplitIdentifier(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// referenceSplitIdentifier is the pre-optimization implementation. Keeping it
+// in the test makes the fast path provably behaviour-preserving on a corpus,
+// including separators, acronyms and non-ASCII identifiers.
+func referenceSplitIdentifier(value string) []string {
+	normalized := strings.ReplaceAll(value, "-", "_")
+	normalized = strings.ReplaceAll(normalized, " ", "_")
+	runes := []rune(normalized)
+	var withSeps []rune
+	for i, r := range runes {
+		if i > 0 {
+			prev := runes[i-1]
+			if unicode.IsUpper(r) && unicode.IsLower(prev) {
+				withSeps = append(withSeps, '_')
+			}
+			if i+1 < len(runes) && unicode.IsUpper(r) && unicode.IsUpper(prev) && unicode.IsLower(runes[i+1]) {
+				withSeps = append(withSeps, '_')
+			}
+		}
+		withSeps = append(withSeps, r)
+	}
+	parts := strings.Split(string(withSeps), "_")
+	var result []string
+	for _, p := range parts {
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	if len(result) == 0 {
+		return []string{value}
+	}
+	return result
+}
+
+func TestIdentifierTransformsMatchReference(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{
+		"", "name", "firstName", "first_name", "first-name", "first name",
+		"HTMLParser", "HTTPSServer", "IPv4Address", "HTTP20xOK", "a", "123",
+		"__", "--", "a_b-c d", "èCafé_Наименование", "ÜBERStraße", "xY", "XYz",
+		"магазин", "магазин_товары",
+	} {
+		wantParts := referenceSplitIdentifier(value)
+		gotParts := SplitIdentifier(value)
+		if len(gotParts) != len(wantParts) {
+			t.Errorf("SplitIdentifier(%q) = %v, want %v", value, gotParts, wantParts)
+			continue
+		}
+		for i := range wantParts {
+			if gotParts[i] != wantParts[i] {
+				t.Errorf("SplitIdentifier(%q)[%d] = %q, want %q", value, i, gotParts[i], wantParts[i])
+			}
+		}
+
+		wantDB := strings.ToLower(strings.Join(wantParts, "_"))
+		if got := ToDatabaseColumnName(value); got != wantDB {
+			t.Errorf("ToDatabaseColumnName(%q) = %q, want %q", value, got, wantDB)
+		}
+
+		wantPascal := ""
+		for _, p := range wantParts {
+			if p == "" {
+				continue
+			}
+			first, size := utf8.DecodeRuneInString(p)
+			wantPascal += string(unicode.ToUpper(first)) + strings.ToLower(p[size:])
+		}
+		if got := PascalCase(value); got != wantPascal {
+			t.Errorf("PascalCase(%q) = %q, want %q", value, got, wantPascal)
+		}
 	}
 }
