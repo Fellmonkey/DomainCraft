@@ -106,6 +106,15 @@ func BenchmarkSpecmeta(b *testing.B) {
 	}
 }
 
+// BenchmarkGenerateYAML measures full in-browser generation: parse, IR build,
+// bridge-chain loading and template execution into memory.
+func BenchmarkGenerateYAML(b *testing.B) {
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = GenerateYAML(validYAML, "admin-alpine", "")
+	}
+}
+
 func BenchmarkVersion(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {

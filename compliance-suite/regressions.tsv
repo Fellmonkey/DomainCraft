@@ -99,3 +99,6 @@ pkg/textutil/textutil_test.go::TestIdentifierTransformsMatchReference	#review	id
 cmd/wasm-validator/api_test.go::TestWasmApiContracts	#review	WASM export refactor changed the JSON shape returned to the GUI
 cmd/wasm-validator/api_test.go::TestResultCacheAlternatingInputs	#review	interleaved cached goValidate/goParseDomain calls returned a stale schema
 internal/specmeta/specmeta_test.go::TestSplitRespectingQuotesFastPathMatchesSlow	#review	modifier splitter fast path changed quote or bracket handling
+internal/renderer/memory_test.go::TestRenderMemoryMatchesDisk	#review	in-memory renderer produced files different from the CLI renderer
+internal/renderer/memory_test.go::TestRenderMemoryRejectsEscapingTarget	#review	a template target could escape the generated project root in browser generation
+cmd/wasm-validator/api_test.go::TestGenerateYAML	#review	goGenerate had no native contract test for generated files

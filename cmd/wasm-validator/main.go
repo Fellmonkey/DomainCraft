@@ -15,6 +15,7 @@ func main() {
 	js.Global().Set("goValidate", js.FuncOf(validate))
 	js.Global().Set("goParseField", js.FuncOf(parseField))
 	js.Global().Set("goParseDomain", js.FuncOf(parseDomain))
+	js.Global().Set("goGenerate", js.FuncOf(generate))
 	js.Global().Set("goSpecmeta", js.FuncOf(specmetaFunc))
 	js.Global().Set("goVersion", js.FuncOf(versionFunc))
 	<-c
@@ -69,4 +70,23 @@ func parseDomain(_ js.Value, args []js.Value) any {
 		return FieldErrorResult(err.Error())
 	}
 	return ParseDomainYAML(input)
+}
+
+func generate(_ js.Value, args []js.Value) any {
+	input, err := stringArg(args, 0, "YAML input")
+	if err != nil {
+		return FieldErrorResult(err.Error())
+	}
+	bridgeRef, err := stringArg(args, 1, "bridge")
+	if err != nil {
+		return FieldErrorResult(err.Error())
+	}
+	packages := ""
+	if len(args) > 2 {
+		packages, err = stringArg(args, 2, "packages")
+		if err != nil {
+			return FieldErrorResult(err.Error())
+		}
+	}
+	return GenerateYAML(input, bridgeRef, packages)
 }

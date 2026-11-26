@@ -4,7 +4,6 @@ package renderer
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 	"github.com/DomainCraft/DomainCraft/internal/ir"
-	"github.com/DomainCraft/DomainCraft/internal/packages"
 )
 
 // readBridgeSource reads a template, helper or mapping declared by bridge.yaml.
@@ -181,7 +179,7 @@ func (r *Renderer) parseHelpers(funcMap template.FuncMap) (*template.Template, e
 		if src.config.Helpers == "" {
 			continue
 		}
-		helperBytes, err := readBridgeSource(src.dir, src.config.Helpers)
+		helperBytes, err := readBridgeFile(src, src.config.Helpers)
 		if err != nil {
 			return nil, fmt.Errorf("read helpers %s: %w", src.config.Helpers, err)
 		}
@@ -274,7 +272,7 @@ func (r *Renderer) stageTemplates(s *renderSession) error {
 				continue
 			}
 
-			tplBytes, err := readBridgeSource(src.dir, spec.Source)
+			tplBytes, err := readBridgeFile(src, spec.Source)
 			if err != nil {
 				return s.fail(fmt.Errorf("read template %s: %w", spec.Source, err))
 			}
@@ -631,70 +629,6 @@ func (r *Renderer) shouldRenderContext(spec TemplateSpec, context RenderContext)
 		return true
 	}
 	return entry.eval(context, name)
-}
-
-// resolvePackages resolves all package versions from the package registry,
-// cached per bridge so repeated runs don't hit the registry every time.
-// When the renderer is composed (extends chain), registry_packages from all
-// bridges are merged base-first so inner layers can declare their own
-// dependencies; the adapter's values win on conflicts.
-// targetFramework returns the project's declared platform, then the framework
-// declared by the bridge chain (adapter first, base later). An absent framework
-// leaves version selection unconstrained — the core bakes in no TFM.
-func (r *Renderer) targetFramework(project *ir.Project) string {
-	if project != nil && project.Platform != "" {
-		return project.Platform
-	}
-	for _, src := range slices.Backward(r.sources) {
-		if fw := src.config.TargetFramework; fw != "" {
-			return fw
-		}
-	}
-	return ""
-}
-
-func (r *Renderer) resolvePackages(project *ir.Project) map[string]string {
-	framework := r.targetFramework(project)
-
-	// Merge registry_packages from all sources in the chain (base-first,
-	// adapter wins on conflicts — consistent with type_mappings merge).
-	merged := make(map[string]string)
-	for _, src := range r.sources {
-		maps.Copy(merged, src.config.RegistryPackages)
-	}
-	if len(merged) == 0 {
-		return nil
-	}
-
-	// Use the adapter's registry_url; fall back to any source with one.
-	registryURL := r.config().RegistryURL
-	if registryURL == "" {
-		for _, src := range slices.Backward(r.sources) {
-			if src.config.RegistryURL != "" {
-				registryURL = src.config.RegistryURL
-				break
-			}
-		}
-	}
-	if registryURL == "" {
-		r.log.Warn("no registry_url configured in any bridge in the chain; skipping package resolution")
-		return nil
-	}
-
-	result := make(map[string]string, len(merged))
-	for _, key := range slices.Sorted(maps.Keys(merged)) {
-		packageID := merged[key]
-		version, err := packages.ResolveVersionCachedForFramework(r.cacheNamespace(), registryURL, packageID, framework)
-		if err != nil {
-			// A cache-write failure still carries the resolved version; warn
-			// once and use it instead of emitting a package-less project.
-			r.log.Warn("failed to resolve package %s: %v", packageID, err)
-		}
-		if version != "" {
-			result[key] = version
-		}
-	}
-	return result
 }
 
 // cacheNamespace returns a stable, filesystem-safe identifier for this bridge,

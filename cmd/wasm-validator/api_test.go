@@ -115,6 +115,40 @@ func TestVersion(t *testing.T) {
 	}
 }
 
+func TestGenerateYAML(t *testing.T) {
+	result := GenerateYAML(validYAML, "admin-alpine", "")
+	var got generateResult
+	if err := json.Unmarshal([]byte(result), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Error != "" {
+		t.Fatalf("GenerateYAML() error = %q", got.Error)
+	}
+	if len(got.Files) < 4 {
+		t.Fatalf("GenerateYAML() returned %d files, want at least 4", len(got.Files))
+	}
+	found := false
+	for _, f := range got.Files {
+		if f.Path == "admin/index.html" && strings.Contains(f.Content, "Bench") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("GenerateYAML() did not render admin/index.html: %d files", len(got.Files))
+	}
+}
+
+func TestGenerateYAMLRejectsBadBridge(t *testing.T) {
+	result := GenerateYAML(validYAML, "does-not-exist", "")
+	var got generateResult
+	if err := json.Unmarshal([]byte(result), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Error == "" {
+		t.Fatal("GenerateYAML accepted an unknown bridge")
+	}
+}
+
 // TestWasmApiContracts pins the exact JSON returned by every WASM export.
 // A shape change here breaks the Studio bridge even when tests that unmarshal
 // loosely still pass.
