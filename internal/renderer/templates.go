@@ -18,7 +18,7 @@ import (
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
 	"github.com/DomainCraft/DomainCraft/pkg/textutil"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // seedKind is the language-agnostic value kind of a seed field. It is derived

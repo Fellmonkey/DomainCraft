@@ -13,7 +13,7 @@ components whose terms matter for redistribution.
 | Component | Licence |
 |-----------|---------|
 | `github.com/spf13/cobra` (CLI framework) | Apache-2.0 |
-| `gopkg.in/yaml.v3` (YAML parsing) | MIT & Apache-2.0 |
+| `go.yaml.in/yaml/v3` (YAML parsing) | MIT & Apache-2.0 |
 | `golang.org/x/term` (terminal detection) | BSD-3-Clause |
 | SnakeCase/KebabCase word-splitting algorithm derived from `github.com/huandu/xstrings` (in `pkg/textutil`) | MIT |
 

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/DomainCraft/DomainCraft/internal/specmeta"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // RawSchema represents the root structure of domain.yaml

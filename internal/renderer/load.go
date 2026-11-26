@@ -13,7 +13,7 @@ import (
 	"github.com/DomainCraft/DomainCraft/internal/ir"
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // sourceConfig is one bridge directory plus its parsed bridge.yaml. A composed

@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	"github.com/DomainCraft/DomainCraft/internal/specmeta"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // CoreContractVersion is the bridge-contract version the current core

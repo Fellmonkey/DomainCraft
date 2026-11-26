@@ -21,7 +21,7 @@ import (
 	"github.com/DomainCraft/DomainCraft/internal/seed"
 	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 	"github.com/DomainCraft/DomainCraft/internal/validator"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 type validationError struct {

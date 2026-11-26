@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 func TestParseStrictRejectsUnknownKeys(t *testing.T) {
@@ -792,7 +792,7 @@ entities:
 }
 
 // TestParseDuplicateEntity verifies that a duplicate entity key in the
-// `entities` mapping is rejected by the YAML decoder (gopkg.in/yaml.v3 reports
+// `entities` mapping is rejected by the YAML decoder (go.yaml.in/yaml/v3 reports
 // "mapping key ... already defined") rather than silently overwriting the
 // earlier definition. Unlike field keys (decoded by the custom RawEntity
 // UnmarshalYAML, which used to drop duplicates into FieldOrder), entity keys
