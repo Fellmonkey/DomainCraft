@@ -10,30 +10,69 @@ on:
 permissions:
   contents: write
 
+env:
+  GO_VERSION: '1.27.4'
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  verify:
+    name: Verify tagged commit
+    # A tag can be pushed without a preceding green main CI run. Run the same
+    # gates as ci.yml before allowing a release to be published.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Check go.mod/go.sum are tidy
+        run: make check-tidy
+
+      - name: Lint
+        run: make lint
+
+      - name: Vulnerability scan
+        run: make vulncheck
+
+      - name: Verify generated schema is up to date
+        run: |
+          go run ./cmd/schema-gen -o "$RUNNER_TEMP/domain.schema.json"
+          diff -u spec/domain.schema.json "$RUNNER_TEMP/domain.schema.json"
+
+      - name: Build WASM validator (js/wasm smoke)
+        run: GOOS=js GOARCH=wasm go build -o "$RUNNER_TEMP/validate.wasm" ./cmd/wasm-validator
+
+      - name: Test
+        env:
+          DOMAINCRAFT_LOCAL_DEV: ""
+        run: go test -race -count=1 -shuffle=on ./...
+
   build-and-release:
     name: Build binaries and publish release
+    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.27.4'
+          go-version: ${{ env.GO_VERSION }}
           cache: true
           cache-dependency-path: go.sum
-
-      - name: Verify the tagged commit passes tests
-        # A tag can be pushed without a preceding green main CI run.
-        run: go test -race -count=1 -shuffle=on ./...
 
       - name: Build all platforms
         run: |
@@ -52,7 +91,7 @@ jobs:
 
       - name: Publish GitHub Release
         if: github.event_name == 'push'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           files: |

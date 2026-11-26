@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,9 +88,26 @@ entities:
 	cmd.SetErr(stderr)
 	cmd.SetArgs([]string{"generate", "--domain", domainPath, "--bridge", bridgeDir, "--output", outputDirPath})
 
-	// Should fail because bridge doesn't exist
-	if err := cmd.Execute(); err == nil {
-		t.Fatalf("generate command should fail with nonexistent bridge")
+	// executeRoot (not cmd.Execute) is the path that prints the single error
+	// to stderr and tags CLI misuse with errUsage (exit code 2 in main).
+	err := executeRoot(cmd)
+	if err == nil {
+		t.Fatal("generate command should fail with nonexistent bridge")
+	}
+	if !errors.Is(err, errUsage) {
+		t.Errorf("error = %v, want usage error (exit code 2)", err)
+	}
+	if !strings.Contains(stderr.String(), "bridge") {
+		t.Errorf("stderr does not name the bridge: %q", stderr.String())
+	}
+	// Bridge resolution fails before the renderer runs, so no files may land
+	// in the requested output directory.
+	if entries, readErr := os.ReadDir(outputDirPath); readErr == nil {
+		if len(entries) != 0 {
+			t.Errorf("output dir has %d entries after a usage error: %v", len(entries), entries)
+		}
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		t.Fatalf("read output dir: %v", readErr)
 	}
 }
 

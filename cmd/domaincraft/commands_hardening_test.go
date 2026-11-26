@@ -96,12 +96,14 @@ func TestMigrationCleanupDeferredOnTTYWhenNonInteractive(t *testing.T) {
 		var logOut bytes.Buffer
 		log := logger.New()
 		log.SetWriter(&logOut)
+		cmd := &cobra.Command{}
 		var fileOut bytes.Buffer
+		cmd.SetOut(&fileOut)
 
-		mc := migrationContext{opts: opts, fresh: map[string]bool{}, log: log, out: &fileOut}
-		applied, err := handleDeletedEntity(&mc, snapshotDeleted(rel))
+		diff := &snapshot.Diff{Deleted: []snapshot.DeletedEntity{snapshotDeleted(rel)}}
+		applied, err := applyMigrationActions(opts, diff, map[string]bool{}, log, cmd)
 		if err != nil || applied {
-			t.Fatalf("handleDeletedEntity = %v, %v; want false, nil", applied, err)
+			t.Fatalf("applyMigrationActions = %v, %v; want false, nil", applied, err)
 		}
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel))); err != nil {
 			t.Errorf("orphaned file was touched: %v", err)
@@ -172,20 +174,21 @@ func TestCleanupDeferred(t *testing.T) {
 func TestPruneRejectsScaffoldReplaceEscape(t *testing.T) {
 	run := func(t *testing.T, output, oldRel, newRel string) {
 		t.Helper()
-		mc := migrationContext{
-			opts:  &cliOptions{outputDir: output, prune: true},
-			fresh: map[string]bool{newRel: true}, // scaffolded destination triggers the replace path
-			log:   logger.New(),
-			out:   &bytes.Buffer{},
-		}
+		opts := &cliOptions{outputDir: output, prune: true}
 		ren := snapshot.Rename{
 			OldName: "Old",
 			NewName: "New",
 			Files:   []snapshot.FileRef{{Path: oldRel, Custom: true}},
 		}
-		applied, err := handleRename(&mc, ren, &snapshot.Diff{})
+		diff := &snapshot.Diff{Renamed: []snapshot.Rename{ren}}
+		// The scaffolded destination is marked as freshly written, which
+		// triggers the replace path in the rename handler.
+		fresh := map[string]bool{newRel: true}
+		cmd := &cobra.Command{}
+		cmd.SetOut(&bytes.Buffer{})
+		applied, err := applyMigrationActions(opts, diff, fresh, logger.New(), cmd)
 		if applied || err == nil {
-			t.Fatalf("handleRename = %v, %v; want a hard error under --prune", applied, err)
+			t.Fatalf("applyMigrationActions = %v, %v; want a hard error under --prune", applied, err)
 		}
 		if !strings.Contains(err.Error(), "replace scaffolded") {
 			t.Errorf("err = %v, want it to name the scaffold replacement", err)
@@ -418,6 +421,20 @@ func TestRunDatabaseMigrationsSanitizesDisplayedCommand(t *testing.T) {
 	}
 }
 
+func TestSanitizeStreamChunk(t *testing.T) {
+	in := "line \x1b[31mRED\x1b[0m\n\u202ehidden\u2066\tend"
+	got := sanitizeStreamChunk(in)
+	if strings.Contains(got, "\x1b") {
+		t.Errorf("ANSI escape reached output: %q", got)
+	}
+	if !strings.Contains(got, "\n") || !strings.Contains(got, "\t") {
+		t.Errorf("line breaks or tabs were lost: %q", got)
+	}
+	if !strings.Contains(got, "<U+202E>") {
+		t.Errorf("bidi control was not made visible: %q", got)
+	}
+}
+
 // stubMigrationExec swaps the child-process constructor for one test. Tests in
 // this package are not parallel, so swapping the seam is race-free.
 func stubMigrationExec(t *testing.T, fn func(context.Context, string, ...string) *exec.Cmd) {
@@ -495,8 +512,9 @@ func TestRunDatabaseMigrationsUsesOutputDir(t *testing.T) {
 	if captured.Dir != outDir {
 		t.Errorf("command Dir = %q, want %q", captured.Dir, outDir)
 	}
-	if captured.Stdout != &stderr || captured.Stderr != &stderr {
-		t.Errorf("child streams = (%v, %v), want both on cmd stderr", captured.Stdout, captured.Stderr)
+	// Child output is buffered for sanitization and then written to cmd stderr.
+	if captured.Stdout == nil || captured.Stderr == nil || captured.Stdout != captured.Stderr {
+		t.Errorf("child streams = (%v, %v), want one shared sanitizing buffer", captured.Stdout, captured.Stderr)
 	}
 	if stdout.Len() != 0 {
 		t.Errorf("migration diagnostics leaked into stdout: %q", stdout.String())
@@ -678,15 +696,17 @@ func TestRootCommandSuppressesCobraErrorNoise(t *testing.T) {
 		name    string
 		command string // empty = root
 		args    []string
+		admin   bool // --admin flag is present, so one positional arg is its value
 		wantErr bool
 	}{
-		{"root rejects positional argument", "", []string{"extra"}, true},
-		{"validate rejects positional argument", "validate", []string{"extra"}, true},
-		{"bridges rejects positional argument", "bridges", []string{"extra"}, true},
-		{"update rejects positional argument", "update", []string{"extra"}, true},
-		{"init rejects positional argument", "init", []string{"extra"}, true},
-		{"generate allows one admin argument", "generate", []string{"admin-alpine"}, false},
-		{"generate rejects two arguments", "generate", []string{"a", "b"}, true},
+		{"root rejects positional argument", "", []string{"extra"}, false, true},
+		{"validate rejects positional argument", "validate", []string{"extra"}, false, true},
+		{"bridges rejects positional argument", "bridges", []string{"extra"}, false, true},
+		{"update rejects positional argument", "update", []string{"extra"}, false, true},
+		{"init rejects positional argument", "init", []string{"extra"}, false, true},
+		{"generate rejects bare positional argument", "generate", []string{"admin-alpine"}, false, true},
+		{"generate allows one admin argument", "generate", []string{"admin-alpine"}, true, false},
+		{"generate rejects two arguments", "generate", []string{"a", "b"}, false, true},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -703,6 +723,11 @@ func TestRootCommandSuppressesCobraErrorNoise(t *testing.T) {
 					t.Fatalf("subcommand %q not found", tt.command)
 				}
 				cmd = found
+			}
+			if tt.admin {
+				if err := cmd.Flags().Set("admin", "admin-alpine"); err != nil {
+					t.Fatal(err)
+				}
 			}
 			err := cmd.Args(cmd, tt.args)
 			if tt.wantErr != (err != nil) {

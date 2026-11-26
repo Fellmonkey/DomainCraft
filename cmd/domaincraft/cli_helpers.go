@@ -31,9 +31,7 @@ func applyAddons(opts *cliOptions, project *ir.Project, log *logger.Logger) {
 			project.Addons[addon] = true
 			continue
 		}
-		if log != nil {
-			log.Warn("unknown addon %q ignored; valid addons: %s", addon, strings.Join(specmeta.Addons, ", "))
-		}
+		log.Warn("unknown addon %q ignored; valid addons: %s", addon, strings.Join(specmeta.Addons, ", "))
 	}
 }
 

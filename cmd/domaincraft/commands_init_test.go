@@ -11,6 +11,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestRenderScenarioRejectsControlCharacters(t *testing.T) {
+	for _, name := range []string{"bad\nname", "bad\rname", "bad\x00name"} {
+		if _, err := renderScenario("shop", name); err == nil {
+			t.Errorf("renderScenario(%q) accepted a control character", name)
+		}
+	}
+	if _, err := renderScenario("shop", "O'Brien"); err != nil {
+		t.Errorf("valid name with an apostrophe was rejected: %v", err)
+	}
+}
+
 func runInit(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	cmd := newRootCommand()

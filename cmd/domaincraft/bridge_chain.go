@@ -23,6 +23,7 @@ type commandContext struct {
 	log               *logger.Logger
 	chainHasCommunity bool
 	cleanupApplied    bool
+	migrationsPlanned bool
 }
 
 // newBridgeResolver builds a resolver with the CLI's bridge cache/update options.
@@ -95,7 +96,6 @@ func parseReplaceFlags(raw []string) ([]replaceEntry, error) {
 	return out, nil
 }
 
-
 // resolveChainWithReplacements resolves the extends chain with --replace overrides.
 // It returns the (possibly replaced) entry dir and base paths outermost-first.
 func resolveChainWithReplacements(opts *cliOptions, entryDir string, reps []replaceEntry, log *logger.Logger) (string, []string, error) {
@@ -122,7 +122,7 @@ func resolveChainWithReplacements(opts *cliOptions, entryDir string, reps []repl
 		return entryDir, bases, err
 	}
 	resolver := newBridgeResolver(opts, log)
-	fullChain, err := bridgechain.Walk(entryDir, entryDir, newBridgeResolver(opts, log), log)
+	fullChain, err := bridgechain.Walk(entryDir, entryDir, resolver, log)
 	if err != nil {
 		return "", nil, err
 	}
@@ -161,7 +161,7 @@ func resolveChainWithReplacements(opts *cliOptions, entryDir string, reps []repl
 			log.Warn("layer mismatch: replacing %q (layer=%q) with %q (layer=%q)", rep.left, targetLayer, rightMeta.Name, rightMeta.Layer)
 		}
 		// Build replacement's full chain top-first.
-		rightChain, err := bridgechain.Walk(rightPath, rightPath, newBridgeResolver(opts, log), log)
+		rightChain, err := bridgechain.Walk(rightPath, rightPath, resolver, log)
 		if err != nil {
 			return "", nil, err
 		}
@@ -171,16 +171,17 @@ func resolveChainWithReplacements(opts *cliOptions, entryDir string, reps []repl
 		newChain = append(newChain, rightChain...)
 		// Validate no duplicate layer and no cycle.
 		seenLayer := make(map[string]string)
-		seenPaths := make([]string, 0, len(newChain))
+		seenPaths := make(map[string]bool, len(newChain))
 		for _, d := range newChain {
 			abs, err := filepath.Abs(d)
 			if err != nil {
 				return "", nil, fmt.Errorf("resolve absolute bridge path %q: %w", d, err)
 			}
-			if slices.ContainsFunc(seenPaths, func(seen string) bool { return bridge.SamePath(seen, abs) }) {
+			key := bridge.PathKey(abs)
+			if seenPaths[key] {
 				return "", nil, asUsageError(fmt.Errorf("bridge `extends` cycle detected at %q", d))
 			}
-			seenPaths = append(seenPaths, abs)
+			seenPaths[key] = true
 			m, err := metaFor(d)
 			if err != nil {
 				return "", nil, fmt.Errorf("read layer of %s: %w", d, err)
@@ -281,9 +282,7 @@ func bridgeEnsureOptions(cli *cliOptions, log *logger.Logger) *bridge.EnsureOpti
 			return true, nil
 		}
 	case !cli.nonInteractive && isTerminal():
-		opts.ConfirmUpdate = func(entry bridge.RegistryEntry, u *bridge.Update) (bool, error) {
-			return interactive.PromptBridgeUpdate(entry, u)
-		}
+		opts.ConfirmUpdate = interactive.PromptBridgeUpdate
 	default:
 		// Non-interactive (even on a TTY) without the flag: keep the cached
 		// copy; the bridge package logs a warning pointing at --update-bridges.

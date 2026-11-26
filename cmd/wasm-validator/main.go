@@ -5,6 +5,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"syscall/js"
 
 	"github.com/DomainCraft/DomainCraft/internal/lexer"
@@ -45,13 +46,27 @@ func specmetaFunc(_ js.Value, _ []js.Value) any {
 	return marshal(specmeta.JSON())
 }
 
+// stringArg validates the JS API contract. Without a type check an object
+// becomes "[object Object]" and surfaces as a confusing parse error in the GUI.
+func stringArg(args []js.Value, i int, label string) (string, error) {
+	if len(args) <= i {
+		return "", fmt.Errorf("no %s provided", label)
+	}
+	if args[i].Type() != js.TypeString {
+		return "", fmt.Errorf("%s must be a string", label)
+	}
+	return args[i].String(), nil
+}
+
 func validate(_ js.Value, args []js.Value) any {
-	if len(args) < 1 {
+	raw, err := stringArg(args, 0, "YAML input")
+	if err != nil {
 		return marshal(validationResult{
-			Errors: []validationError{{Message: "no YAML input provided"}},
+			Errors: []validationError{{Message: err.Error()}},
+			Parse:  true,
 		})
 	}
-	schema, err := parser.ParseYAML([]byte(args[0].String()))
+	schema, err := parser.ParseYAML([]byte(raw))
 	if err != nil {
 		return marshal(validationResult{
 			Errors: []validationError{{Message: err.Error()}},
@@ -72,13 +87,16 @@ func validate(_ js.Value, args []js.Value) any {
 }
 
 func parseField(_ js.Value, args []js.Value) any {
-	if len(args) < 1 {
-		return marshal(map[string]string{"error": "no field definition provided"})
+	def, err := stringArg(args, 0, "field definition")
+	if err != nil {
+		return marshal(map[string]string{"error": err.Error()})
 	}
-	def := args[0].String()
 	name := ""
 	if len(args) > 1 {
-		name = args[1].String()
+		name, err = stringArg(args, 1, "field name")
+		if err != nil {
+			return marshal(map[string]string{"error": err.Error()})
+		}
 	}
 	fd, err := lexer.ParseFieldString(def)
 	if err != nil {
@@ -89,10 +107,11 @@ func parseField(_ js.Value, args []js.Value) any {
 }
 
 func parseDomain(_ js.Value, args []js.Value) any {
-	if len(args) < 1 {
-		return marshal(map[string]string{"error": "no YAML input provided"})
+	input, err := stringArg(args, 0, "YAML input")
+	if err != nil {
+		return marshal(map[string]string{"error": err.Error()})
 	}
-	raw, err := parser.ParseRawSchema([]byte(args[0].String()))
+	raw, err := parser.ParseRawSchema([]byte(input))
 	if err != nil {
 		return marshal(map[string]string{"error": err.Error()})
 	}
@@ -102,7 +121,7 @@ func parseDomain(_ js.Value, args []js.Value) any {
 func marshal(v any) string {
 	data, err := json.Marshal(v)
 	if err != nil {
-		data, _ = json.Marshal(map[string]string{"error": "marshal failed"})
+		data, _ = json.Marshal(map[string]string{"error": "marshal failed: " + err.Error()})
 	}
 	return string(data)
 }

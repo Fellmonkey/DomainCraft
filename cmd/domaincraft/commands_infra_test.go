@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -19,10 +20,14 @@ func TestBuildStampsOnlyExactTags(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(data)
-	if strings.Contains(body, "describe --tags --abbrev=0") {
+	// Whitespace between the git arguments is formatting, not policy: both
+	// checks stay token-exact (abbrev is still forbidden, exact-match required).
+	abbrevTag := regexp.MustCompile(`describe\s+--tags\s+--abbrev(?:=|\s+)`)
+	if abbrevTag.MatchString(body) {
 		t.Fatal("Makefile still stamps the nearest tag onto an untagged commit")
 	}
-	if !strings.Contains(body, "describe --tags --exact-match") {
+	exactTag := regexp.MustCompile(`describe\s+--tags\s+--exact-match\b`)
+	if !exactTag.MatchString(body) {
 		t.Fatal("Makefile does not use an exact tag match")
 	}
 }
@@ -33,7 +38,8 @@ func TestToolVersionsLiveInMakefile(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(ci)
-	if strings.Contains(body, "golangci-lint-action@") || strings.Contains(body, "govulncheck@v") {
+	duplicatedTool := regexp.MustCompile(`golangci-lint-action\s*@|govulncheck\s*@v`)
+	if duplicatedTool.MatchString(body) {
 		t.Fatal("CI still duplicates tool versions instead of calling the Makefile targets")
 	}
 }
@@ -43,7 +49,10 @@ func TestReleaseUsesSameTestGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "go test -race -count=1 -shuffle=on ./...") {
+	// \s+ tolerates reformatting while the flag values stay exact: -count=10
+	// or -shuffle=only must not satisfy this gate.
+	ciTestFlags := regexp.MustCompile(`go\s+test\s+-race\s+-count=1\s+-shuffle=on\s+\./\.\.\.`)
+	if !ciTestFlags.MatchString(string(data)) {
 		t.Fatal("release workflow does not use the CI test flags")
 	}
 }
@@ -53,7 +62,8 @@ func TestMainPackageHasSingleDocComment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(data), "// Package main") {
+	packageDoc := regexp.MustCompile(`//\s+Package\s+main\b`)
+	if packageDoc.MatchString(string(data)) {
 		t.Fatal("main.go repeats the package doc comment from commands.go")
 	}
 }

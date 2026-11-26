@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	assetURLBase = "https://github.com/DomainCraft/DomainCraft/releases/download/v1.2.0/"
+	assetURLBase = "https://github.com/" + coreRepo + "/releases/download/v1.2.0/"
 )
 
 func updateAssetURL(name string) string { return assetURLBase + name }
@@ -113,6 +113,23 @@ func TestRedactURL(t *testing.T) {
 				t.Errorf("netutil.RedactedURL = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestValidateReleaseRedirectRejectsCredentials(t *testing.T) {
+	u, err := url.Parse("https://user:secret@objects.githubusercontent.com/asset")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateReleaseRedirect(u); err == nil {
+		t.Fatal("redirect with userinfo was accepted")
+	}
+	clean, err := url.Parse("https://objects.githubusercontent.com/asset?sig=abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateReleaseRedirect(clean); err != nil {
+		t.Fatalf("signed asset redirect rejected: %v", err)
 	}
 }
 

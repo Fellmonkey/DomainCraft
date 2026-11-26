@@ -17,6 +17,9 @@ on:
 permissions:
   contents: read
 
+env:
+  GO_VERSION: '1.27.4'
+
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -35,12 +38,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.27.4'
+          go-version: ${{ env.GO_VERSION }}
           cache: true
           cache-dependency-path: go.sum
 
@@ -76,12 +79,12 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.27.4'
+          go-version: ${{ env.GO_VERSION }}
           cache: true
           cache-dependency-path: go.sum
 
@@ -89,9 +92,7 @@ jobs:
         run: go mod download
 
       - name: Check go.mod/go.sum are tidy
-        run: |
-          go mod tidy
-          git diff --exit-code -- go.mod go.sum
+        run: make check-tidy
 
       - name: Lint
         # Same command as the local gate; the version lives in the Makefile.
@@ -102,12 +103,12 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.27.4'
+          go-version: ${{ env.GO_VERSION }}
           cache: true
           cache-dependency-path: go.sum
 
@@ -122,12 +123,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.27.4'
+          go-version: ${{ env.GO_VERSION }}
           cache: true
           cache-dependency-path: go.sum
 

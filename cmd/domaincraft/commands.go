@@ -21,7 +21,6 @@ import (
 	"regexp"
 	"runtime/debug"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/DomainCraft/DomainCraft/internal/bridge"
@@ -230,9 +229,7 @@ func newRootCommand() *cobra.Command {
 // commandLogger returns a logger writing to the command's error stream. CLI
 // progress and diagnostics are not data; stdout stays usable for piping.
 func commandLogger(cmd *cobra.Command) *logger.Logger {
-	log := logger.New()
-	log.SetWriter(cmd.ErrOrStderr())
-	return log
+	return logger.NewWithWriter(cmd.ErrOrStderr())
 }
 
 // --- validate ---
@@ -263,17 +260,30 @@ func newGenerateCmd(opts *cliOptions) *cobra.Command {
 		Short: "Generate code from domain.yaml",
 		Long:  "Parse domain.yaml, build IR, and render code via the selected bridge.\nIf --bridge is omitted, an interactive selection menu is shown.\nUse --admin to also generate an admin panel (optionally specify a bridge ID).",
 		// One positional argument is the optional value of `--admin <id>`;
-		// `generate` itself takes none. runGenerate validates that pairing.
-		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runGenerate(opts, cmd, args)
+		// `generate` itself takes none. Validate the pairing here, before
+		// RunE writes any files.
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return nil
+			}
+			if err := cobra.MaximumNArgs(1)(cmd, args); err != nil {
+				return err
+			}
+			if !cmd.Flags().Changed("admin") || opts.adminBridge != "admin-alpine" {
+				return asUsageError(fmt.Errorf("unexpected positional argument %q: use --admin <bridge-id>", args[0]))
+			}
+			opts.adminBridge = args[0]
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runGenerate(opts, cmd)
 		},
 	}
 
 	// --admin [bridge-id] — optional value, defaults to "admin-alpine" when flag
 	// is present without a value. NoOptDefVal is used for the default, and the
-	// RunE handler reclaims a space-separated value from args so both
-	// `--admin <id>` and `--admin=<id>` work.
+	// Args validator reclaims a space-separated value so both `--admin <id>`
+	// and `--admin=<id>` work.
 	cmd.Flags().StringVar(&opts.adminBridge, "admin", "", "generate admin panel (optionally specify bridge ID, default: admin-alpine)")
 	cmd.Flags().Lookup("admin").NoOptDefVal = "admin-alpine"
 	// --prune — automatically delete/rename orphaned files without prompting (CI).
@@ -287,9 +297,9 @@ func newGenerateCmd(opts *cliOptions) *cobra.Command {
 }
 
 // loadAndValidateDomain parses and validates domain.yaml, then builds the IR
-// and applies addons. resolveBridge is called between validation and IR
+// and applies addons. Bridge resolution stays between validation and IR
 // building so prompts, log lines and errors keep their original order.
-func loadAndValidateDomain(opts *cliOptions, cmd *cobra.Command, log *logger.Logger, resolveBridge func() (string, error)) (*ir.Project, string, error) {
+func loadAndValidateDomain(opts *cliOptions, cmd *cobra.Command, log *logger.Logger) (*ir.Project, string, error) {
 	log.Info("Parsing %s", opts.domainFile)
 	schema, err := loadAndValidate(opts, cmd)
 	if err != nil {
@@ -297,10 +307,11 @@ func loadAndValidateDomain(opts *cliOptions, cmd *cobra.Command, log *logger.Log
 	}
 	log.Success("Schema valid (%d entities)", len(schema.Entities))
 
-	bridgeName, err := resolveBridge()
+	bridgePath, bridgeName, err := resolveBridgeInteractive(opts, log)
 	if err != nil {
 		return nil, "", err
 	}
+	opts.bridgePath = bridgePath
 
 	log.Info("Building IR")
 	irProject, err := ir.Build(schema)
@@ -313,18 +324,18 @@ func loadAndValidateDomain(opts *cliOptions, cmd *cobra.Command, log *logger.Log
 
 // runGenerate is shared by `generate` and `init --bridge` so both paths go
 // through the same validation, rendering and migration pipeline.
-func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
+func runGenerate(opts *cliOptions, cmd *cobra.Command) error {
 	log := commandLogger(cmd)
 	ctx := &commandContext{opts: opts, cmd: cmd, log: log}
 
-	irProject, bridgeName, err := loadAndValidateDomain(opts, cmd, log, func() (string, error) {
-		resolvedPath, name, err := resolveBridgeInteractive(opts, log)
-		if err != nil {
-			return "", err
-		}
-		opts.bridgePath = resolvedPath
-		return name, nil
-	})
+	// Flag syntax is checked before reading the domain, prompting the user,
+	// building the IR or cloning a bridge.
+	replacements, err := parseReplaceFlags(opts.replaceFlags)
+	if err != nil {
+		return asUsageError(err)
+	}
+
+	irProject, bridgeName, err := loadAndValidateDomain(opts, cmd, log)
 	if err != nil {
 		return err
 	}
@@ -335,7 +346,7 @@ func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load schema snapshot: %w", err)
 	}
-	migrationDiff := snapshot.ComputeDiff(oldSnapshot, irProject, opts.outputDir)
+	migrationDiff := snapshot.ComputeDiff(oldSnapshot, irProject, opts.outputDir, log.Warn)
 
 	// --- Abstract schema migration plan (smart core / dumb bridge) ---
 	// The core compares the previous model against the current one and
@@ -349,11 +360,6 @@ func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
 	seedData := seed.Normalize(irProject)
 	mockDataset := seed.Generate(irProject, seed.Options{})
 
-	// Parse --replace flags (layer|bridgeId=bridgeRef).
-	replacements, err := parseReplaceFlags(opts.replaceFlags)
-	if err != nil {
-		return asUsageError(err)
-	}
 	// Resolve extends chain with optional node replacements.
 	newBridgePath, basePaths, err := resolveChainWithReplacements(opts, opts.bridgePath, replacements, log)
 	if err != nil {
@@ -372,8 +378,11 @@ func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
 			break
 		}
 	}
-	log.Info("Rendering via %s", opts.bridgePath)
-	writtenFiles, manifest, rendererInstance, err := renderBridge(irProject, renderOptions{
+	ctx.chainHasCommunity = chainHasCommunity
+	// Build the renderer before writing anything so the consent decision can
+	// be made up front: a rejected --migrate must not leave generated files
+	// or pruned files behind.
+	rendererInstance, err := newBridgeRenderer(renderOptions{
 		path:        opts.bridgePath,
 		outDir:      opts.outputDir,
 		bases:       basePaths,
@@ -385,11 +394,20 @@ func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := planBridgeMigrations(ctx, migrationDiff, rendererInstance.MigrationConfig()); err != nil {
+		return err
+	}
+
+	log.Info("Rendering via %s", opts.bridgePath)
+	writtenFiles, manifest, err := rendererInstance.Render(irProject, opts.outputDir)
+	if err != nil {
+		return err
+	}
 
 	log.Success("Generated %d file(s) into %s", len(writtenFiles), opts.outputDir)
 
 	// --- Admin panel generation ---
-	adminManifest, err := generateAdminPanel(ctx, args, irProject, seedData, mockDataset)
+	adminManifest, err := generateAdminPanel(ctx, irProject, seedData, mockDataset)
 	if err != nil {
 		return err
 	}
@@ -402,15 +420,14 @@ func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
 	}
 
 	// --- Database migrations ---
-	ctx.chainHasCommunity = chainHasCommunity
 	ctx.cleanupApplied = applied
-	if err := runBridgeDatabaseMigrations(ctx, migrationDiff, rendererInstance.MigrationConfig()); err != nil {
+	if err := runBridgeDatabaseMigrations(ctx, rendererInstance.MigrationConfig()); err != nil {
 		return err
 	}
 
 	// --- Smart refactoring reports ---
-	// The warning goes to stderr; the multi-line report is command data and
-	// stays on stdout so it can be piped. Order is fixed for deterministic runs.
+	// Warnings and the multi-line reports are both human-facing diagnostics:
+	// they go to stderr so stdout stays usable for piping. Order is fixed.
 	for _, r := range []struct {
 		report  func() string
 		warning string
@@ -421,7 +438,7 @@ func runGenerate(opts *cliOptions, cmd *cobra.Command, args []string) error {
 	} {
 		if report := r.report(); report != "" {
 			log.Warn("%s", r.warning)
-			_, _ = fmt.Fprint(cmd.OutOrStdout(), report)
+			_, _ = fmt.Fprint(cmd.ErrOrStderr(), report)
 		}
 	}
 
@@ -476,36 +493,8 @@ func newBridgesCmd(opts *cliOptions) *cobra.Command {
 				strings.Repeat("-", 40),
 			)
 
-			// --check-updates probes every cached bridge over HTTP. Run the
-			// probes with bounded concurrency, then print in registry order so
-			// the output stays deterministic.
-			type statusRow struct {
-				entry  bridge.RegistryEntry
-				status bridge.Status
-			}
-			rows := make([]statusRow, len(entries))
-			if opts.checkUpdates {
-				const maxConcurrentProbes = 4
-				sem := make(chan struct{}, maxConcurrentProbes)
-				var wg sync.WaitGroup
-				for i, e := range entries {
-					wg.Add(1)
-					go func(i int, e bridge.RegistryEntry) {
-						defer wg.Done()
-						sem <- struct{}{}
-						defer func() { <-sem }()
-						rows[i] = statusRow{e, e.Status(true)}
-					}(i, e)
-				}
-				wg.Wait()
-			} else {
-				for i, e := range entries {
-					rows[i] = statusRow{e, e.Status(false)}
-				}
-			}
-
-			for _, row := range rows {
-				e, st := row.entry, row.status
+			for _, e := range entries {
+				st := e.Status(opts.checkUpdates)
 				source := "remote"
 				switch {
 				case st.Embedded && st.Cached:

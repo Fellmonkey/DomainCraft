@@ -28,7 +28,7 @@ import (
 // coreRepo is the GitHub owner/repo that publishes domaincraft releases.
 const coreRepo = "DomainCraft/DomainCraft"
 
-const releasesLatestURL = "https://api.github.com/repos/DomainCraft/DomainCraft/releases/latest"
+const releasesLatestURL = "https://api.github.com/repos/" + coreRepo + "/releases/latest"
 
 // checksumsAssetName is the release asset holding one SHA-256 digest per binary.
 const checksumsAssetName = "checksums.txt"
@@ -372,18 +372,23 @@ func verifyFileSHA256(path, want string) error {
 // release-host allowlist. Signed query strings on GitHub's asset redirects are
 // allowed here; validateReleaseURL still rejects them on URLs from release JSON.
 func validateReleaseRedirect(u *url.URL) error {
-	_, err := parseAllowedURL(u.String())
-	return err
+	if _, err := parseAllowedURL(u.String()); err != nil {
+		return err
+	}
+	// parseAllowedURL checks scheme/host/port only; credentials have the same
+	// meaning on a redirect as on a URL from release JSON.
+	if u.User != nil {
+		return fmt.Errorf("refusing release redirect with credentials")
+	}
+	return nil
 }
 
 // httpGetBody performs a GET bound to bridge.CommandContext() and returns the response body,
 // capping it at the configured maxBodyBytes. The shared helper owns the status check,
 // cap and redaction; this package supplies the client, context and redirect
 // policy.
-func httpGetBody(rawURL string) ([]byte, error) { return httpGetBodyWithOps(defaultUpdateOps(), rawURL) }
-
-func httpGetBodyWithOps(ops updateOps, rawURL string) ([]byte, error) {
-	return netutil.BoundedGet(bridge.CommandContext(), httpClient, rawURL, ops.maxBodyBytes, validateReleaseRedirect)
+func httpGetBody(rawURL string) ([]byte, error) {
+	return netutil.BoundedGet(bridge.CommandContext(), httpClient, rawURL, defaultUpdateOps().maxBodyBytes, validateReleaseRedirect)
 }
 
 // downloadBinaryWithOps fetches a release asset into a temp file in dir and

@@ -13,6 +13,18 @@ func TestNewWritesDiagnosticsToStderr(t *testing.T) {
 	}
 }
 
+// Colors are decided from the destination, not from the process stderr:
+// redirecting cmd.ErrOrStderr() to a buffer must never inject ANSI escapes
+// just because the test process was started in a terminal.
+func TestNewWithWriterNeverColorsBuffers(t *testing.T) {
+	var buf bytes.Buffer
+	log := NewWithWriter(&buf)
+	log.Info("plain")
+	if bytes.Contains(buf.Bytes(), []byte{0x1B}) {
+		t.Errorf("buffer received ANSI escapes: %q", buf.String())
+	}
+}
+
 func TestLoggerOmitsANSIWhenNotTTY(t *testing.T) {
 	// No t.Parallel: New() probes the process stderr and NO_COLOR, both global.
 	var buf bytes.Buffer

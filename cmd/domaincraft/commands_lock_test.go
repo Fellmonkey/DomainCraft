@@ -68,8 +68,8 @@ func TestWriteDomainLock(t *testing.T) {
 	if second.Path != "" || second.Source != "" {
 		t.Errorf("my-bridge should have neither path nor source: %+v", second)
 	}
-	if second.ContractVersion != 1 {
-		t.Errorf("my-bridge contract_version = %d, want default 1", second.ContractVersion)
+	if second.ContractVersion != 2 {
+		t.Errorf("my-bridge contract_version = %d, want default 2", second.ContractVersion)
 	}
 }
 

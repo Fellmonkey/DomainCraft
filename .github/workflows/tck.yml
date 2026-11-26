@@ -15,6 +15,9 @@ on:
 permissions:
   contents: read
 
+env:
+  GO_VERSION: '1.27.4'
+
 concurrency:
   group: tck-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -27,10 +30,13 @@ jobs:
       node: ${{ steps.scope.outputs.node }}
       k6: ${{ steps.scope.outputs.k6 }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
-      - uses: actions/setup-go@v5
-        with: { go-version: '1.27.4', cache: true, cache-dependency-path: go.sum }
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
       - name: Scope targets changed in this PR
         id: scope
         run: bash compliance-suite/tck.sh discover
@@ -45,10 +51,13 @@ jobs:
       matrix:
         target: ${{ fromJSON(needs.discover.outputs.node) }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with: { go-version: '1.27.4', cache: true, cache-dependency-path: go.sum }
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'npm'
@@ -66,10 +75,13 @@ jobs:
       matrix:
         target: ${{ fromJSON(needs.discover.outputs.k6) }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with: { go-version: '1.27.4', cache: true, cache-dependency-path: go.sum }
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'npm'
@@ -87,7 +99,7 @@ jobs:
       - name: Dump logs on failure
         if: failure()
         run: bash compliance-suite/tck.sh logs '${{ toJSON(matrix.target) }}'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: tck-logs-${{ matrix.target.id }}

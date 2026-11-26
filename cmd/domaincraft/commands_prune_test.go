@@ -426,12 +426,20 @@ func TestPruneCLICommunityConsentGate(t *testing.T) {
 		if strings.Contains(stdout, "Applying 1 database migration command(s)") {
 			t.Errorf("migration command was reviewed without consent: %q", stdout)
 		}
+		entries, err := os.ReadDir(output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 0 {
+			t.Errorf("consent rejected after writing files: %v", entries)
+		}
 		requireAbsent(t, marker(output))
 	})
 }
 
-// TestPruneCLIReportStreams asserts F18: diagnostics (warnings, progress) go to
-// stderr through the logger; the multi-line refactoring reports go to stdout.
+// TestPruneCLIReportStreams asserts that all human-facing output — warnings,
+// progress and the multi-line refactoring reports — goes to stderr, leaving
+// stdout clean for piping.
 func TestPruneCLIReportStreams(t *testing.T) {
 	bridge := pruneBridge(t, "")
 	output := t.TempDir()
@@ -458,15 +466,12 @@ func TestPruneCLIReportStreams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate --prune: %v\n%s", err, stderr)
 	}
-	for _, want := range []string{"You changed data types in domain.yaml", "You renamed fields in domain.yaml"} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("report missing from stdout: %q; stdout = %q", want, stdout)
+	for _, want := range []string{"You changed data types in domain.yaml", "You renamed fields in domain.yaml", "ACTION REQUIRED", "updated field title -> name"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("diagnostic missing from stderr: %q; stderr = %q", want, stderr)
 		}
 	}
-	if !strings.Contains(stderr, "ACTION REQUIRED") || !strings.Contains(stderr, "updated field title -> name") {
-		t.Errorf("warnings/progress missing from stderr: %q", stderr)
-	}
-	if strings.Contains(stdout, "updated field title -> name") {
-		t.Errorf("progress leaked to stdout: %q", stdout)
+	if stdout != "" {
+		t.Errorf("human-facing output leaked to stdout: %q", stdout)
 	}
 }

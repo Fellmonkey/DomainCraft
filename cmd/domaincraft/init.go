@@ -64,6 +64,9 @@ func renderScenario(id, name string) (string, error) {
 	if !ok {
 		return "", asUsageError(fmt.Errorf("unknown scenario %q: use shop, saas, crm or blog", id))
 	}
+	if strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return "", asUsageError(fmt.Errorf("invalid project name: control characters are not allowed"))
+	}
 	escaped := strings.ReplaceAll(name, "'", "''")
 	return strings.ReplaceAll(tmpl, "{{PROJECT_NAME}}", escaped), nil
 }
@@ -117,12 +120,27 @@ func newInitCmd(opts *cliOptions) *cobra.Command {
 				return err
 			}
 
-			_, statErr := os.Stat(opts.domainFile)
-			if statErr == nil && !force {
-				return asUsageError(fmt.Errorf("%s already exists; use --force to overwrite", opts.domainFile))
+			// O_EXCL is the authoritative guard against another process
+			// creating domain.yaml between the friendly Stat check and the
+			// atomic write. The guard file is replaced by AtomicWrite below.
+			if err := os.MkdirAll(filepath.Dir(opts.domainFile), 0o755); err != nil { //nolint:gosec // user-selected output directory
+				return fmt.Errorf("create parent of %s: %w", opts.domainFile, err)
 			}
-			if statErr != nil && !os.IsNotExist(statErr) {
-				return fmt.Errorf("check %s: %w", opts.domainFile, statErr)
+			flags := os.O_WRONLY | os.O_CREATE
+			if force {
+				flags |= os.O_TRUNC
+			} else {
+				flags |= os.O_EXCL
+			}
+			guard, err := os.OpenFile(opts.domainFile, flags, 0o644) //nolint:gosec // starter domain.yaml must stay readable like other project files
+			if err != nil {
+				if os.IsExist(err) {
+					return asUsageError(fmt.Errorf("%s already exists; use --force to overwrite", opts.domainFile))
+				}
+				return fmt.Errorf("create %s: %w", opts.domainFile, err)
+			}
+			if err := guard.Close(); err != nil {
+				return fmt.Errorf("close %s: %w", opts.domainFile, err)
 			}
 			if err := fsutil.AtomicWrite(opts.domainFile, []byte(content)); err != nil {
 				return fmt.Errorf("write %s: %w", opts.domainFile, err)
@@ -148,7 +166,7 @@ func newInitCmd(opts *cliOptions) *cobra.Command {
 			genCmd.SetOut(cmd.OutOrStdout())
 			genCmd.SetErr(cmd.ErrOrStderr())
 			genCmd.SetIn(cmd.InOrStdin())
-			return runGenerate(opts, genCmd, nil)
+			return runGenerate(opts, genCmd)
 		},
 	}
 

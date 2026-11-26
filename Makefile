@@ -167,7 +167,9 @@ contract-golden-update:
 #     one runner and compares with benchstat.
 BENCH_PACKAGES ?= ./internal/renderer ./internal/ir ./internal/snapshot
 BENCH_PATTERN ?= RenderWarm|SafeOutputPathWarm|SortEntities|BuildHubRelations
-BENCH_CMD = go test -run "^$$" -bench "$(BENCH_PATTERN)" -benchmem -benchtime=1x -count=1 $(BENCH_PACKAGES)
+# CI overrides the count for a noisier runner; the command itself stays shared.
+BENCH_COUNT ?= 1
+BENCH_CMD = go test -run "^$$" -bench "$(BENCH_PATTERN)" -benchmem -benchtime=1x -count=$(BENCH_COUNT) $(BENCH_PACKAGES)
 
 bench:
 	@$(BENCH_CMD)
@@ -185,8 +187,8 @@ test-verbose:
 
 test-coverage:
 	@echo "Running tests with coverage..."
-	@go test -cover ./...
 	@go test -coverprofile=coverage.out ./...
+	@go tool cover -func=coverage.out
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: coverage.html"
 
