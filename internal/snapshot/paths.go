@@ -67,16 +67,5 @@ func openRootFor(outputDir, relPath string) (*os.Root, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("resolve output dir %q: %w", outputDir, err)
 	}
-	if err := fsutil.RefuseSymlinks(absOutput, abs); err != nil {
-		return nil, "", err
-	}
-	rel, err := filepath.Rel(absOutput, abs)
-	if err != nil {
-		return nil, "", fmt.Errorf("resolve path %q: %w", relPath, err)
-	}
-	root, err := os.OpenRoot(absOutput)
-	if err != nil {
-		return nil, "", fmt.Errorf("open output root %q: %w", outputDir, err)
-	}
-	return root, rel, nil
+	return fsutil.OpenRootFor(absOutput, abs)
 }

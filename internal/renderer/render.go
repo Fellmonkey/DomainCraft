@@ -17,26 +17,33 @@ import (
 	"github.com/DomainCraft/DomainCraft/internal/packages"
 )
 
-// safeBridgeSource resolves a template or helper path declared by bridge.yaml
-// and rejects paths that escape the bridge directory.
-func safeBridgeSource(dir, rel string) (string, error) {
-	path, _, err := fsutil.LocalPathWithin(dir, rel)
+// readBridgeSource reads a template, helper or mapping declared by bridge.yaml.
+// The path is confined to the bridge directory and read through one os.Root
+// transaction, so a component swapped for a symlink between the check and the
+// read cannot pull contents from outside the bridge.
+func readBridgeSource(dir, rel string) ([]byte, error) {
+	path, relative, err := fsutil.LocalPathWithin(dir, rel)
 	if err != nil {
-		return "", fmt.Errorf("unsafe bridge source path %q: %w", rel, err)
+		return nil, fmt.Errorf("unsafe bridge source path %q: %w", rel, err)
 	}
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
-		return "", fmt.Errorf("resolve bridge dir: %w", err)
+		return nil, fmt.Errorf("resolve bridge dir: %w", err)
 	}
 	realDir, err := filepath.EvalSymlinks(absDir)
 	if err != nil {
-		return "", fmt.Errorf("resolve bridge dir: %w", err)
+		return nil, fmt.Errorf("resolve bridge dir: %w", err)
 	}
 	if resolved, err := filepath.EvalSymlinks(path); err == nil &&
 		resolved != realDir && !strings.HasPrefix(resolved, realDir+string(filepath.Separator)) {
-		return "", fmt.Errorf("bridge source path %q escapes the bridge directory", rel)
+		return nil, fmt.Errorf("bridge source path %q escapes the bridge directory", rel)
 	}
-	return path, nil
+	root, err := os.OpenRoot(realDir)
+	if err != nil {
+		return nil, fmt.Errorf("open bridge root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	return root.ReadFile(relative)
 }
 
 // safeOutputPathChecked is the shared implementation: lexical containment,
@@ -111,9 +118,7 @@ func failWithTempCleanup(err error, tmp *os.File, path string) error {
 
 // stagedWrite is a fully rendered file held in a temp file next to its target.
 // backup is the rename-aside path of the previous target, created only at
-// commit time; existed=false means the target was created by this run.
-// original is retained for callers that invoke rollbackWrites directly with
-// in-memory bytes; Render itself no longer reads existing targets up front.
+// commit time; an empty backup means the target was created by this run.
 type stagedWrite struct {
 	temp   string // absolute temp path, for staging cleanup and messages
 	target string // absolute target path, for the returned list and messages
@@ -129,10 +134,7 @@ type stagedWrite struct {
 	tempLeaf   string // temp name inside parentDir
 	backupLeaf string // backup name inside parentDir
 
-	original []byte
-	existed  bool
-	mode     os.FileMode
-	custom   bool // overwrite:false — developer-owned, must not be replaced at commit
+	custom bool // overwrite:false — developer-owned, must not be replaced at commit
 	record   RenderedFile
 }
 
@@ -157,27 +159,8 @@ func rollbackWrites(staged, committed []stagedWrite) error {
 			}
 			continue
 		}
-		if w.existed {
-			var err error
-			if w.dirRoot != nil {
-				err = fsutil.AtomicWriteRoot(w.dirRoot, w.leaf, w.original)
-			} else {
-				err = fsutil.AtomicWrite(w.target, w.original)
-			}
-			if err != nil {
-				failures = append(failures, fmt.Errorf("restore %s: %w", w.target, err))
-				continue
-			}
-			if w.dirRoot != nil {
-				err = chmodRoot(w.dirRoot, w.leaf, w.mode)
-			} else {
-				err = os.Chmod(w.target, w.mode)
-			}
-			if err != nil {
-				failures = append(failures, fmt.Errorf("restore mode of %s: %w", w.target, err))
-			}
-			continue
-		}
+		// commitWrites always creates a backup for an existing target, so
+		// there is no in-memory restore path here: a new file is removed.
 		var err error
 		if w.dirRoot != nil {
 			err = w.dirRoot.Remove(w.leaf)
@@ -188,31 +171,14 @@ func rollbackWrites(staged, committed []stagedWrite) error {
 			failures = append(failures, fmt.Errorf("remove %s: %w", w.target, err))
 		}
 	}
+	// Staged writes have no dirRoot: handles are opened only for committed
+	// files at commit time, so temp cleanup goes through the plain path.
 	for _, w := range staged {
-		var err error
-		if w.dirRoot != nil {
-			err = w.dirRoot.Remove(w.tempLeaf)
-		} else {
-			err = os.Remove(w.temp)
-		}
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := os.Remove(w.temp); err != nil && !errors.Is(err, os.ErrNotExist) {
 			failures = append(failures, fmt.Errorf("remove temp %s: %w", w.temp, err))
 		}
 	}
 	return errors.Join(failures...)
-}
-
-// chmodRoot applies mode to a file inside root. os.Root has no Chmod method,
-// so the file is reopened for the metadata-only change.
-func chmodRoot(root *os.Root, rel string, mode os.FileMode) error {
-	f, err := root.OpenFile(rel, os.O_RDWR, 0)
-	if err != nil {
-		return err
-	}
-	if err := f.Chmod(mode); err != nil {
-		return errors.Join(err, f.Close())
-	}
-	return f.Close()
 }
 
 // rollbackError attaches rollback failures to the error that triggered them.
@@ -234,11 +200,7 @@ func (r *Renderer) parseHelpers(funcMap template.FuncMap) (*template.Template, e
 		if src.config.Helpers == "" {
 			continue
 		}
-		helperPath, err := safeBridgeSource(src.dir, src.config.Helpers)
-		if err != nil {
-			return nil, err
-		}
-		helperBytes, err := os.ReadFile(helperPath) //nolint:gosec // helperPath passed safeBridgeSource validation
+		helperBytes, err := readBridgeSource(src.dir, src.config.Helpers)
 		if err != nil {
 			return nil, fmt.Errorf("read helpers %s: %w", src.config.Helpers, err)
 		}
@@ -331,11 +293,7 @@ func (r *Renderer) stageTemplates(s *renderSession) error {
 				continue
 			}
 
-			sourcePath, err := safeBridgeSource(src.dir, spec.Source)
-			if err != nil {
-				return s.fail(err)
-			}
-			tplBytes, err := os.ReadFile(sourcePath) //nolint:gosec // sourcePath passed safeBridgeSource validation
+			tplBytes, err := readBridgeSource(src.dir, spec.Source)
 			if err != nil {
 				return s.fail(fmt.Errorf("read template %s: %w", spec.Source, err))
 			}
@@ -440,13 +398,11 @@ func (r *Renderer) stageTemplates(s *renderSession) error {
 						s.parentInfos[parentDir] = parentInfo
 					}
 
-					existed := false
 					mode := os.FileMode(0o644) // os.Create's default under the usual umask
 					if info, statErr := os.Lstat(absTarget); statErr == nil {
 						if info.Mode()&os.ModeSymlink != 0 {
 							return s.fail(fmt.Errorf("template target path escapes output directory through a symlink: %s", renderedTarget))
 						}
-						existed = true
 						mode = info.Mode().Perm()
 						// The previous bytes are not read here: the commit phase moves
 						// the whole file aside and moves it back on rollback.
@@ -482,8 +438,6 @@ func (r *Renderer) stageTemplates(s *renderSession) error {
 						parentInfo: parentInfo,
 						leaf:       filepath.Base(absTarget),
 						tempLeaf:   filepath.Base(tmpPath),
-						existed:    existed,
-						mode:       mode,
 						custom:     record.Custom,
 						record:     record,
 					})
@@ -528,13 +482,9 @@ func (r *Renderer) commitWrites(s *renderSession) error {
 			if err := root.Rename(w.leaf, w.backupLeaf); err != nil {
 				return s.fail(fmt.Errorf("back up output file %s: %w", w.record.Path, err))
 			}
-			w.existed = true
-			w.mode = info.Mode().Perm()
 		} else if errors.Is(err, os.ErrNotExist) {
-			// The target vanished after staging. Restore the pre-commit state:
-			// this is now a new file, so rollback must remove it, not write nil
-			// bytes through the staging-time `existed` flag.
-			w.existed = false
+			// The target vanished after staging: rollback must remove the new
+			// file rather than restore a backup that was never created.
 			w.backup = ""
 		} else {
 			return s.fail(fmt.Errorf("inspect output file %s: %w", w.record.Path, err))

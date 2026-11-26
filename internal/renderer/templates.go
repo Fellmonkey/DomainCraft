@@ -83,13 +83,9 @@ func (r *Renderer) buildFuncMap() (template.FuncMap, error) {
 // (no error) when the file is absent — a bridge with no mappings contributes
 // nothing, and the merged result drives the language functions.
 func (r *Renderer) loadTypeMappings(dir string) (*typeMappings, error) {
-	// Use the same guard as templates and helpers: a symlinked mapping file must
-	// not pull configuration from outside the bridge directory.
-	path, err := safeBridgeSource(dir, "type_mappings.yaml")
-	if err != nil {
-		return nil, err
-	}
-	data, err := os.ReadFile(path) //nolint:gosec // path passed safeBridgeSource validation
+	// Same guard as templates and helpers: a symlinked mapping file must not
+	// pull configuration from outside the bridge directory.
+	data, err := readBridgeSource(dir, "type_mappings.yaml")
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil

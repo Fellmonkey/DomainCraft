@@ -281,8 +281,8 @@ templates:
 }
 
 // F24: a target that existed at staging but was deleted before commit must be
-// rolled back as a new file (removed). Otherwise the nil original bytes are
-// written back and an empty file survives the failed render.
+// rolled back as a new file (removed). Commit leaves no backup in that case,
+// so rollback removes the file instead of restoring a nonexistent original.
 func TestRenderRollbackRemovesTargetDeletedBeforeCommit(t *testing.T) {
 	base := t.TempDir()
 	bridge := writeHardeningBridge(t, map[string]string{
@@ -415,7 +415,13 @@ func assertNoRenderTemps(t *testing.T, dir string) {
 func TestRollbackWritesReportsRestoreFailure(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "a.txt")
-
+	backup := filepath.Join(dir, "a.txt.bak")
+	if err := os.WriteFile(target, []byte("new"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	if err := os.WriteFile(backup, []byte("original"), 0o644); err != nil {
+		t.Fatalf("write backup: %v", err)
+	}
 	if err := os.Chmod(dir, 0o555); err != nil {
 		t.Fatalf("chmod dir: %v", err)
 	}
@@ -427,12 +433,7 @@ func TestRollbackWritesReportsRestoreFailure(t *testing.T) {
 		t.Skip("directory permissions are not enforced on this host")
 	}
 
-	err := rollbackWrites(nil, []stagedWrite{{
-		target:   target,
-		original: []byte("original"),
-		existed:  true,
-		mode:     0o644,
-	}})
+	err := rollbackWrites(nil, []stagedWrite{{target: target, backup: backup}})
 	if err == nil {
 		t.Fatal("rollbackWrites silently discarded a failed restore")
 	}

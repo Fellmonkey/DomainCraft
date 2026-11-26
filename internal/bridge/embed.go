@@ -95,20 +95,8 @@ func writeFSDir(fsys fs.FS, root, dst string) error {
 // A symlink at any level would let os.WriteFile/MkdirAll escape the cache, so
 // the materialization refuses it before touching the filesystem.
 func refuseSymlinks(base, target string) error {
-	baseAbs, err := filepath.Abs(base)
-	if err != nil {
+	if _, err := fsutil.AbsPathWithin(base, target); err != nil {
 		return err
 	}
-	targetAbs, err := filepath.Abs(target)
-	if err != nil {
-		return err
-	}
-	rel, err := filepath.Rel(baseAbs, targetAbs)
-	if err != nil {
-		return fmt.Errorf("resolve cache path %q: %w", target, err)
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("target %q escapes cache directory", target)
-	}
-	return fsutil.RefuseSymlinks(baseAbs, targetAbs)
+	return fsutil.RefuseSymlinks(base, target)
 }
