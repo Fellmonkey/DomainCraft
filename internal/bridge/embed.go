@@ -8,7 +8,15 @@ import (
 	"strings"
 
 	domaincraft "github.com/DomainCraft/DomainCraft"
+	"github.com/DomainCraft/DomainCraft/internal/appdir"
+	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 )
+
+// embeddedBridgeRel builds the path of a bundled bridge inside the embedded
+// filesystem. All embedded-tree lookups use this one spelling.
+func embeddedBridgeRel(entryPath string) string {
+	return "bridges/" + filepath.ToSlash(entryPath)
+}
 
 // TryMaterializeEmbedded copies the embedded copy of an official bridge into its
 // cache directory. It returns (true, nil) when the bridge is embedded and was
@@ -22,13 +30,23 @@ func TryMaterializeEmbedded(entry RegistryEntry, opts *EnsureOptions) (bool, err
 	if entry.Path == "" {
 		return false, nil
 	}
-	rel := "bridges/" + filepath.ToSlash(entry.Path)
+	rel := embeddedBridgeRel(entry.Path)
 	if _, err := domaincraft.Bridges.ReadDir(rel); err != nil {
 		return false, nil // not embedded in this binary
 	}
 
 	dst := CachePath(entry)
-	if err := os.MkdirAll(dst, 0o755); err != nil {
+	// The cache may be attacker-controlled (a planted symlink would redirect
+	// writes outside it), so check the whole path before creating anything.
+	cacheRoot := appdir.UnionDir("bridges")
+	_, err := fsutil.AbsPathWithin(cacheRoot, dst)
+	if err == nil {
+		err = fsutil.RefuseSymlinks(cacheRoot, dst)
+	}
+	if err != nil {
+		return false, fmt.Errorf("materialize embedded bridge %q: %w", entry.ID, err)
+	}
+	if err := os.MkdirAll(dst, 0o755); err != nil { //nolint:gosec // bridge cache dirs must stay readable across CLI runs
 		return false, fmt.Errorf("create cache dir for embedded bridge %q: %w", entry.ID, err)
 	}
 	if err := writeFSDir(domaincraft.Bridges, rel, dst); err != nil {
@@ -43,8 +61,17 @@ func TryMaterializeEmbedded(entry RegistryEntry, opts *EnsureOptions) (bool, err
 }
 
 // writeFSDir copies every file in the embedded filesystem subtree rooted at
-// root into the destination directory, preserving relative paths.
+// root into the destination directory, preserving relative paths. Every target
+// component is checked for symlinks before it is written.
 func writeFSDir(fsys fs.FS, root, dst string) error {
+	// os.Root confines every write to dst. RefuseSymlinks still rejects links
+	// that stay inside the cache; Root additionally closes the window between
+	// the check and the commit if a component is replaced concurrently.
+	dir, err := os.OpenRoot(dst)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
 	return fs.WalkDir(fsys, root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -52,16 +79,24 @@ func writeFSDir(fsys fs.FS, root, dst string) error {
 		rel := strings.TrimPrefix(path, root)
 		rel = strings.TrimPrefix(rel, "/")
 		target := filepath.Join(dst, filepath.FromSlash(rel))
+		_, err = fsutil.AbsPathWithin(dst, target)
+		if err == nil {
+			err = fsutil.RefuseSymlinks(dst, target)
+		}
+		if err != nil {
+			return err
+		}
+		name := filepath.FromSlash(rel)
+		if name == "" {
+			return nil
+		}
 		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
+			return dir.MkdirAll(name, 0o755)
 		}
 		data, err := fs.ReadFile(fsys, path)
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
-		}
-		return os.WriteFile(target, data, 0o644)
+		return fsutil.AtomicWriteRoot(dir, name, data)
 	})
 }

@@ -5,12 +5,12 @@ import (
 	"strings"
 )
 
-// IREndpoint describes one HTTP endpoint in the standard REST contract that the
+// Endpoint describes one HTTP endpoint in the standard REST contract that the
 // core derives from the entity. The bridge renders the body of each endpoint
 // from this map — the HTTP method, route, success status, possible error
 // statuses and the authorization plan all come pre-computed, so a bridge only
 // translates them into its own framework syntax.
-type IREndpoint struct {
+type Endpoint struct {
 	Method    string // GET | POST | PUT | PATCH | DELETE
 	Path      string // route template relative to the API root (e.g. "api/orders/{id}")
 	Operation string // list | get | create | update | patch | delete
@@ -22,17 +22,20 @@ type IREndpoint struct {
 	ErrorStatuses []int
 	// Auth is the authorization plan, or nil when the entity declares no
 	// permissions (the bridge then applies its "no permissions" default).
-	Auth *IRPermissionPlan
+	Auth *PermissionPlan
 	// Paginated is true for the collection (list) endpoint.
 	Paginated bool
 	// Concurrency is true when a 409 conflict is possible (optimistic locking).
 	Concurrency bool
+	// Anonymous is true for project-level endpoints that need no credentials
+	// (auth login/register/setup). Entity endpoints always carry an Auth plan.
+	Anonymous bool
 }
 
 // AuthPolicy returns the authorization policy name for the endpoint's operation
 // (Read/Create/Update/Delete), matching the policy names a bridge registers for
 // `[Authorize(Policy = ...)]`-style checks.
-func (e IREndpoint) AuthPolicy() string {
+func (e Endpoint) AuthPolicy() string {
 	switch e.Operation {
 	case "list", "get":
 		return "Read"
@@ -46,22 +49,9 @@ func (e IREndpoint) AuthPolicy() string {
 	return ""
 }
 
-// HasStatus reports whether status is among the endpoint's possible statuses.
-func (e IREndpoint) HasStatus(status int) bool {
-	if e.SuccessStatus == status {
-		return true
-	}
-	for _, s := range e.ErrorStatuses {
-		if s == status {
-			return true
-		}
-	}
-	return false
-}
-
 // Endpoints returns the standard REST endpoint contract for the entity, in a
 // stable order (list, get, create, update, patch, delete).
-func (e IREntity) Endpoints() []IREndpoint {
+func (e Entity) Endpoints() []Endpoint {
 	plural := e.NamePlural
 	if plural == "" {
 		plural = e.Name
@@ -76,93 +66,83 @@ func (e IREntity) Endpoints() []IREndpoint {
 		slices.Sort(updateErrors)
 	}
 
-	eps := []IREndpoint{
-		{
-			Method: "GET", Path: base, Operation: "list",
-			HasBody: false, SuccessStatus: 200,
-			ErrorStatuses: common, Auth: e.PermissionPlan("read"),
-			Paginated: true, Concurrency: false,
-		},
-		{
-			Method: "GET", Path: base + "/{id}", Operation: "get",
-			HasBody: false, SuccessStatus: 200,
-			ErrorStatuses: getErrors, Auth: e.PermissionPlan("read"),
-		},
-		{
-			Method: "POST", Path: base, Operation: "create",
-			HasBody: true, SuccessStatus: 201,
-			ErrorStatuses: common, Auth: e.PermissionPlan("create"),
-		},
-		{
-			Method: "PUT", Path: base + "/{id}", Operation: "update",
-			HasBody: true, SuccessStatus: 200,
-			ErrorStatuses: updateErrors, Auth: e.PermissionPlan("update"),
-			Concurrency: e.HasOptimisticLock(),
-		},
-		{
-			Method: "PATCH", Path: base + "/{id}", Operation: "patch",
-			HasBody: true, SuccessStatus: 200,
-			ErrorStatuses: updateErrors, Auth: e.PermissionPlan("update"),
-			Concurrency: e.HasOptimisticLock(),
-		},
-		{
-			Method: "DELETE", Path: base + "/{id}", Operation: "delete",
-			HasBody: false, SuccessStatus: 204,
-			ErrorStatuses: getErrors, Auth: e.PermissionPlan("delete"),
-		},
+	// The order of decls is the endpoint contract order; each row is one
+	// standard REST operation. ErrorStatuses are cloned per endpoint so a
+	// bridge mutating one route cannot corrupt its sibling.
+	decls := []struct {
+		method, operation, suffix, authOperation string
+		hasBody, paginated, concurrent           bool
+		success                                  int
+		errors                                   []int
+	}{
+		{method: "GET", operation: "list", authOperation: "read", paginated: true, success: 200, errors: common},
+		{method: "GET", operation: "get", suffix: "/{id}", authOperation: "read", success: 200, errors: getErrors},
+		{method: "POST", operation: "create", authOperation: "create", hasBody: true, success: 201, errors: common},
+		{method: "PUT", operation: "update", suffix: "/{id}", authOperation: "update", hasBody: true, concurrent: true, success: 200, errors: updateErrors},
+		{method: "PATCH", operation: "patch", suffix: "/{id}", authOperation: "update", hasBody: true, concurrent: true, success: 200, errors: updateErrors},
+		{method: "DELETE", operation: "delete", suffix: "/{id}", authOperation: "delete", success: 204, errors: getErrors},
+	}
+
+	eps := make([]Endpoint, 0, len(decls))
+	for _, d := range decls {
+		eps = append(eps, Endpoint{
+			Method:        d.method,
+			Path:          base + d.suffix,
+			Operation:     d.operation,
+			HasBody:       d.hasBody,
+			SuccessStatus: d.success,
+			ErrorStatuses: slices.Clone(d.errors),
+			Auth:          e.PermissionPlan(d.authOperation),
+			Paginated:     d.paginated,
+			Concurrency:   d.concurrent && e.HasOptimisticLock(),
+		})
 	}
 	return eps
 }
 
-// IREndpointDecl is a project-level endpoint in the contract (e.g. auth
-// endpoints). It shares the endpoint shape but lives at the project level.
-type IREndpointDecl struct {
-	Method        string
-	Path          string
-	Operation     string
-	HasBody       bool
-	SuccessStatus int
-	ErrorStatuses []int
-	Anonymous     bool
-}
-
 // AuthEndpoints returns the project-level auth endpoint contract (login /
-// register / me / setup) when authentication is enabled.
-func (p *IRProject) AuthEndpoints() []IREndpointDecl {
-	if !p.HasAuth() || p.Auth == nil {
+// register / me / setup) when authentication is enabled. It shares the same
+// Endpoint shape as entity routes; auth endpoints carry no permission plan and
+// mark their anonymous routes with Anonymous.
+func (p *Project) AuthEndpoints() []Endpoint {
+	if !p.HasAuth() {
 		return nil
 	}
 	entity := p.Auth.Entity
+	if entity == "" {
+		return nil
+	}
 	base := "api/" + entity
 
-	var decls []IREndpointDecl
-	if p.Auth.Endpoints.HasLogin {
-		decls = append(decls, IREndpointDecl{
-			Method: "POST", Path: base + "/login", Operation: "login",
-			HasBody: true, SuccessStatus: 200,
-			ErrorStatuses: []int{400, 401, 429}, Anonymous: true,
+	// Same shape as entity routes, but no permission plan: anonymous routes are
+	// marked with Anonymous and /me stays authenticated.
+	decls := []struct {
+		enabled                  bool
+		method, operation, route string
+		hasBody, anonymous       bool
+		success                  int
+		errors                   []int
+	}{
+		{p.Auth.Endpoints.HasLogin, "POST", "login", "/login", true, true, 200, []int{400, 401, 429}},
+		{p.Auth.Endpoints.HasRegister, "POST", "register", "/register", true, true, 201, []int{400, 409, 429}},
+		{p.Auth.Endpoints.HasMe, "GET", "me", "/me", false, false, 200, []int{401, 404, 429}},
+		{p.Auth.Endpoints.HasSetup, "POST", "setup", "/setup", true, true, 201, []int{400, 409, 429}},
+	}
+
+	var endpoints []Endpoint
+	for _, d := range decls {
+		if !d.enabled {
+			continue
+		}
+		endpoints = append(endpoints, Endpoint{
+			Method:        d.method,
+			Path:          base + d.route,
+			Operation:     d.operation,
+			HasBody:       d.hasBody,
+			SuccessStatus: d.success,
+			ErrorStatuses: slices.Clone(d.errors),
+			Anonymous:     d.anonymous,
 		})
 	}
-	if p.Auth.Endpoints.HasRegister {
-		decls = append(decls, IREndpointDecl{
-			Method: "POST", Path: base + "/register", Operation: "register",
-			HasBody: true, SuccessStatus: 201,
-			ErrorStatuses: []int{400, 409, 429}, Anonymous: true,
-		})
-	}
-	if p.Auth.Endpoints.HasMe {
-		decls = append(decls, IREndpointDecl{
-			Method: "GET", Path: base + "/me", Operation: "me",
-			HasBody: false, SuccessStatus: 200,
-			ErrorStatuses: []int{401, 404, 429},
-		})
-	}
-	if p.Auth.Endpoints.HasSetup {
-		decls = append(decls, IREndpointDecl{
-			Method: "POST", Path: base + "/setup", Operation: "setup",
-			HasBody: true, SuccessStatus: 201,
-			ErrorStatuses: []int{400, 409, 429}, Anonymous: true,
-		})
-	}
-	return decls
+	return endpoints
 }

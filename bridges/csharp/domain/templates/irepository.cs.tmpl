@@ -19,7 +19,7 @@ public interface I{{ .Entity.Name }}Repository : IRepository<{{ .Entity.Name }}>
     /// <summary>
     /// Get a page of {{ .Entity.NamePlural | lowercase }} per the normalized
     /// <see cref="ListQuery"/>: search/filter/sort strings plus clamped
-    /// pagination — the runtime mirror of the core's IRQuery (spec/query.md).
+    /// pagination — the runtime mirror of the core's Query contract (spec/query.md).
     /// </summary>
     Task<PagedResult<{{ .Entity.Name }}>> GetPagedAsync(ListQuery query, CancellationToken cancellationToken = default);
 }

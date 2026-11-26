@@ -1,12 +1,16 @@
 package ir
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestValidationRules(t *testing.T) {
-	f := IRField{
+	t.Parallel()
+	f := Field{
 		Name:         "email",
 		DatabaseType: "string",
-		Validations: []IRValidation{
+		Validations: []Validation{
 			{Name: "email", Value: "true"},
 			{Name: "min", Value: "3"},
 			{Name: "max", Value: "50"},
@@ -32,11 +36,63 @@ func TestValidationRules(t *testing.T) {
 	}
 }
 
+// TestValidationRulesSemanticOrder pins the declared rule order:
+// format → length bounds → numeric bounds, regardless of modifier order.
+func TestValidationRulesSemanticOrder(t *testing.T) {
+	t.Parallel()
+	validations := []Validation{
+		{Name: "gte", Value: "1"},
+		{Name: "regex", Value: "^[a-z]+$"},
+		{Name: "max_length", Value: "50"},
+		{Name: "min_length", Value: "3"},
+		{Name: "email"},
+	}
+	reversed := []Validation{
+		{Name: "email"},
+		{Name: "min_length", Value: "3"},
+		{Name: "max_length", Value: "50"},
+		{Name: "regex", Value: "^[a-z]+$"},
+		{Name: "gte", Value: "1"},
+	}
+	want := []string{"email", "regex", "min_length", "max_length", "min_value"}
+
+	for _, tc := range []struct {
+		name string
+		in   []Validation
+	}{
+		{"declared", validations},
+		{"reversed", reversed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := Field{Name: "contact", DatabaseType: "string", IsNullable: true, Validations: tc.in}
+			rules := f.ValidationRules()
+			if len(rules) != len(want) {
+				t.Fatalf("ValidationRules() = %d rules (%+v), want %d", len(rules), rules, len(want))
+			}
+			for i, kind := range want {
+				if rules[i].Kind != kind {
+					t.Errorf("rule %d kind = %q, want %q (all kinds: %+v)", i, rules[i].Kind, kind, ruleKinds(rules))
+				}
+			}
+		})
+	}
+}
+
+func ruleKinds(rules []ValidationRule) []string {
+	kinds := make([]string, 0, len(rules))
+	for _, r := range rules {
+		kinds = append(kinds, r.Kind)
+	}
+	return kinds
+}
+
 func TestValidationRulesNumericBounds(t *testing.T) {
-	f := IRField{
+	t.Parallel()
+	f := Field{
 		Name:         "qty",
 		DatabaseType: "int",
-		Validations: []IRValidation{
+		Validations: []Validation{
 			{Name: "gte", Value: "10"},
 			{Name: "lte", Value: "20"},
 		},
@@ -51,38 +107,43 @@ func TestValidationRulesNumericBounds(t *testing.T) {
 }
 
 func TestValidationRulesCodesAndMessages(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
-		field    IRField
+		field    Field
 		wantCode string
 		wantMsg  string
 	}{
-		{"required", IRField{Name: "title", DatabaseType: "string"}, "REQUIRED", "is required"},
-		{"email", IRField{Name: "email", DatabaseType: "string", IsNullable: true, Validations: []IRValidation{{Name: "email"}}}, "EMAIL", "must be a valid email address"},
-		{"min_length", IRField{Name: "name", DatabaseType: "string", Validations: []IRValidation{{Name: "min", Value: "3"}}}, "MIN_LENGTH", "must be at least 3 characters"},
-		{"min_value", IRField{Name: "qty", DatabaseType: "int", Validations: []IRValidation{{Name: "gte", Value: "10"}}}, "MIN_VALUE", "must be greater than or equal to 10"},
-		{"exclusive min_value", IRField{Name: "qty", DatabaseType: "int", Validations: []IRValidation{{Name: "gt", Value: "0"}}}, "MIN_VALUE", "must be greater than 0"},
-		{"exclusive max_value", IRField{Name: "rating", DatabaseType: "int", Validations: []IRValidation{{Name: "lt", Value: "6"}}}, "MAX_VALUE", "must be less than 6"},
+		{"required", Field{Name: "title", DatabaseType: "string"}, "REQUIRED", "is required"},
+		{"email", Field{Name: "email", DatabaseType: "string", IsNullable: true, Validations: []Validation{{Name: "email"}}}, "EMAIL", "must be a valid email address"},
+		{"min_length", Field{Name: "name", DatabaseType: "string", Validations: []Validation{{Name: "min", Value: "3"}}}, "MIN_LENGTH", "must be at least 3 characters"},
+		{"min_value", Field{Name: "qty", DatabaseType: "int", Validations: []Validation{{Name: "gte", Value: "10"}}}, "MIN_VALUE", "must be greater than or equal to 10"},
+		{"exclusive min_value", Field{Name: "qty", DatabaseType: "int", Validations: []Validation{{Name: "gt", Value: "0"}}}, "MIN_VALUE", "must be greater than 0"},
+		{"exclusive max_value", Field{Name: "rating", DatabaseType: "int", Validations: []Validation{{Name: "lt", Value: "6"}}}, "MAX_VALUE", "must be less than 6"},
 	}
 	for _, c := range cases {
-		rules := c.field.ValidationRules()
-		found := false
-		for _, r := range rules {
-			if r.Code == c.wantCode {
-				found = true
-				if r.Message != c.wantMsg {
-					t.Errorf("%s: message = %q, want %q", c.name, r.Message, c.wantMsg)
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			rules := c.field.ValidationRules()
+			found := false
+			for _, r := range rules {
+				if r.Code == c.wantCode {
+					found = true
+					if r.Message != c.wantMsg {
+						t.Errorf("%s: message = %q, want %q", c.name, r.Message, c.wantMsg)
+					}
 				}
 			}
-		}
-		if !found {
-			t.Errorf("%s: rule with code %q not found in %+v", c.name, c.wantCode, rules)
-		}
+			if !found {
+				t.Errorf("%s: rule with code %q not found in %+v", c.name, c.wantCode, rules)
+			}
+		})
 	}
 }
 
 func TestValidationRulesNullableNotRequired(t *testing.T) {
-	f := IRField{Name: "nick", DatabaseType: "string", IsNullable: true}
+	t.Parallel()
+	f := Field{Name: "nick", DatabaseType: "string", IsNullable: true}
 	for _, r := range f.ValidationRules() {
 		if r.Kind == "required" {
 			t.Error("nullable field should not be required")
@@ -91,15 +152,16 @@ func TestValidationRulesNullableNotRequired(t *testing.T) {
 }
 
 func TestAllIndexesMergesUniqueFields(t *testing.T) {
-	e := IREntity{
+	t.Parallel()
+	e := Entity{
 		Name:       "Order",
 		NamePlural: "Orders",
-		Fields: []IRField{
+		Fields: []Field{
 			{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 			{Name: "sku", DatabaseType: "string", IsUnique: true},
 			{Name: "ref", DatabaseType: "string"},
 		},
-		Indexes: []IRIndex{
+		Indexes: []Index{
 			{Name: "idx_orders_ref", Fields: []string{"ref"}, Sort: []string{"asc"}, Unique: false},
 		},
 	}
@@ -125,11 +187,12 @@ func TestAllIndexesMergesUniqueFields(t *testing.T) {
 }
 
 func TestAllIndexesDedupesDeclaredUnique(t *testing.T) {
-	e := IREntity{
+	t.Parallel()
+	e := Entity{
 		Name:       "Order",
 		NamePlural: "Orders",
-		Fields:     []IRField{{Name: "sku", DatabaseType: "string", IsUnique: true}},
-		Indexes:    []IRIndex{{Name: "ix_custom", Fields: []string{"sku"}, Unique: true}},
+		Fields:     []Field{{Name: "sku", DatabaseType: "string", IsUnique: true}},
+		Indexes:    []Index{{Name: "ix_custom", Fields: []string{"sku"}, Unique: true}},
 	}
 	got := e.AllIndexes()
 	if len(got) != 1 {
@@ -141,7 +204,8 @@ func TestAllIndexesDedupesDeclaredUnique(t *testing.T) {
 }
 
 func TestPermissionPlan(t *testing.T) {
-	p := &IRPermissions{
+	t.Parallel()
+	p := &Permissions{
 		Read:   []string{"*"},
 		Create: []string{"Admin", "@Owner"},
 		Update: []string{},
@@ -169,20 +233,22 @@ func TestPermissionPlan(t *testing.T) {
 }
 
 func TestPermissionPlanNil(t *testing.T) {
-	var p *IRPermissions
+	t.Parallel()
+	var p *Permissions
 	if p.Plan("read") != nil {
 		t.Error("nil permissions should yield nil plan")
 	}
 }
 
 func TestEndpointsContract(t *testing.T) {
-	e := IREntity{Name: "Order", NamePlural: "Orders", Features: map[string]bool{"optimistic_lock": true}}
+	t.Parallel()
+	e := Entity{Name: "Order", NamePlural: "Orders", Features: map[string]bool{"optimistic_lock": true}}
 	eps := e.Endpoints()
 	if len(eps) != 6 {
 		t.Fatalf("got %d endpoints, want 6", len(eps))
 	}
 
-	byOp := map[string]IREndpoint{}
+	byOp := map[string]Endpoint{}
 	for _, ep := range eps {
 		byOp[ep.Operation] = ep
 	}
@@ -198,7 +264,7 @@ func TestEndpointsContract(t *testing.T) {
 	}
 
 	update := byOp["update"]
-	if !update.Concurrency || !update.HasStatus(409) {
+	if !update.Concurrency || !slices.Contains(update.ErrorStatuses, 409) {
 		t.Errorf("update should allow 409 with optimistic lock: %+v", update)
 	}
 
@@ -209,18 +275,20 @@ func TestEndpointsContract(t *testing.T) {
 }
 
 func TestIREntity_PrimaryKey(t *testing.T) {
-	e := IREntity{Fields: []IRField{{Name: "name"}, {Name: "id", IsPrimary: true}}}
+	t.Parallel()
+	e := Entity{Fields: []Field{{Name: "name"}, {Name: "id", IsPrimary: true}}}
 	pk := e.PrimaryKey()
 	if pk == nil || pk.Name != "id" {
 		t.Errorf("PrimaryKey() = %v, want id", pk)
 	}
-	if (IREntity{Fields: []IRField{{Name: "name"}}}).PrimaryKey() != nil {
+	if (Entity{Fields: []Field{{Name: "name"}}}).PrimaryKey() != nil {
 		t.Error("no primary key should yield nil")
 	}
 }
 
 func TestIREntity_FieldByName(t *testing.T) {
-	e := IREntity{Fields: []IRField{{Name: "firstName"}, {Name: "ID"}}}
+	t.Parallel()
+	e := Entity{Fields: []Field{{Name: "firstName"}, {Name: "ID"}}}
 	if f := e.FieldByName("FirstName"); f == nil || f.Name != "firstName" {
 		t.Errorf("FieldByName(FirstName) = %v, want firstName (case-insensitive)", f)
 	}
@@ -232,15 +300,16 @@ func TestIREntity_FieldByName(t *testing.T) {
 	}
 }
 
-func TestIRProject_AuthEntity(t *testing.T) {
-	p := &IRProject{
-		Auth:     &IRAuthConfig{Type: "jwt", Entity: "User"},
-		Entities: []IREntity{{Name: "Order"}, {Name: "User"}},
+func TestProject_AuthEntity(t *testing.T) {
+	t.Parallel()
+	p := &Project{
+		Auth:     &AuthConfig{Type: "jwt", Entity: "User"},
+		Entities: []Entity{{Name: "Order"}, {Name: "User"}},
 	}
 	if e := p.AuthEntity(); e == nil || e.Name != "User" {
 		t.Errorf("AuthEntity() = %v, want User", e)
 	}
-	if (&IRProject{}).AuthEntity() != nil {
+	if (&Project{}).AuthEntity() != nil {
 		t.Error("no-auth project should yield nil AuthEntity")
 	}
 	// AuthEntity resolves by the configured auth entity NAME.
@@ -251,23 +320,25 @@ func TestIRProject_AuthEntity(t *testing.T) {
 }
 
 func TestIRPermissions_HasOwnerToken(t *testing.T) {
-	if (&IRPermissions{Read: []string{"Admin"}, Create: []string{"*"}}).HasOwnerToken() {
+	t.Parallel()
+	if (&Permissions{Read: []string{"Admin"}, Create: []string{"*"}}).HasOwnerToken() {
 		t.Error("no @Owner token should yield false")
 	}
-	if !(&IRPermissions{Update: []string{"@Owner"}}).HasOwnerToken() {
+	if !(&Permissions{Update: []string{"@Owner"}}).HasOwnerToken() {
 		t.Error("any op with @Owner should yield true")
 	}
-	var nilP *IRPermissions
+	var nilP *Permissions
 	if nilP.HasOwnerToken() {
 		t.Error("nil permissions should yield false")
 	}
 }
 
 func TestAuthEndpoints(t *testing.T) {
-	p := &IRProject{Auth: &IRAuthConfig{
+	t.Parallel()
+	p := &Project{Auth: &AuthConfig{
 		Type:   "jwt",
 		Entity: "User",
-		Endpoints: IRAuthEndpoints{
+		Endpoints: AuthEndpoints{
 			HasLogin: true, HasRegister: true, HasMe: true, HasSetup: true,
 		},
 	}}
@@ -283,7 +354,7 @@ func TestAuthEndpoints(t *testing.T) {
 			t.Error("/login must be anonymous")
 		}
 	}
-	if got := (&IRProject{}).AuthEndpoints(); got != nil {
+	if got := (&Project{}).AuthEndpoints(); got != nil {
 		t.Error("no-auth project should yield nil auth endpoints")
 	}
 }

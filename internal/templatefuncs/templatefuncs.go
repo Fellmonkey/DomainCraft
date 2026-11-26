@@ -7,6 +7,7 @@ package templatefuncs
 
 import (
 	"fmt"
+	"math"
 	"path"
 	"reflect"
 	"strconv"
@@ -23,40 +24,40 @@ import (
 // silently missing function.
 func FuncMap() template.FuncMap {
 	return template.FuncMap{
-		"add":       Add,
-		"any":       Any,
-		"append":    Append,
-		"atoi":      Atoi,
-		"base":      path.Base,
-		"camelcase": CamelCase,
-		"contains":  Contains,
-		"default":   Default,
-		"dict":      Dict,
-		"fkName":    textutil.FKName,
-		"hasPrefix": HasPrefix,
-		"humanize":  Humanize,
-		"join":      Join,
-		"kebabcase": textutil.KebabCase,
-		"kindIs":    KindIs,
-		"kindOf":    KindOf,
-		"list":      List,
-		"lower":     strings.ToLower,
-		"lowercase": strings.ToLower,
-		"now":       time.Now,
+		"add":        Add,
+		"any":        Any,
+		"append":     Append,
+		"atoi":       func(s string) int { return AtoiOrDefault(s, 0) },
+		"base":       path.Base,
+		"camelcase":  CamelCase,
+		"contains":   Contains,
+		"default":    Default,
+		"dict":       Dict,
+		"fkName":     textutil.FKName,
+		"hasPrefix":  HasPrefix,
+		"humanize":   Humanize,
+		"join":       Join,
+		"kebabcase":  textutil.KebabCase,
+		"kindIs":     KindIs,
+		"kindOf":     KindOf,
+		"list":       List,
+		"lower":      strings.ToLower,
+		"lowercase":  strings.ToLower,
+		"now":        time.Now,
 		"pascalcase": PascalCase,
-		"pluralize": textutil.Pluralize,
-		"set":       Set,
-		"snakecase": textutil.SnakeCase,
-		"splitList": SplitList,
-		"title":     strings.Title,
-		"toString":  ToString,
-		"upper":     strings.ToUpper,
-		"uppercase": strings.ToUpper,
+		"pluralize":  textutil.Pluralize,
+		"set":        Set,
+		"snakecase":  textutil.SnakeCase,
+		"splitList":  SplitList,
+		"title":      strings.Title, //nolint:staticcheck // published template contract; cases.Title would change word boundaries
+		"toString":   ToString,
+		"upper":      strings.ToUpper,
+		"uppercase":  strings.ToUpper,
 	}
 }
 
 // Add sums all arguments as int64.
-func Add(i ...interface{}) int64 {
+func Add(i ...any) int64 {
 	var a int64
 	for _, b := range i {
 		a += toInt64(b)
@@ -65,7 +66,7 @@ func Add(i ...interface{}) int64 {
 }
 
 // Any reports whether any argument is non-empty.
-func Any(v ...interface{}) bool {
+func Any(v ...any) bool {
 	for _, val := range v {
 		if !empty(val) {
 			return true
@@ -74,27 +75,37 @@ func Any(v ...interface{}) bool {
 	return false
 }
 
-// Atoi parses s as an integer, returning 0 on error.
-func Atoi(s string) int {
-	i, _ := strconv.Atoi(s)
+// Atoi parses s as an integer. Invalid input is an error, not a silent zero.
+func Atoi(s string) (int, error) {
+	return strconv.Atoi(s)
+}
+
+// AtoiOrDefault parses s and returns fallback when s is not an integer. It is
+// the explicit tolerant form used by the template `atoi` contract, which has
+// always rendered 0 for an unparseable value.
+func AtoiOrDefault(s string, fallback int) int {
+	i, err := Atoi(s)
+	if err != nil {
+		return fallback
+	}
 	return i
 }
 
 // Append appends v to a slice (any slice kind) and returns the result as
-// []interface{}. It panics on a non-slice, which text/template surfaces as a
-// render error.
-func Append(list interface{}, v interface{}) []interface{} {
+// []any. A non-slice is a returned error rather than a panic; text/template
+// surfaces either as a render error.
+func Append(list any, v any) ([]any, error) {
 	val := reflect.ValueOf(list)
 	switch val.Kind() {
 	case reflect.Slice, reflect.Array:
 		l := val.Len()
-		nl := make([]interface{}, l)
+		nl := make([]any, l)
 		for i := range l {
 			nl[i] = val.Index(i).Interface()
 		}
-		return append(nl, v)
+		return append(nl, v), nil
 	default:
-		panic("append: not a slice")
+		return nil, fmt.Errorf("append: not a slice, got %T", list)
 	}
 }
 
@@ -137,24 +148,24 @@ func stringArg(v any) string {
 
 // Default returns d unless the first given value is empty (zero values are
 // considered unset).
-func Default(d interface{}, given ...interface{}) interface{} {
+func Default(d any, given ...any) any {
 	if empty(given) || empty(given[0]) {
 		return d
 	}
 	return given[0]
 }
 
-// Dict builds a map[string]interface{} from key/value pairs. An odd trailing
+// Dict builds a map[string]any from key/value pairs. An odd trailing
 // key is assigned an empty string.
-func Dict(v ...interface{}) map[string]interface{} {
-	dict := make(map[string]interface{}, len(v)/2+1)
+func Dict(v ...any) map[string]any {
+	dict := make(map[string]any, len(v)/2+1)
 	for i := 0; i < len(v); i += 2 {
 		key := ToString(v[i])
 		if i+1 >= len(v) {
 			dict[key] = ""
 			continue
 		}
-		dict[key] = v[i+1]
+		dict[key] = v[i+1] //nolint:gosec // i+1 is guarded by the length check above
 	}
 	return dict
 }
@@ -165,31 +176,34 @@ func HasPrefix(prefix, str string) bool {
 	return strings.HasPrefix(str, prefix)
 }
 
-// Join joins the elements of v (a []string, []interface{}, or any slice) with
+// Join joins the elements of v (a []string, []any, or any slice) with
 // sep (sep comes first when called as a pipeline).
-func Join(sep string, v interface{}) string {
+func Join(sep string, v any) string {
 	return strings.Join(strslice(v), sep)
 }
 
 // KindIs reports whether src's reflect.Kind equals target (e.g. "slice").
-func KindIs(target string, src interface{}) bool {
+func KindIs(target string, src any) bool {
 	return target == KindOf(src)
 }
 
-// List returns its arguments as a []interface{}. With no arguments it yields
+// List returns its arguments as a []any. With no arguments it yields
 // an empty slice, which is the common "start a list, then append" idiom in
 // templates.
-func List(v ...interface{}) []interface{} {
+func List(v ...any) []any {
 	return v
 }
 
 // KindOf returns the reflect.Kind name of src (e.g. "string", "slice").
-func KindOf(src interface{}) string {
+func KindOf(src any) string {
 	return reflect.ValueOf(src).Kind().String()
 }
 
 // Set assigns value under key in d and returns d.
-func Set(d map[string]interface{}, key string, value interface{}) map[string]interface{} {
+func Set(d map[string]any, key string, value any) map[string]any {
+	if d == nil {
+		d = make(map[string]any)
+	}
 	d[key] = value
 	return d
 }
@@ -202,7 +216,7 @@ func SplitList(sep, orig string) []string {
 
 // ToString renders v as a string (strings pass through, fmt.Stringer values
 // use String(), everything else is fmt.Sprint'ed).
-func ToString(v interface{}) string {
+func ToString(v any) string {
 	switch v := v.(type) {
 	case string:
 		return v
@@ -219,7 +233,7 @@ func ToString(v interface{}) string {
 
 // empty reports whether given holds the zero value for its type (the same
 // semantics text/template's isTrue uses).
-func empty(given interface{}) bool {
+func empty(given any) bool {
 	g := reflect.ValueOf(given)
 	if !g.IsValid() {
 		return true
@@ -245,11 +259,11 @@ func empty(given interface{}) bool {
 }
 
 // strslice converts v into []string (used by Join).
-func strslice(v interface{}) []string {
+func strslice(v any) []string {
 	switch v := v.(type) {
 	case []string:
 		return v
-	case []interface{}:
+	case []any:
 		b := make([]string, 0, len(v))
 		for _, s := range v {
 			if s != nil {
@@ -281,7 +295,7 @@ func strslice(v interface{}) []string {
 
 // toInt64 coerces v to int64 for Add. It covers the numeric and string forms
 // templates realistically pass; anything else yields 0.
-func toInt64(v interface{}) int64 {
+func toInt64(v any) int64 {
 	switch val := v.(type) {
 	case int:
 		return int64(val)
@@ -294,6 +308,9 @@ func toInt64(v interface{}) int64 {
 	case int64:
 		return val
 	case uint:
+		if val > math.MaxInt64 {
+			return math.MaxInt64
+		}
 		return int64(val)
 	case uint8:
 		return int64(val)
@@ -302,6 +319,9 @@ func toInt64(v interface{}) int64 {
 	case uint32:
 		return int64(val)
 	case uint64:
+		if val > math.MaxInt64 {
+			return math.MaxInt64
+		}
 		return int64(val)
 	case float32:
 		return int64(val)

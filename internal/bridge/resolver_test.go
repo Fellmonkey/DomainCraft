@@ -34,14 +34,7 @@ func TestResolver_LocalPath(t *testing.T) {
 	}
 
 	// Bare directory name resolvable from the CWD (backwards compatible).
-	orig, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(orig) //nolint:errcheck // test-only cleanup
+	t.Chdir(root)
 	got, err := r.Resolve("my-bridge")
 	if err != nil {
 		t.Fatalf("Resolve(my-bridge): %v", err)
@@ -55,12 +48,12 @@ func TestResolver_MissingPathLikeIsErrorNotClone(t *testing.T) {
 	r := NewResolver(&Registry{})
 
 	for _, input := range []string{
-		"../domaincraftcsharp",   // the regression: must NOT clone github.com/../domaincraftcsharp
-		"./no-such-bridge",       // explicit relative path
-		"/no/such/bridge",        // absolute path
-		"~/no-such-bridge",       // home-relative
-		"no\\such\\bridge",       // Windows-style relative
-		"C:/no/such/bridge",      // Windows drive
+		"../domaincraftcsharp", // the regression: must NOT clone github.com/../domaincraftcsharp
+		"./no-such-bridge",     // explicit relative path
+		"/no/such/bridge",      // absolute path
+		"~/no-such-bridge",     // home-relative
+		"no\\such\\bridge",     // Windows-style relative
+		"C:/no/such/bridge",    // Windows drive
 	} {
 		_, err := r.Resolve(input)
 		if err == nil {
@@ -92,5 +85,91 @@ func TestLooksLikePath(t *testing.T) {
 		if looksLikePath(in) {
 			t.Errorf("looksLikePath(%q) = true, want false", in)
 		}
+	}
+}
+
+// TestResolveExtendsRelativeToAdapterDir pins the base of a relative
+// `extends`: it belongs to the declaring adapter, not to the CLI's current
+// working directory.
+func TestResolveExtendsRelativeToAdapterDir(t *testing.T) {
+	root := t.TempDir()
+	adapter := filepath.Join(root, "adapter")
+	base := filepath.Join(adapter, "base")
+	sibling := filepath.Join(root, "shared")
+	for _, spec := range []struct{ dir, name string }{
+		{adapter, "adapter"}, {base, "base"}, {sibling, "shared"},
+	} {
+		if err := os.MkdirAll(spec.dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(spec.dir, "bridge.yaml"), []byte("name: "+spec.name+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	r := NewResolver(&Registry{})
+	for _, ref := range []string{"./base", "../shared"} {
+		want := base
+		if ref == "../shared" {
+			want = sibling
+		}
+		got, err := ResolveExtendsRef(ref, adapter, r)
+		if err != nil {
+			t.Fatalf("ResolveExtendsRef(%q, %q): %v", ref, adapter, err)
+		}
+		if got != want {
+			t.Errorf("ResolveExtendsRef(%q, %q) = %q, want %q", ref, adapter, got, want)
+		}
+	}
+
+	// A missing relative ref stays a hard local-path error, never a clone.
+	if _, err := ResolveExtendsRef("./missing", adapter, r); err == nil ||
+		!strings.Contains(err.Error(), "no such local path") {
+		t.Errorf("missing relative extends: err = %v, want a local-path error", err)
+	}
+}
+
+// F27: FindMonorepoBridge walks up to the filesystem root and takes the first
+// (nearest) match — the shared walk must preserve that order.
+func TestFindMonorepoBridgeWalksUp(t *testing.T) {
+	root := t.TempDir()
+	bridgeDir := makeMonorepoBridge(t, root, "csharp/core")
+	deep := filepath.Join(root, "a", "b", "c")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := FindMonorepoBridge(deep, "csharp/core"); got != bridgeDir {
+		t.Errorf("FindMonorepoBridge(%q) = %q, want %q", deep, got, bridgeDir)
+	}
+	if got := FindMonorepoBridge(deep, ""); got != "" {
+		t.Errorf("FindMonorepoBridge with empty relPath = %q, want empty", got)
+	}
+
+	// A nearer candidate wins over the one at the monorepo root.
+	inner := filepath.Join(root, "a", "bridges", "csharp", "core")
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(inner, "bridge.yaml"), []byte("name: inner\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := FindMonorepoBridge(deep, "csharp/core"); got != inner {
+		t.Errorf("FindMonorepoBridge(%q) = %q, want nearest match %q", deep, got, inner)
+	}
+}
+
+// F27: monorepoRoot uses the same upward walk with a different visitor.
+func TestMonorepoRootWalksUp(t *testing.T) {
+	root := t.TempDir()
+	makeMonorepoBridge(t, root, "csharp/core")
+	deep := filepath.Join(root, "a", "b", "c")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := monorepoRoot(deep); got != root {
+		t.Errorf("monorepoRoot(%q) = %q, want %q", deep, got, root)
+	}
+	if got := monorepoRoot(t.TempDir()); got != "" {
+		t.Errorf("monorepoRoot outside a monorepo = %q, want empty", got)
 	}
 }

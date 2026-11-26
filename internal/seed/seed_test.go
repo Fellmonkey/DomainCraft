@@ -1,6 +1,7 @@
 package seed
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -8,13 +9,14 @@ import (
 )
 
 func TestGenerateBasicTypes(t *testing.T) {
-	project := &ir.IRProject{
+	t.Parallel()
+	project := &ir.Project{
 		Enums: map[string][]string{"Status": {"pending", "active"}},
-		Entities: []ir.IREntity{
+		Entities: []ir.Entity{
 			{
 				Name:       "Product",
 				NamePlural: "Products",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{Name: "name", DatabaseType: "string"},
 					{Name: "price", DatabaseType: "decimal"},
@@ -37,7 +39,7 @@ func TestGenerateBasicTypes(t *testing.T) {
 	}
 
 	first := em.Records[0].Fields
-	vals := map[string]interface{}{}
+	vals := map[string]any{}
 	for _, sv := range first {
 		vals[sv.Field] = sv.Value
 	}
@@ -56,7 +58,7 @@ func TestGenerateBasicTypes(t *testing.T) {
 	if vals["status"] != "pending" {
 		t.Errorf("status = %v, want pending (first enum value)", vals["status"])
 	}
-	if arr, ok := vals["tags"].([]interface{}); !ok || len(arr) != 1 {
+	if arr, ok := vals["tags"].([]any); !ok || len(arr) != 1 {
 		t.Errorf("tags should be a 1-element slice, got %#v", vals["tags"])
 	}
 	if _, ok := vals["payload"].(string); !ok {
@@ -64,18 +66,62 @@ func TestGenerateBasicTypes(t *testing.T) {
 	}
 }
 
+func TestGenerateHonorsArrayDefaults(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		dbType     string
+		defaultVal string
+		want       []any
+	}{
+		{name: "string elements", dbType: "array(string)", defaultVal: "[alpha, beta]", want: []any{"alpha", "beta"}},
+		{name: "int elements", dbType: "array(int)", defaultVal: "[1, 2]", want: []any{int64(1), int64(2)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			project := &ir.Project{
+				Entities: []ir.Entity{
+					{
+						Name: "Tagged",
+						Fields: []ir.Field{
+							{Name: "id", DatabaseType: "uuid", IsPrimary: true},
+							{Name: "tags", DatabaseType: tt.dbType, DefaultValue: tt.defaultVal},
+						},
+					},
+				},
+			}
+			ds := Generate(project, Options{CountPerEntity: 1})
+			got := ds.Entities[0].Records[0].Fields[1].Value
+			arr, ok := got.([]any)
+			if !ok {
+				t.Fatalf("tags = %#v, want []any", got)
+			}
+			if len(arr) != len(tt.want) {
+				t.Fatalf("tags = %#v, want %#v", arr, tt.want)
+			}
+			for i := range tt.want {
+				if arr[i] != tt.want[i] {
+					t.Fatalf("tags[%d] = %#v, want %#v (full value %#v)", i, arr[i], tt.want[i], arr)
+				}
+			}
+		})
+	}
+}
+
 func TestGenerateReferencesParentPK(t *testing.T) {
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	t.Parallel()
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Category",
 				NamePlural: "Categories",
-				Fields:     []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
+				Fields:     []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
 			},
 			{
 				Name:       "Product",
 				NamePlural: "Products",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{Name: "categoryId", DatabaseType: "uuid", IsRelation: true, RelationTarget: "Category"},
 					{Name: "images", DatabaseType: "uuid", IsRelation: true, IsMany: true, RelationTarget: "Image"},
@@ -85,7 +131,7 @@ func TestGenerateReferencesParentPK(t *testing.T) {
 	}
 
 	ds := Generate(project, Options{CountPerEntity: 1})
-	var categoryPK interface{}
+	var categoryPK any
 	for _, sv := range ds.Entities[0].Records[0].Fields {
 		if sv.Field == "id" {
 			categoryPK = sv.Value
@@ -106,11 +152,12 @@ func TestGenerateReferencesParentPK(t *testing.T) {
 }
 
 func TestNormalizeCoercesTypes(t *testing.T) {
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	t.Parallel()
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name: "Doc",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{Name: "title", DatabaseType: "string"},
 					{Name: "count", DatabaseType: "int"},
@@ -118,14 +165,14 @@ func TestNormalizeCoercesTypes(t *testing.T) {
 					{Name: "enabled", DatabaseType: "boolean"},
 					{Name: "tags", DatabaseType: "array(string)"},
 				},
-				Seed: []map[string]interface{}{
+				Seed: []map[string]any{
 					{
 						"id":      "550e8400-e29b-41d4-a716-446655440000",
 						"title":   "hello",
 						"count":   7,
 						"ratio":   2.5,
 						"enabled": true,
-						"tags":    []interface{}{"a", "b"},
+						"tags":    []any{"a", "b"},
 					},
 				},
 			},
@@ -136,7 +183,7 @@ func TestNormalizeCoercesTypes(t *testing.T) {
 	if len(ds.Entities) != 1 {
 		t.Fatalf("got %d entities, want 1", len(ds.Entities))
 	}
-	vals := map[string]interface{}{}
+	vals := map[string]any{}
 	for _, sv := range ds.Entities[0].Records[0].Fields {
 		vals[sv.Field] = sv.Value
 	}
@@ -149,16 +196,17 @@ func TestNormalizeCoercesTypes(t *testing.T) {
 	if vals["enabled"] != true {
 		t.Errorf("enabled = %#v, want true", vals["enabled"])
 	}
-	if arr, ok := vals["tags"].([]interface{}); !ok || len(arr) != 2 || arr[0] != "a" {
+	if arr, ok := vals["tags"].([]any); !ok || len(arr) != 2 || arr[0] != "a" {
 		t.Errorf("tags = %#v, want [a b]", vals["tags"])
 	}
 }
 
 func TestNormalizeSkipsEntitiesWithoutSeed(t *testing.T) {
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
-			{Name: "Empty", Fields: []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}}},
-			{Name: "Seeded", Fields: []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}}, Seed: []map[string]interface{}{{"id": "x"}}},
+	t.Parallel()
+	project := &ir.Project{
+		Entities: []ir.Entity{
+			{Name: "Empty", Fields: []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}}},
+			{Name: "Seeded", Fields: []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}}, Seed: []map[string]any{{"id": "x"}}},
 		},
 	}
 	ds := Normalize(project)
@@ -168,15 +216,16 @@ func TestNormalizeSkipsEntitiesWithoutSeed(t *testing.T) {
 }
 
 func TestNormalizeIncludesRelationFlags(t *testing.T) {
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	t.Parallel()
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name: "Order",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{Name: "customerId", DatabaseType: "uuid", IsRelation: true, RelationTarget: "Customer"},
 				},
-				Seed: []map[string]interface{}{{"customerId": "550e8400-e29b-41d4-a716-446655440000"}},
+				Seed: []map[string]any{{"customerId": "550e8400-e29b-41d4-a716-446655440000"}},
 			},
 		},
 	}
@@ -191,25 +240,26 @@ func TestNormalizeIncludesRelationFlags(t *testing.T) {
 }
 
 func TestGenerateHonorsNumericBounds(t *testing.T) {
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	t.Parallel()
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name: "Bounds",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
-					{Name: "qtyInclusiveMin", DatabaseType: "int", Validations: []ir.IRValidation{{Name: "gte", Value: "10"}}},
-					{Name: "qtyExclusiveMin", DatabaseType: "int", Validations: []ir.IRValidation{{Name: "gt", Value: "5"}}},
-					{Name: "qtyExclusiveMax", DatabaseType: "bigint", Validations: []ir.IRValidation{{Name: "lt", Value: "3"}}},
-					{Name: "qtyClampedByExclusiveMax", DatabaseType: "int", Validations: []ir.IRValidation{{Name: "lt", Value: "1"}}},
-					{Name: "priceInclusiveMax", DatabaseType: "decimal", Validations: []ir.IRValidation{{Name: "lte", Value: "0.25"}}},
+					{Name: "qtyInclusiveMin", DatabaseType: "int", Validations: []ir.Validation{{Name: "gte", Value: "10"}}},
+					{Name: "qtyExclusiveMin", DatabaseType: "int", Validations: []ir.Validation{{Name: "gt", Value: "5"}}},
+					{Name: "qtyExclusiveMax", DatabaseType: "bigint", Validations: []ir.Validation{{Name: "lt", Value: "3"}}},
+					{Name: "qtyClampedByExclusiveMax", DatabaseType: "int", Validations: []ir.Validation{{Name: "lt", Value: "1"}}},
+					{Name: "priceInclusiveMax", DatabaseType: "decimal", Validations: []ir.Validation{{Name: "lte", Value: "0.25"}}},
 				},
 			},
 		},
 	}
 
 	ds := Generate(project, Options{CountPerEntity: 2})
-	vals := func(record int) map[string]interface{} {
-		m := map[string]interface{}{}
+	vals := func(record int) map[string]any {
+		m := map[string]any{}
 		for _, sv := range ds.Entities[0].Records[record].Fields {
 			m[sv.Field] = sv.Value
 		}
@@ -236,24 +286,78 @@ func TestGenerateHonorsNumericBounds(t *testing.T) {
 	}
 }
 
+// TestGenerateRespectsExclusiveBounds pins the mock value at the bound for
+// inclusive rules and one unit past it for exclusive ones, across every
+// numeric database type. Int/bigint start at record+1 (1 here), float/decimal
+// at record+1+0.5 (1.5 here), so a bound equal to the base exercises the
+// exclusive branch while an inclusive bound keeps the base unchanged.
+func TestGenerateRespectsExclusiveBounds(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		dbType      string
+		validations []ir.Validation
+		want        any
+	}{
+		{name: "int exclusive min steps above bound", dbType: "int", validations: []ir.Validation{{Name: "gt", Value: "5"}}, want: int64(6)},
+		{name: "bigint exclusive min steps above bound", dbType: "bigint", validations: []ir.Validation{{Name: "gt", Value: "5"}}, want: int64(6)},
+		{name: "int exclusive max steps below bound", dbType: "int", validations: []ir.Validation{{Name: "lt", Value: "1"}}, want: int64(0)},
+		{name: "bigint exclusive max steps below bound", dbType: "bigint", validations: []ir.Validation{{Name: "lt", Value: "1"}}, want: int64(0)},
+		{name: "int inclusive min holds bound", dbType: "int", validations: []ir.Validation{{Name: "gte", Value: "1"}}, want: int64(1)},
+		{name: "bigint inclusive max holds bound", dbType: "bigint", validations: []ir.Validation{{Name: "lte", Value: "1"}}, want: int64(1)},
+		{name: "float exclusive min steps above bound", dbType: "float", validations: []ir.Validation{{Name: "gt", Value: "1.5"}}, want: float64(2.5)},
+		{name: "decimal exclusive min steps above bound", dbType: "decimal", validations: []ir.Validation{{Name: "gt", Value: "1.5"}}, want: float64(2.5)},
+		{name: "float exclusive max steps below bound", dbType: "float", validations: []ir.Validation{{Name: "lt", Value: "1.5"}}, want: float64(0.5)},
+		{name: "decimal exclusive max steps below bound", dbType: "decimal", validations: []ir.Validation{{Name: "lt", Value: "1.5"}}, want: float64(0.5)},
+		{name: "float inclusive min holds bound", dbType: "float", validations: []ir.Validation{{Name: "gte", Value: "1.5"}}, want: float64(1.5)},
+		{name: "decimal inclusive max holds bound", dbType: "decimal", validations: []ir.Validation{{Name: "lte", Value: "1.5"}}, want: float64(1.5)},
+		{name: "int exclusive min at MaxInt64 saturates", dbType: "int", validations: []ir.Validation{{Name: "gt", Value: "9223372036854775807"}}, want: int64(math.MaxInt64)},
+		{name: "bigint exclusive min at MaxInt64 saturates", dbType: "bigint", validations: []ir.Validation{{Name: "gt", Value: "9223372036854775807"}}, want: int64(math.MaxInt64)},
+		{name: "int exclusive max at MinInt64 saturates", dbType: "int", validations: []ir.Validation{{Name: "lt", Value: "-9223372036854775808"}}, want: int64(math.MinInt64)},
+		{name: "bigint exclusive max at MinInt64 saturates", dbType: "bigint", validations: []ir.Validation{{Name: "lt", Value: "-9223372036854775808"}}, want: int64(math.MinInt64)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			project := &ir.Project{
+				Entities: []ir.Entity{
+					{
+						Name: "Bounds",
+						Fields: []ir.Field{
+							{Name: "id", DatabaseType: "uuid", IsPrimary: true},
+							{Name: "amount", DatabaseType: tt.dbType, Validations: tt.validations},
+						},
+					},
+				},
+			}
+			ds := Generate(project, Options{CountPerEntity: 1})
+			got := ds.Entities[0].Records[0].Fields[1].Value
+			if got != tt.want {
+				t.Errorf("amount = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGenerateHonorsStringValidations(t *testing.T) {
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	t.Parallel()
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name: "Strings",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
-					{Name: "email", DatabaseType: "string", Validations: []ir.IRValidation{{Name: "email"}}},
-					{Name: "homepage", DatabaseType: "string", Validations: []ir.IRValidation{{Name: "url"}}},
-					{Name: "padded", DatabaseType: "string", Validations: []ir.IRValidation{{Name: "min", Value: "30"}}},
-					{Name: "short", DatabaseType: "string", Validations: []ir.IRValidation{{Name: "max", Value: "4"}}},
+					{Name: "email", DatabaseType: "string", Validations: []ir.Validation{{Name: "email"}}},
+					{Name: "homepage", DatabaseType: "string", Validations: []ir.Validation{{Name: "url"}}},
+					{Name: "padded", DatabaseType: "string", Validations: []ir.Validation{{Name: "min", Value: "30"}}},
+					{Name: "short", DatabaseType: "string", Validations: []ir.Validation{{Name: "max", Value: "4"}}},
 				},
 			},
 		},
 	}
 
 	ds := Generate(project, Options{CountPerEntity: 1})
-	vals := map[string]interface{}{}
+	vals := map[string]any{}
 	for _, sv := range ds.Entities[0].Records[0].Fields {
 		vals[sv.Field] = sv.Value
 	}
@@ -271,15 +375,19 @@ func TestGenerateHonorsStringValidations(t *testing.T) {
 	}
 }
 
+// Integral floats (1.0) survive coercion to int64; fractional floats are
+// truncated (7.9 -> 7), and the validator rejects them before seed generation.
 func TestNormalizeCoerceEdgeCases(t *testing.T) {
-	project := &ir.IRProject{
+	t.Parallel()
+	project := &ir.Project{
 		Enums: map[string][]string{"Status": {"draft", "live"}},
-		Entities: []ir.IREntity{
+		Entities: []ir.Entity{
 			{
 				Name: "Edges",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{Name: "count", DatabaseType: "int"},
+					{Name: "whole", DatabaseType: "int"},
 					{Name: "big", DatabaseType: "bigint"},
 					{Name: "ratio", DatabaseType: "float"},
 					{Name: "enabled", DatabaseType: "boolean"},
@@ -288,16 +396,17 @@ func TestNormalizeCoerceEdgeCases(t *testing.T) {
 					{Name: "meta", DatabaseType: "jsonb"},
 					{Name: "status", DatabaseType: "Status"},
 				},
-				Seed: []map[string]interface{}{
+				Seed: []map[string]any{
 					{
 						"id":       "550e8400-e29b-41d4-a716-446655440000",
 						"count":    "not-a-number",
+						"whole":    float64(1.0),
 						"big":      float64(7.9),
 						"ratio":    "also-not-a-number",
 						"enabled":  "not-a-bool",
 						"tags":     "oops-not-a-list",
-						"statuses": []interface{}{"draft", "live"},
-						"meta":     map[string]interface{}{"k": "v"},
+						"statuses": []any{"draft", "live"},
+						"meta":     map[string]any{"k": "v"},
 						"status":   "draft",
 					},
 				},
@@ -306,15 +415,18 @@ func TestNormalizeCoerceEdgeCases(t *testing.T) {
 	}
 
 	ds := Normalize(project)
-	vals := map[string]interface{}{}
+	vals := map[string]any{}
 	for _, sv := range ds.Entities[0].Records[0].Fields {
 		vals[sv.Field] = sv.Value
 	}
 	if vals["count"] != int64(0) {
 		t.Errorf("unparseable int = %#v, want the zero value int64(0)", vals["count"])
 	}
+	if vals["whole"] != int64(1) {
+		t.Errorf("integral float = %#v, want int64(1)", vals["whole"])
+	}
 	if vals["big"] != int64(7) {
-		t.Errorf("float for bigint = %#v, want truncated int64(7)", vals["big"])
+		t.Errorf("fractional float for bigint = %#v, want truncated int64(7)", vals["big"])
 	}
 	if vals["ratio"] != float64(0) {
 		t.Errorf("unparseable float = %#v, want the zero value float64(0)", vals["ratio"])
@@ -322,14 +434,14 @@ func TestNormalizeCoerceEdgeCases(t *testing.T) {
 	if vals["enabled"] != false {
 		t.Errorf("unparseable bool = %#v, want false", vals["enabled"])
 	}
-	if arr, ok := vals["tags"].([]interface{}); !ok || len(arr) != 0 {
+	if arr, ok := vals["tags"].([]any); !ok || len(arr) != 0 {
 		t.Errorf("non-list for an array field = %#v, want an empty slice", vals["tags"])
 	}
-	arr, ok := vals["statuses"].([]interface{})
+	arr, ok := vals["statuses"].([]any)
 	if !ok || len(arr) != 2 || arr[0] != "draft" {
 		t.Errorf("enum array = %#v, want [draft live]", vals["statuses"])
 	}
-	if m, ok := vals["meta"].(map[string]interface{}); !ok || m["k"] != "v" {
+	if m, ok := vals["meta"].(map[string]any); !ok || m["k"] != "v" {
 		t.Errorf("jsonb should keep its native shape, got %#v", vals["meta"])
 	}
 	if vals["status"] != "draft" {
@@ -337,12 +449,168 @@ func TestNormalizeCoerceEdgeCases(t *testing.T) {
 	}
 }
 
+func TestNormalizeOutOfRangeIntegralSeedDoesNotWrap(t *testing.T) {
+	t.Parallel()
+	project := &ir.Project{Entities: []ir.Entity{{
+		Name:   "Edges",
+		Fields: []ir.Field{{Name: "big", DatabaseType: "bigint"}},
+		Seed:   []map[string]any{{"big": float64(1e30)}},
+	}}}
+	ds := Normalize(project)
+	got := ds.Entities[0].Records[0].Fields[0].Value
+	if got != int64(0) {
+		t.Errorf("out-of-range float seed = %#v, want int64(0) instead of a wrapped value", got)
+	}
+}
+
+func TestStepExclusiveInt64DoesNotWrapAtBounds(t *testing.T) {
+	t.Parallel()
+	if got := stepExclusiveInt64(math.MaxInt64, 1); got != math.MaxInt64 {
+		t.Errorf("step above MaxInt64 = %d, want MaxInt64", got)
+	}
+	if got := stepExclusiveInt64(math.MinInt64, -1); got != math.MinInt64 {
+		t.Errorf("step below MinInt64 = %d, want MinInt64", got)
+	}
+}
+
+func TestGenerateClampsNonPositiveMaxLength(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		max  string
+		want string
+	}{
+		{name: "zero", max: "0", want: ""},
+		{name: "negative", max: "-1", want: ""},
+		{name: "oversized", max: "1000", want: "mock_name_1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			project := &ir.Project{
+				Entities: []ir.Entity{
+					{
+						Name: "Item",
+						Fields: []ir.Field{
+							{Name: "id", DatabaseType: "uuid", IsPrimary: true},
+							{Name: "name", DatabaseType: "string", Validations: []ir.Validation{{Name: "max", Value: tt.max}}},
+						},
+					},
+				},
+			}
+
+			ds := Generate(project, Options{CountPerEntity: 1})
+			got := ds.Entities[0].Records[0].Fields[1].Value
+			if got != tt.want {
+				t.Errorf("name = %v, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestStringValueMaxLengthClamp pins the defensive max_length clamp on a
+// hand-built field: an oversized max leaves the base string untouched, a zero
+// (or negative) max empties it, and a smaller max truncates to that length.
+func TestStringValueMaxLengthClamp(t *testing.T) {
+	t.Parallel()
+	const base = "mock_name_1" // len(base) == 11
+	tests := []struct {
+		name string
+		max  string
+		want string
+	}{
+		{name: "max above length is a no-op", max: "1000", want: base},
+		{name: "max equal to length is a no-op", max: "11", want: base},
+		{name: "max zero is empty", max: "0", want: ""},
+		{name: "max negative is empty", max: "-1", want: ""},
+		{name: "max below length truncates", max: "4", want: "mock"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			field := ir.Field{
+				Name:         "name",
+				DatabaseType: "string",
+				Validations:  []ir.Validation{{Name: "max", Value: tt.max}},
+			}
+			got := stringValue(field, 0)
+			if got != tt.want {
+				t.Errorf("stringValue(max=%q) = %q, want %q", tt.max, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGenerateRotatesRelationPKs(t *testing.T) {
+	t.Parallel()
+	project := &ir.Project{
+		Entities: []ir.Entity{
+			{
+				Name:   "Category",
+				Fields: []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
+			},
+			{
+				Name: "Product",
+				Fields: []ir.Field{
+					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
+					{Name: "categoryId", DatabaseType: "uuid", IsRelation: true, IsUnique: true, RelationTarget: "Category"},
+				},
+			},
+		},
+	}
+
+	ds := Generate(project, Options{CountPerEntity: 3})
+	parentPKs := make([]any, 0, 3)
+	for _, rec := range ds.Entities[0].Records {
+		parentPKs = append(parentPKs, rec.Fields[0].Value)
+	}
+	for i, rec := range ds.Entities[1].Records {
+		got := rec.Fields[1].Value
+		want := parentPKs[i%len(parentPKs)]
+		if got != want {
+			t.Errorf("record %d FK = %v, want %v", i, got, want)
+		}
+	}
+	if ds.Entities[1].Records[0].Fields[1].Value == ds.Entities[1].Records[1].Fields[1].Value {
+		t.Fatal("two children point at the same parent PK; unique FK rotation failed")
+	}
+}
+
+func TestRelationValueRotatesParentPKs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		field  ir.Field
+		pks    []any
+		record int
+		want   any
+	}{
+		{name: "first parent", field: ir.Field{RelationTarget: "Category"}, pks: []any{"a", "b", "c"}, record: 0, want: "a"},
+		{name: "second parent", field: ir.Field{RelationTarget: "Category"}, pks: []any{"a", "b", "c"}, record: 1, want: "b"},
+		{name: "wraps around", field: ir.Field{RelationTarget: "Category"}, pks: []any{"a", "b", "c"}, record: 3, want: "a"},
+		{name: "single parent", field: ir.Field{RelationTarget: "Category"}, pks: []any{"a"}, record: 5, want: "a"},
+		{name: "no parents", field: ir.Field{RelationTarget: "Category"}, pks: nil, record: 2},
+		{name: "many relation", field: ir.Field{RelationTarget: "Category", IsMany: true}, pks: []any{"a", "b"}, record: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := &genContext{generated: map[string][]any{"Category": tt.pks}}
+			got := relationValue(g, tt.field, tt.record)
+			if got != tt.want {
+				t.Errorf("relationValue() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGenerateUsesDeclaredDefaultOverMock(t *testing.T) {
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	t.Parallel()
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name: "Defaults",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{Name: "country", DatabaseType: "string", DefaultValue: "DE"},
 					{Name: "attempts", DatabaseType: "int", DefaultValue: "3"},
@@ -352,7 +620,7 @@ func TestGenerateUsesDeclaredDefaultOverMock(t *testing.T) {
 	}
 
 	ds := Generate(project, Options{CountPerEntity: 1})
-	vals := map[string]interface{}{}
+	vals := map[string]any{}
 	for _, sv := range ds.Entities[0].Records[0].Fields {
 		vals[sv.Field] = sv.Value
 	}

@@ -56,7 +56,7 @@ export type {{ $e.Name }} = {{ $e.Name }}Detail;
 
 {{ end }}
 {{ if .Project.HasAuth }}
-// Auth contract (IRProject.AuthEndpoints) — only enabled endpoints get types.
+// Auth contract (Project.AuthEndpoints) — only enabled endpoints get types.
 {{ if .Project.Auth.Endpoints.HasLogin }}
 export interface LoginRequest {
   email: string;

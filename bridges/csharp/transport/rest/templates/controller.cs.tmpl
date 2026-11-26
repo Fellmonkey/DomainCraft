@@ -63,7 +63,7 @@ public class {{ pluralize $entity }}Controller : ControllerBase
 {{- end }}
     }
 
-{{- /* The endpoint contract (IREntity.Endpoints) is the single source of truth for
+{{- /* The endpoint contract (Entity.Endpoints) is the single source of truth for
        method, operation, authorization plan and concurrency. Only the C#-specific
        bodies and response-type annotations live here. */ -}}
 {{- range .Endpoints }}

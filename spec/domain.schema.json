@@ -111,7 +111,7 @@
         "port": {
           "description": "Exposed application port (default: 8080)",
           "maximum": 65535,
-          "minimum": 1,
+          "minimum": 0,
           "type": "integer"
         }
       },
@@ -310,12 +310,12 @@
       "properties": {
         "default_page_size": {
           "description": "Default page size (default: 20)",
-          "minimum": 1,
+          "minimum": 0,
           "type": "integer"
         },
         "max_page_size": {
           "description": "Hard cap on page size (default: 200)",
-          "minimum": 1,
+          "minimum": 0,
           "type": "integer"
         }
       },
@@ -378,7 +378,7 @@
         },
         "permit_limit": {
           "description": "Max requests (default: 100)",
-          "minimum": 1,
+          "minimum": 0,
           "type": "integer"
         },
         "policy": {
@@ -391,7 +391,7 @@
         },
         "window_seconds": {
           "description": "Window duration in seconds (default: 60)",
-          "minimum": 1,
+          "minimum": 0,
           "type": "integer"
         }
       },

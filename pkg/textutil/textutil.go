@@ -5,6 +5,7 @@ package textutil
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Pluralize converts a singular noun to its plural form.
@@ -65,7 +66,10 @@ func PascalCase(value string) string {
 		if parts[i] == "" {
 			continue
 		}
-		parts[i] = strings.ToUpper(parts[i][:1]) + strings.ToLower(parts[i][1:])
+		// The first character may be multi-byte; slicing by byte would split a
+		// UTF-8 sequence and produce an invalid identifier.
+		first, size := utf8.DecodeRuneInString(parts[i])
+		parts[i] = string(unicode.ToUpper(first)) + strings.ToLower(parts[i][size:])
 	}
 	return strings.Join(parts, "")
 }
@@ -76,7 +80,8 @@ func CamelCase(value string) string {
 	if value == "" {
 		return ""
 	}
-	return strings.ToLower(value[:1]) + value[1:]
+	first, size := utf8.DecodeRuneInString(value)
+	return string(unicode.ToLower(first)) + value[size:]
 }
 
 // FKName appends the foreign-key "Id" suffix to a relation field name unless it

@@ -3,21 +3,18 @@ package renderer
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
+	"slices"
+	"strings"
+	"sync"
 	"text/template"
 
+	"github.com/DomainCraft/DomainCraft/internal/bridge"
 	"github.com/DomainCraft/DomainCraft/internal/ir"
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
 
 	"gopkg.in/yaml.v3"
 )
-
-// ContractVersion is the version of the bridge contract the core implements. A
-// bridge may declare the contract it was authored against via `contract_version`
-// in bridge.yaml. The core rejects bridges written against a newer contract and
-// treats an absent declaration as contract 1 (with a deprecation notice).
-const ContractVersion = 1
 
 // sourceConfig is one bridge directory plus its parsed bridge.yaml. A composed
 // renderer holds several of these, ordered base-first, with the adapter last.
@@ -44,7 +41,16 @@ type Renderer struct {
 	seedData *ir.SeedDataset
 	// mockData is the deterministic mock seed (set via SetMockData).
 	mockData *ir.SeedDataset
+	// beforeCommitHook is a test-only seam called between staging and commit.
+	// It lives on the instance, not in package state, so concurrent renders are
+	// isolated and no save/restore is needed in tests.
+	beforeCommitHook func()
 }
+
+// setBeforeCommitHook installs a hook called once between staging and commit.
+// Production code never calls it; tests in this package use it to mutate the
+// filesystem at the exact point where the commit's path checks must hold.
+func (r *Renderer) setBeforeCommitHook(fn func()) { r.beforeCommitHook = fn }
 
 // config returns the topmost (adapter) bridge config, which owns the effective
 // output_dir, name, delimiters and migration commands.
@@ -65,12 +71,154 @@ func (r *Renderer) adapterDir() string {
 
 var layerRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
+// The closed vocabulary of `when:` conditions. The evaluator in
+// shouldRenderContext must use these same names: an unknown condition used to
+// fall through its defensive default and render unconditionally.
+const (
+	whenSeed        = "hasSeed"
+	whenEnums       = "hasEnums"
+	whenOwnerTokens = "hasOwnerTokens"
+	whenAuth        = "hasAuth"
+	whenMigration   = "hasMigration"
+	whenMockData    = "hasMockData"
+	whenAddon       = "hasAddon"
+	whenNotAddon    = "notHasAddon"
+)
+
+// whenSpec is one entry of the closed `when:` vocabulary. Validation and
+// evaluation both read this table, so a condition can never be accepted by one
+// and rejected (or silently rendered) by the other.
+type whenSpec struct {
+	eval  func(RenderContext, string) bool
+	colon bool // accepts a name after ':' (addon conditions)
+}
+
+var whenSpecs = map[string]whenSpec{
+	whenSeed:  {eval: func(c RenderContext, _ string) bool { return c.HasSeedData() }},
+	whenEnums: {eval: func(c RenderContext, _ string) bool { return c.Project != nil && len(c.Project.Enums) > 0 }},
+	whenOwnerTokens: {eval: func(c RenderContext, _ string) bool {
+		if c.Project == nil {
+			return false
+		}
+		for _, e := range c.Project.Entities {
+			if e.Permissions != nil && e.Permissions.HasOwnerToken() {
+				return true
+			}
+		}
+		return false
+	}},
+	whenAuth:      {eval: func(c RenderContext, _ string) bool { return c.Project != nil && c.Project.HasAuth() }},
+	whenMigration: {eval: func(c RenderContext, _ string) bool { return c.HasMigration() }},
+	whenMockData:  {eval: func(c RenderContext, _ string) bool { return c.HasMockData() }},
+	whenAddon: {colon: true, eval: func(c RenderContext, name string) bool {
+		if c.Project == nil {
+			return false
+		}
+		if name == "" {
+			return len(c.Project.Addons) > 0
+		}
+		return c.Project.HasAddon(strings.TrimSpace(name))
+	}},
+	whenNotAddon: {colon: true, eval: func(c RenderContext, name string) bool {
+		if c.Project == nil {
+			return true
+		}
+		if name == "" {
+			return len(c.Project.Addons) == 0
+		}
+		return !c.Project.HasAddon(strings.TrimSpace(name))
+	}},
+}
+
+// allowedWhenConditions builds the diagnostic from the same table that drives
+// validation and evaluation.
+func allowedWhenConditions() string {
+	names := make([]string, 0, len(whenSpecs))
+	for name, spec := range whenSpecs {
+		if spec.colon {
+			names = append(names, name+":<name>")
+		} else {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return strings.Join(names, ", ")
+}
+
+// validateWhenConditions rejects any condition outside the closed vocabulary,
+// including unknown colon-prefixed forms such as "hasFeature:audit". Bare
+// addon names stay valid: the evaluator treats them as "any addon".
+func validateWhenConditions(bridgeName string, templates []TemplateSpec) error {
+	for i, spec := range templates {
+		when := spec.When
+		if when == "" {
+			continue
+		}
+		prefix, name, hasColon := strings.Cut(when, ":")
+		entry, ok := whenSpecs[strings.TrimSpace(prefix)]
+		if !ok || (hasColon && !entry.colon) || (!hasColon && strings.TrimSpace(when) != prefix) {
+			return fmt.Errorf("bridge %q template %d: unknown when condition %q (allowed: %s)", bridgeName, i, when, allowedWhenConditions())
+		}
+		_ = name
+	}
+	return nil
+}
+
+// maxParsedSourceCacheEntries bounds the parse cache. In a one-shot CLI it
+// lives for one run, but a long-lived host edits bridge.yaml repeatedly and
+// would otherwise accumulate one key per edit.
+const maxParsedSourceCacheEntries = 64
+
+// parsedSourceCache shares one parsed bridge.yaml between the resolution walk
+// (bridgechain asks for Extends) and the render setup (New + AttachBases asks
+// for the same configs again). The key includes the file bytes: a bridge
+// updated mid-command — by --update-bridges or a manual edit — gets a new key
+// and is parsed again, so a cached config can never go stale.
+//
+// A plain map under an RWMutex makes the cap check + clear + store one atomic
+// operation; concurrent loads take the read lock.
+var parsedSourceCache = struct {
+	sync.RWMutex
+	entries map[string]sourceConfig
+}{entries: make(map[string]sourceConfig)}
+
+// loadParsedSource looks up one cached config by its content-derived key.
+func loadParsedSource(key string) (sourceConfig, bool) {
+	parsedSourceCache.RLock()
+	src, ok := parsedSourceCache.entries[key]
+	parsedSourceCache.RUnlock()
+	return src, ok
+}
+
+// storeParsedSource inserts into the parse cache, clearing it once the cap is
+// reached. Clearing is safe: the key includes the bridge path and the full
+// config bytes, so an entry is only ever reused for an identical manifest. No
+// correctness depends on older entries — evicting them just makes the next
+// identical load re-parse once.
+func storeParsedSource(key string, src sourceConfig) {
+	parsedSourceCache.Lock()
+	defer parsedSourceCache.Unlock()
+
+	if len(parsedSourceCache.entries) >= maxParsedSourceCacheEntries {
+		parsedSourceCache.entries = make(map[string]sourceConfig, maxParsedSourceCacheEntries)
+	}
+	parsedSourceCache.entries[key] = src
+}
+
 // loadSource loads a single bridge directory (its bridge.yaml).
 func loadSource(bridgePath string) (sourceConfig, error) {
-	bridgeDir, configPath := resolveBridgePath(bridgePath)
-	data, err := os.ReadFile(configPath)
+	bridgeDir, configPath, err := bridge.LocalBridgePaths(bridgePath)
+	if err != nil {
+		return sourceConfig{}, err
+	}
+	data, err := os.ReadFile(configPath) //nolint:gosec // resolved from validated bridge refs by bridge.LocalBridgePaths
 	if err != nil {
 		return sourceConfig{}, fmt.Errorf("read bridge config: %w", err)
+	}
+
+	key := bridgeDir + "\x00" + configPath + "\x00" + string(data)
+	if src, ok := loadParsedSource(key); ok {
+		return src, nil
 	}
 
 	var config BridgeConfig
@@ -80,21 +228,27 @@ func loadSource(bridgePath string) (sourceConfig, error) {
 	if config.Layer != "" && !layerRe.MatchString(config.Layer) {
 		return sourceConfig{}, fmt.Errorf("invalid layer %q: must match %s", config.Layer, layerRe.String())
 	}
+	if err := validateWhenConditions(config.Name, config.Templates); err != nil {
+		return sourceConfig{}, err
+	}
 	if config.OutputDir == "" {
 		config.OutputDir = "generated"
 	}
-	// Contract version: absent (0) means contract 1, with a deprecation notice
-	// (emitted by the caller); a newer contract is a hard error.
-	contractDeclared := config.ContractVersion != 0
-	if config.ContractVersion == 0 {
-		config.ContractVersion = 1
+	// Contract version: use the same parser/gate as the bridge update path so
+	// a manifest cannot be accepted on one side and rejected on the other.
+	// An absent declaration defaults to the core's version (with a deprecation
+	// notice from the caller); a negative or newer declaration is a hard error.
+	contractVersion, contractDeclared, err := bridge.ParseContractVersion(data)
+	if err != nil {
+		return sourceConfig{}, err
 	}
-	if config.ContractVersion > ContractVersion {
-		return sourceConfig{}, fmt.Errorf(
-			"bridge %q requires contract v%d, but this DomainCraft core implements contract v%d",
-			config.Name, config.ContractVersion, ContractVersion)
+	if err := bridge.CheckContractVersion(contractVersion); err != nil {
+		return sourceConfig{}, fmt.Errorf("bridge %q: %w", config.Name, err)
 	}
-	return sourceConfig{dir: bridgeDir, config: config, contractDeclared: contractDeclared}, nil
+	config.ContractVersion = contractVersion
+	src := sourceConfig{dir: bridgeDir, config: config, contractDeclared: contractDeclared}
+	storeParsedSource(key, src)
+	return src, nil
 }
 
 // New loads a single (leaf) bridge.
@@ -104,7 +258,7 @@ func New(bridgePath string, log *logger.Logger) (*Renderer, error) {
 		return nil, err
 	}
 	if !src.contractDeclared && log != nil {
-		log.Warn("bridge %q does not declare `contract_version`; assuming contract v1 (deprecated — please add it)", src.config.Name)
+		log.Warn("bridge %q does not declare `contract_version`; assuming contract v%d (deprecated — please add it)", src.config.Name, src.config.ContractVersion)
 	}
 	return &Renderer{sources: []sourceConfig{src}, log: log}, nil
 }
@@ -137,8 +291,8 @@ func (r *Renderer) AttachBases(basePaths []string) error {
 // so a persistence bridge's migrations are found even when the top adapter
 // has no migrations (e.g. csharp-rest → csharp-efcore).
 func (r *Renderer) MigrationConfig() *MigrationConfig {
-	for i := len(r.sources) - 1; i >= 0; i-- {
-		cfg := r.sources[i].config.Migrations
+	for _, src := range slices.Backward(r.sources) {
+		cfg := src.config.Migrations
 		if cfg != nil && cfg.Enabled {
 			return cfg
 		}
@@ -180,16 +334,4 @@ func (r *Renderer) applyDelimiters(t *template.Template) *template.Template {
 		return t.Delims(left, right)
 	}
 	return t
-}
-
-func resolveBridgePath(bridgePath string) (string, string) {
-	info, err := os.Stat(bridgePath)
-	if err != nil {
-		// Path does not exist or is not accessible — treat as file path.
-		return filepath.Dir(bridgePath), bridgePath
-	}
-	if info.IsDir() {
-		return bridgePath, filepath.Join(bridgePath, "bridge.yaml")
-	}
-	return filepath.Dir(bridgePath), bridgePath
 }

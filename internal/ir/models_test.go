@@ -3,6 +3,7 @@ package ir
 import "testing"
 
 func TestIRField_IsArray(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		databaseType string
@@ -16,7 +17,8 @@ func TestIRField_IsArray(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := IRField{DatabaseType: tt.databaseType}
+			t.Parallel()
+			f := Field{DatabaseType: tt.databaseType}
 			if got := f.IsArray(); got != tt.want {
 				t.Errorf("IsArray() = %v, want %v", got, tt.want)
 			}
@@ -25,6 +27,7 @@ func TestIRField_IsArray(t *testing.T) {
 }
 
 func TestIRField_ArrayElementType(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		databaseType string
@@ -37,7 +40,8 @@ func TestIRField_ArrayElementType(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := IRField{DatabaseType: tt.databaseType}
+			t.Parallel()
+			f := Field{DatabaseType: tt.databaseType}
 			if got := f.ArrayElementType(); got != tt.want {
 				t.Errorf("ArrayElementType() = %q, want %q", got, tt.want)
 			}
@@ -46,6 +50,7 @@ func TestIRField_ArrayElementType(t *testing.T) {
 }
 
 func TestIREntity_HasFeature(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		features map[string]bool
@@ -60,7 +65,8 @@ func TestIREntity_HasFeature(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := IREntity{Features: tt.features}
+			t.Parallel()
+			e := Entity{Features: tt.features}
 			if got := e.HasFeature(tt.feature); got != tt.want {
 				t.Errorf("HasFeature(%q) = %v, want %v", tt.feature, got, tt.want)
 			}
@@ -69,6 +75,7 @@ func TestIREntity_HasFeature(t *testing.T) {
 }
 
 func TestIREntity_HasAudit(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		features map[string]bool
@@ -80,7 +87,8 @@ func TestIREntity_HasAudit(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := IREntity{Features: tt.features}
+			t.Parallel()
+			e := Entity{Features: tt.features}
 			if got := e.HasAudit(); got != tt.want {
 				t.Errorf("HasAudit() = %v, want %v", got, tt.want)
 			}
@@ -89,33 +97,37 @@ func TestIREntity_HasAudit(t *testing.T) {
 }
 
 func TestIREntity_HasAuditLog(t *testing.T) {
-	e := IREntity{Features: map[string]bool{"audit_log": true}}
+	t.Parallel()
+	e := Entity{Features: map[string]bool{"audit_log": true}}
 	if !e.HasAuditLog() {
 		t.Error("HasAuditLog() = false, want true")
 	}
-	e2 := IREntity{Features: map[string]bool{}}
+	e2 := Entity{Features: map[string]bool{}}
 	if e2.HasAuditLog() {
 		t.Error("HasAuditLog() = true, want false")
 	}
 }
 
 func TestIREntity_HasSoftDelete(t *testing.T) {
-	e := IREntity{Features: map[string]bool{"soft_delete": true}}
+	t.Parallel()
+	e := Entity{Features: map[string]bool{"soft_delete": true}}
 	if !e.HasSoftDelete() {
 		t.Error("HasSoftDelete() = false, want true")
 	}
 }
 
 func TestIREntity_HasOptimisticLock(t *testing.T) {
-	e := IREntity{Features: map[string]bool{"optimistic_lock": true}}
+	t.Parallel()
+	e := Entity{Features: map[string]bool{"optimistic_lock": true}}
 	if !e.HasOptimisticLock() {
 		t.Error("HasOptimisticLock() = false, want true")
 	}
 }
 
 func TestIREntity_NonRelationFields(t *testing.T) {
-	e := IREntity{
-		Fields: []IRField{
+	t.Parallel()
+	e := Entity{
+		Fields: []Field{
 			{Name: "id", IsRelation: false},
 			{Name: "categoryId", IsRelation: true},
 			{Name: "name", IsRelation: false},
@@ -131,8 +143,9 @@ func TestIREntity_NonRelationFields(t *testing.T) {
 }
 
 func TestIREntity_RelationFields(t *testing.T) {
-	e := IREntity{
-		Fields: []IRField{
+	t.Parallel()
+	e := Entity{
+		Fields: []Field{
 			{Name: "id", IsRelation: false},
 			{Name: "categoryId", IsRelation: true},
 			{Name: "name", IsRelation: false},
@@ -151,39 +164,56 @@ func TestIREntity_RelationFields(t *testing.T) {
 // (TableName, ColumnName, ForeignKeyColumnName) instead of re-deriving them
 // with the template `snakecase`, which diverges on acronyms.
 func TestCanonicalNameContract(t *testing.T) {
-	e := IREntity{Name: "OrderItem", NamePlural: "OrderItems"}
+	t.Parallel()
+	e := Entity{Name: "OrderItem", NamePlural: "OrderItems"}
 	if got := e.TableName(); got != "order_items" {
 		t.Errorf("TableName() = %q, want order_items", got)
 	}
 
-	relation := IRRelation{FieldName: "category"}
+	relation := Relation{FieldName: "category"}
 	if got := relation.ForeignKeyColumnName(); got != "category_id" {
 		t.Errorf("ForeignKeyColumnName() = %q, want category_id", got)
 	}
 
 	cases := []struct {
 		name string
-		f    IRField
+		f    Field
 		want string
 	}{
-		{"relation field uses the FK name", IRField{Name: "categoryId", IsRelation: true}, "category_id"},
-		{"parser-computed column wins", IRField{Name: "skuCode", DatabaseColumnName: "sku_code"}, "sku_code"},
-		{"fallback re-derives from the name", IRField{Name: "createdAt"}, "created_at"},
+		{"relation field uses the FK name", Field{Name: "categoryId", IsRelation: true}, "category_id"},
+		{"parser-computed column wins", Field{Name: "skuCode", DatabaseColumnName: "sku_code"}, "sku_code"},
+		{"fallback re-derives from the name", Field{Name: "createdAt"}, "created_at"},
 	}
 	for _, c := range cases {
-		if got := c.f.ColumnName(); got != c.want {
-			t.Errorf("%s: ColumnName() = %q, want %q", c.name, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := c.f.ColumnName(); got != c.want {
+				t.Errorf("%s: ColumnName() = %q, want %q", c.name, got, c.want)
+			}
+		})
 	}
 }
 
 func TestEagerLoadNavigation(t *testing.T) {
-	r := IRRelation{FieldName: "orders", NavigationName: "Order", IsMany: true}
+	t.Parallel()
+	r := Relation{FieldName: "orders", NavigationName: "Order", IsMany: true}
 	if got := r.EagerLoadNavigation(); got != "orders" {
 		t.Errorf("[many] navigation = %q, want the collection property orders", got)
 	}
-	r = IRRelation{FieldName: "customerId", NavigationName: "Customer"}
+	r = Relation{FieldName: "customerId", NavigationName: "Customer"}
 	if got := r.EagerLoadNavigation(); got != "Customer" {
 		t.Errorf("single FK navigation = %q, want Customer", got)
+	}
+}
+
+func TestFieldOldColumnNameFallsBackToOldName(t *testing.T) {
+	t.Parallel()
+	f := Field{Name: "price", OldName: "oldPrice", DatabaseType: "decimal"}
+	if got := f.OldColumnName(); got != "old_price" {
+		t.Errorf("OldColumnName() = %q, want the snake_case of old_name", got)
+	}
+	f.OldDatabaseColumnName = "legacy_price"
+	if got := f.OldColumnName(); got != "legacy_price" {
+		t.Errorf("OldColumnName() = %q, want the declared old column", got)
 	}
 }

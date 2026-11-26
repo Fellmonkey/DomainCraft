@@ -1,3 +1,4 @@
+// Package parser decodes domain.yaml into the parsed schema used by the validator and IR builder.
 package parser
 
 import (
@@ -37,7 +38,7 @@ type ParsedEntity struct {
 	FieldOrder  []string // field order for generation
 	Indexes     []*ParsedIndex
 	Permissions *ParsedPermissions
-	Seed        []map[string]interface{}
+	Seed        []map[string]any
 }
 
 // ParsedField represents a fully parsed field
@@ -63,10 +64,9 @@ func (f *ParsedField) NavigationName() string {
 	if f.IsMany {
 		name = textutil.Singularize(name)
 	}
-	// Strip "Id" or "ID" suffix (FK convention), not arbitrary "id" substrings.
-	if strings.HasSuffix(name, "Id") && len(name) > 2 {
-		name = name[:len(name)-2]
-	} else if strings.HasSuffix(name, "ID") && len(name) > 2 {
+	// Strip an FK id suffix (Id / ID) via the shared specmeta helper.
+	// Lowercase "id" is not an FK format: fluid and squid keep their names.
+	if specmeta.HasIDSuffix(name) {
 		name = name[:len(name)-2]
 	}
 	if name == "" {
@@ -92,13 +92,16 @@ type ParsedPermissions struct {
 	Delete []string
 }
 
-// NewParser creates a new Parser
-func NewParser(raw *RawSchema) *Parser {
+// New creates a new Parser.
+func New(raw *RawSchema) *Parser {
 	return &Parser{raw: raw}
 }
 
 // Parse performs full parsing with validation
 func (p *Parser) Parse() (*ParsedSchema, error) {
+	if p == nil || p.raw == nil {
+		return nil, fmt.Errorf("parser: raw schema is nil")
+	}
 	auth := p.raw.Auth
 	schema := &ParsedSchema{
 		Project:     p.raw.Project,
@@ -111,7 +114,8 @@ func (p *Parser) Parse() (*ParsedSchema, error) {
 	}
 
 	// Parse all entities
-	for entityName, rawEntity := range p.raw.Entities {
+	for _, entityName := range slices.Sorted(maps.Keys(p.raw.Entities)) {
+		rawEntity := p.raw.Entities[entityName]
 		entity, err := p.parseEntity(entityName, rawEntity)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing entity '%s': %w", entityName, err)
@@ -119,9 +123,6 @@ func (p *Parser) Parse() (*ParsedSchema, error) {
 		schema.Entities[entityName] = entity
 		schema.EntityOrder = append(schema.EntityOrder, entityName)
 	}
-
-	// Sort for deterministic order
-	slices.Sort(schema.EntityOrder)
 
 	return schema, nil
 }
@@ -138,26 +139,28 @@ func (p *Parser) parseEntity(name string, raw RawEntity) (*ParsedEntity, error) 
 		Indexes:    make([]*ParsedIndex, 0),
 	}
 
-	// Parse features (behavior macros)
+	// Parse features (behavior macros). Duplicates are rejected here: the
+	// Features map cannot carry them, so a later check could never fire.
 	for _, feature := range raw.Features {
 		feature = strings.TrimSpace(feature)
 		if !specmeta.IsFeature(feature) {
 			return nil, fmt.Errorf("unknown feature: %s", feature)
 		}
+		if entity.Features[feature] {
+			return nil, fmt.Errorf("duplicate feature: %s", feature)
+		}
 		entity.Features[feature] = true
 	}
 
 	// Add automatic fields based on features
-	if err := p.addFeatureFields(entity); err != nil {
-		return nil, err
-	}
+	p.addFeatureFields(entity)
 
 	// Parse fields in YAML order (preserved by RawEntity.UnmarshalYAML).
 	for _, fieldName := range raw.FieldOrder {
 		fieldDef := raw.Fields[fieldName]
-		field, err := p.parseField(fieldName, fieldDef)
+		field, err := ParseField(fieldName, fieldDef)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("field %q: %w", fieldName, err)
 		}
 		entity.Fields[fieldName] = field
 		// Skip if already added by addFeatureFields (user overriding a feature field).
@@ -195,8 +198,11 @@ func (p *Parser) parseEntity(name string, raw RawEntity) (*ParsedEntity, error) 
 	return entity, nil
 }
 
-// parseField parses a single field using the lexer
-func (p *Parser) parseField(name string, fieldDef string) (*ParsedField, error) {
+// ParseField parses a single field definition and applies the parser's semantic
+// normalization (primary implies required, optional clears required, required is
+// mirrored into the validations map, and relation fields get their relation
+// type). Both Parser and testutil go through this one function.
+func ParseField(name string, fieldDef string) (*ParsedField, error) {
 	fd, err := lexer.ParseFieldString(fieldDef)
 	if err != nil {
 		return nil, err
@@ -218,13 +224,14 @@ func (p *Parser) parseField(name string, fieldDef string) (*ParsedField, error) 
 
 	// Infer relation type for relation fields.
 	var relType string
-	if fd.Type == "relation" {
-		if fd.IsMany {
-			relType = "many-to-many"
-		} else if fd.IsUnique {
-			relType = "one-to-one"
-		} else {
-			relType = "many-to-one"
+	if fd.Type == specmeta.FieldTypeRelation {
+		switch {
+		case fd.IsMany:
+			relType = specmeta.RelationTypeManyToMany
+		case fd.IsUnique:
+			relType = specmeta.RelationTypeOneToOne
+		default:
+			relType = specmeta.RelationTypeManyToOne
 		}
 	}
 
@@ -239,7 +246,7 @@ func (p *Parser) parseField(name string, fieldDef string) (*ParsedField, error) 
 
 // addFeatureFields adds automatic fields based on entity features.
 // Uses specmeta.FeatureFieldDefs as the single source of truth.
-func (p *Parser) addFeatureFields(entity *ParsedEntity) error {
+func (p *Parser) addFeatureFields(entity *ParsedEntity) {
 	// Iterate in sorted order for deterministic field generation.
 	names := slices.Sorted(maps.Keys(specmeta.FeatureFieldDefs))
 	for _, fieldName := range names {
@@ -250,7 +257,6 @@ func (p *Parser) addFeatureFields(entity *ParsedEntity) error {
 		entity.Fields[fieldName] = newFeatureField(fieldName, def)
 		entity.FieldOrder = append(entity.FieldOrder, fieldName)
 	}
-	return nil
 }
 
 // newFeatureField creates a ParsedField for an auto-generated feature field.
@@ -287,6 +293,6 @@ func ParseYAML(data []byte) (*ParsedSchema, error) {
 		return nil, fmt.Errorf("error parsing YAML: %w", err)
 	}
 
-	parser := NewParser(raw)
+	parser := New(raw)
 	return parser.Parse()
 }

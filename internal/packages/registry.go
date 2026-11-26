@@ -2,24 +2,155 @@
 package packages
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+	"math"
+	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/DomainCraft/DomainCraft/internal/bridge"
+	"github.com/DomainCraft/DomainCraft/internal/netutil"
 )
 
-var registryClient = &http.Client{Timeout: 5 * time.Second}
+// maxRegistryResponseBytes caps a version index read from a registry.
+const maxRegistryResponseBytes = netutil.DefaultMaxBodyBytes
 
-// ResolveVersion queries a package registry (e.g. NuGet) for the latest stable version
-// of a package. The registryURL template must contain {id} which is replaced with the package ID.
-func ResolveVersion(registryURL string, packageID string) (string, error) {
+var registryClient = newRegistryClient()
+
+// newRegistryClient installs a dialer that resolves and checks every address at
+// connect time, including addresses reached through a redirect. Checking only
+// the literal host in bridge.yaml is not enough: a hostname can resolve to
+// loopback, a private network or the cloud metadata address.
+func newRegistryClient() *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	// The dialer checks the resolved address. An environment proxy would make
+	// it check the proxy instead of the host behind CONNECT, so never use one
+	// for registry lookups.
+	tr.Proxy = nil
+	tr.DialContext = restrictedRegistryDialer
+	client := netutil.NewBoundedClient(5*time.Second, tr)
+	client.CheckRedirect = func(req *http.Request, _ []*http.Request) error {
+		if err := validateRegistryURL(req.URL.String()); err != nil {
+			return err
+		}
+		return validateRegistryTarget(req.Context(), req.URL)
+	}
+	return client
+}
+
+// allowLocalRegistryForTests is set only by tests using httptest TLS servers.
+var allowLocalRegistryForTests bool
+
+// lookupRegistryIPs is a seam so the SSRF guards can be tested without DNS.
+var lookupRegistryIPs = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+	return net.DefaultResolver.LookupIPAddr(ctx, host)
+}
+
+// allowedRegistryIP rejects addresses that could reach a local service or the
+// cloud metadata endpoint (loopback, private, link-local and unspecified).
+func allowedRegistryIP(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	return !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsLinkLocalUnicast() &&
+		!ip.IsLinkLocalMulticast() && !ip.IsUnspecified()
+}
+
+// validateRegistryURL performs the syntactic checks on a registry URL. The
+// address checks happen at dial time so DNS rebinding cannot bypass them.
+func validateRegistryURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		// url.Error repeats the raw URL (including userinfo/query); keep only
+		// its reason and wrap that instead.
+		return fmt.Errorf("invalid registry URL %q: %w", netutil.RedactedURL(raw), netutil.RedactURLError(err))
+	}
+	if u.Scheme != "https" || u.Host == "" {
+		return fmt.Errorf("registry URL must be an absolute https URL: %q", netutil.RedactedURL(raw))
+	}
+	host := strings.ToLower(u.Hostname())
+	if allowLocalRegistryForTests {
+		return nil
+	}
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return fmt.Errorf("registry host %q is not allowed", host)
+	}
+	if ip := net.ParseIP(host); ip != nil && !allowedRegistryIP(ip) {
+		return fmt.Errorf("registry host %q is not allowed", host)
+	}
+	return nil
+}
+
+// resolveAllowedIPs resolves host and applies the single address policy shared
+// by the redirect check and the dial hook. The test bypass lives here so both
+// callers cannot drift apart on SSRF rules.
+func resolveAllowedIPs(ctx context.Context, host string) ([]net.IPAddr, error) {
+	if allowLocalRegistryForTests {
+		return nil, nil
+	}
+	ips, err := lookupRegistryIPs(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("resolve registry host %q: %w", host, err)
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("registry host %q has no addresses", host)
+	}
+	for _, addr := range ips {
+		if !allowedRegistryIP(addr.IP) {
+			return nil, fmt.Errorf("registry host %q resolves to disallowed address %s", host, addr.IP)
+		}
+	}
+	return ips, nil
+}
+
+// validateRegistryTarget resolves the host and rejects a disallowed address.
+func validateRegistryTarget(ctx context.Context, u *url.URL) error {
+	_, err := resolveAllowedIPs(ctx, strings.ToLower(u.Hostname()))
+	return err
+}
+
+// restrictedRegistryDialer is the http.Transport dial hook. It uses the same
+// address rule as validateRegistryTarget and connects to the checked IP, so a
+// second DNS answer cannot rebind the connection to a private address.
+func restrictedRegistryDialer(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid registry address: %w", err)
+	}
+	dialer := &net.Dialer{}
+	if allowLocalRegistryForTests {
+		return dialer.DialContext(ctx, network, addr)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if !allowedRegistryIP(ip) {
+			return nil, fmt.Errorf("registry address %s is not allowed", netutil.RedactedURL("https://"+addr))
+		}
+		return dialer.DialContext(ctx, network, addr)
+	}
+	ips, err := resolveAllowedIPs(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+}
+
+// resolveLatest is the single fetch + select pipeline. maxMajor caps the major
+// version; fallbackUncapped retries without the cap so an over-constrained TFM
+// still produces a usable version (the renderer warns about the fallback).
+func resolveLatest(registryURL, packageID string, maxMajor int, fallbackUncapped bool) (string, error) {
 	versions, err := fetchVersions(registryURL, packageID)
 	if err != nil {
 		return "", err
 	}
-	best := latestStable(versions, 0)
+	best := latestStable(versions, maxMajor)
+	if best == "" && fallbackUncapped {
+		best = latestStable(versions, 0)
+	}
 	if best == "" {
 		return "", fmt.Errorf("no stable versions found for %s", packageID)
 	}
@@ -33,19 +164,7 @@ func ResolveVersion(registryURL string, packageID string) (string, error) {
 // selection unconstrained. If no compatible version exists, the latest stable
 // one is returned so generation can still complete; the renderer warns about it.
 func ResolveVersionForFramework(registryURL, packageID, targetFramework string) (string, error) {
-	versions, err := fetchVersions(registryURL, packageID)
-	if err != nil {
-		return "", err
-	}
-	maxMajor := MaxMajorForFramework(targetFramework)
-	best := latestStable(versions, maxMajor)
-	if best == "" {
-		best = latestStable(versions, 0)
-	}
-	if best == "" {
-		return "", fmt.Errorf("no stable versions found for %s", packageID)
-	}
-	return best, nil
+	return resolveLatest(registryURL, packageID, MaxMajorForFramework(targetFramework), true)
 }
 
 // MaxMajorForFramework extracts the runtime major from "net10.0" → 10.
@@ -58,19 +177,35 @@ func MaxMajorForFramework(framework string) int {
 	if i := strings.IndexAny(major, ".-+ "); i >= 0 {
 		major = major[:i]
 	}
-	var n int
-	if _, err := fmt.Sscanf(major, "%d", &n); err != nil || n <= 0 {
+	return numericPrefix(major)
+}
+
+// numericPrefix parses the leading digits of a version component. Overflow
+// clamps to MaxInt instead of silently becoming zero, which would drop a
+// framework's major-version cap or misorder two versions.
+func numericPrefix(component string) int {
+	i := 0
+	for i < len(component) && component[i] >= '0' && component[i] <= '9' {
+		i++
+	}
+	if i == 0 {
 		return 0
 	}
-	return n
+	n, err := strconv.ParseInt(component[:i], 10, 64)
+	if err != nil {
+		return math.MaxInt
+	}
+	if n <= 0 {
+		return 0
+	}
+	if n > math.MaxInt {
+		return math.MaxInt
+	}
+	return int(n)
 }
 
 func versionMajor(version string) int {
-	var n int
-	if _, err := fmt.Sscanf(version, "%d", &n); err != nil {
-		return 0
-	}
-	return n
+	return numericPrefix(version)
 }
 
 // latestStable returns the highest stable version whose major is <= maxMajor.
@@ -93,9 +228,12 @@ func latestStable(versions []string, maxMajor int) string {
 
 // fetchVersions reads the flat-container version index from the registry.
 func fetchVersions(registryURL string, packageID string) ([]string, error) {
-	url := strings.ReplaceAll(registryURL, "{id}", strings.ToLower(packageID))
+	registryEndpoint := strings.ReplaceAll(registryURL, "{id}", strings.ToLower(packageID))
+	if err := validateRegistryURL(registryEndpoint); err != nil {
+		return nil, err
+	}
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(bridge.CommandContext(), http.MethodGet, registryEndpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -104,17 +242,23 @@ func fetchVersions(registryURL string, packageID string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("registry returned %d for %s", resp.StatusCode, packageID)
 	}
 
+	// A bounded read rejects an oversized index instead of silently decoding a
+	// truncated prefix. The shared helper closes the body; the defer above also
+	// covers the early return for a non-OK status.
+	body, err := netutil.ReadBoundedBody(resp, registryEndpoint, int64(maxRegistryResponseBytes), nil)
+	if err != nil {
+		return nil, err
+	}
 	var result struct {
 		Versions []string `json:"versions"`
 	}
-	// Limit response body to 1MB to prevent OOM from malicious/misconfigured registries.
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, err
 	}
 
@@ -125,17 +269,14 @@ func fetchVersions(registryURL string, packageID string) ([]string, error) {
 func VersionGreater(a, b string) bool {
 	aParts := strings.Split(a, ".")
 	bParts := strings.Split(b, ".")
-	maxLen := len(aParts)
-	if len(bParts) > maxLen {
-		maxLen = len(bParts)
-	}
+	maxLen := max(len(aParts), len(bParts))
 	for i := range maxLen {
 		var ai, bi int
 		if i < len(aParts) {
-			fmt.Sscanf(aParts[i], "%d", &ai)
+			ai = numericPrefix(aParts[i])
 		}
 		if i < len(bParts) {
-			fmt.Sscanf(bParts[i], "%d", &bi)
+			bi = numericPrefix(bParts[i])
 		}
 		if ai > bi {
 			return true

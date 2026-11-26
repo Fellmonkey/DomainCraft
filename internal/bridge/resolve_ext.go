@@ -8,6 +8,18 @@ import (
 	domaincraft "github.com/DomainCraft/DomainCraft"
 )
 
+// ResolveOfficialLocal returns the local monorepo checkout for a registered
+// bridge ID, or "" when the ref is not an official ID or no local tree exists.
+// Both --bridge and extends use this step, so a registered ID resolves to the
+// same directory regardless of the entry point.
+func ResolveOfficialLocal(ref, fromDir string) string {
+	entry := Default().ByID(ref)
+	if entry == nil {
+		return ""
+	}
+	return FindMonorepoBridge(fromDir, entry.Path)
+}
+
 // ResolveExtendsRef resolves one `extends` reference. It shares the loader
 // order with the top-level `--bridge` entry, from most to least preferred:
 //
@@ -21,10 +33,10 @@ import (
 //
 // Finally, the normal path/ID/owner-repo resolution (cache + clone).
 func ResolveExtendsRef(ref, fromDir string, resolver *Resolver) (string, error) {
+	if p := ResolveOfficialLocal(ref, fromDir); p != "" {
+		return p, nil
+	}
 	if entry := Default().ByID(ref); entry != nil {
-		if p := FindMonorepoBridge(fromDir, entry.Path); p != "" {
-			return p, nil
-		}
 		repo := filepath.Base(entry.GitHub)
 		for _, candidate := range []string{
 			filepath.Join(filepath.Dir(fromDir), repo), // sibling of the adapter (monorepo)
@@ -35,7 +47,35 @@ func ResolveExtendsRef(ref, fromDir string, resolver *Resolver) (string, error) 
 			}
 		}
 	}
+	// A relative path-like `extends` belongs to the adapter that declared it,
+	// not to the CLI's current working directory. The generic resolver treats
+	// such refs as CWD-relative (and rejects a missing one as a hard error), so
+	// join it with the adapter directory before handing it over.
+	if strings.HasPrefix(ref, ".") && looksLikePath(ref) && fromDir != "" {
+		local := ref
+		if !filepath.IsAbs(local) {
+			local = filepath.Join(fromDir, filepath.FromSlash(local))
+		}
+		return resolver.Resolve(local)
+	}
 	return resolver.Resolve(ref)
+}
+
+// walkUpFromDir visits dir and each ancestor up to the filesystem root,
+// stopping as soon as visit reports a match. Both monorepo lookups share this
+// walk so their search order and stopping rule cannot drift.
+func walkUpFromDir(dir string, visit func(cur string) bool) {
+	cur := dir
+	for {
+		if visit(cur) {
+			return
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return
+		}
+		cur = parent
+	}
 }
 
 // FindMonorepoBridge walks up from dir looking for <root>/bridges/<relPath>
@@ -47,32 +87,80 @@ func FindMonorepoBridge(dir, relPath string) string {
 	if relPath == "" {
 		return ""
 	}
-	cur := dir
-	for {
+	found := ""
+	walkUpFromDir(dir, func(cur string) bool {
 		candidate := filepath.Join(cur, "bridges", filepath.FromSlash(relPath))
 		if info, err := os.Stat(filepath.Join(candidate, "bridge.yaml")); err == nil && !info.IsDir() {
-			return candidate
+			found = candidate
+			return true
 		}
-		parent := filepath.Dir(cur)
-		if parent == cur {
-			return ""
-		}
-		cur = parent
-	}
+		return false
+	})
+	return found
 }
 
-// MonorepoRelPath reports whether dir is the monorepo location for an official
-// bridge (i.e. it ends with `bridges/<entryPath>`) and returns that relative
-// path, or "" when the bridge was resolved from elsewhere.
-func MonorepoRelPath(dir, entryPath string) string {
-	if entryPath == "" {
+// monorepoRoot walks up from dir looking for the root of the DomainCraft
+// monorepo: a directory with a bridges/ tree and a go.mod declaring this module.
+// It returns "" when dir is not inside such a tree.
+func monorepoRoot(dir string) string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
 		return ""
 	}
-	suffix := filepath.Join("bridges", filepath.FromSlash(entryPath))
-	if strings.HasSuffix(filepath.Clean(dir), suffix) {
-		return filepath.ToSlash(suffix)
+	found := ""
+	walkUpFromDir(abs, func(cur string) bool {
+		if info, err := os.Stat(filepath.Join(cur, "bridges")); err == nil && info.IsDir() {
+			if data, err := os.ReadFile(filepath.Join(cur, "go.mod")); err == nil && //nolint:gosec // path walked upward from the validated bridge dir
+				strings.Contains(string(data), "module github.com/DomainCraft/DomainCraft") {
+				found = cur
+				return true
+			}
+		}
+		return false
+	})
+	return found
+}
+
+// samePath compares two absolute paths using the filesystem's case rules.
+func samePath(a, b string) bool { return PathKey(a) == PathKey(b) }
+
+// PathKey normalizes an absolute path for set-based cycle detection using the
+// filesystem's case rules. Both the chain walker and the CLI's `--replace`
+// validation use it, so a cycle cannot be missed by one of them.
+func PathKey(path string) string {
+	path = filepath.Clean(path)
+	if os.PathSeparator == '\\' {
+		return strings.ToLower(path)
 	}
-	return ""
+	return path
+}
+
+// MonorepoRelPath reports whether dir is the monorepo location of a bundled
+// official bridge and returns its `bridges/<entryPath>` relative path, or "".
+//
+// Three independent checks are required: the path component before the bridge
+// must be exactly `bridges` (not `mybridges`), the bridge must exist in the
+// embedded tree shipped by this binary, and dir must be inside the actual
+// monorepo root. A suffix match alone is not enough — a lookalike local path
+// must stay a community bridge so the migration consent gate still applies.
+func MonorepoRelPath(dir, entryPath string) string {
+	if entryPath == "" || !filepath.IsLocal(filepath.FromSlash(entryPath)) {
+		return ""
+	}
+	embedded := embeddedBridgeRel(entryPath)
+	if _, err := domaincraft.Bridges.ReadDir(embedded); err != nil {
+		return "" // not a bundled bridge in this binary
+	}
+	rel := filepath.Join("bridges", filepath.FromSlash(entryPath))
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+	root := monorepoRoot(abs)
+	if root == "" || !samePath(abs, filepath.Join(root, rel)) {
+		return ""
+	}
+	return filepath.ToSlash(rel)
 }
 
 // IsOfficialBundled reports whether dir is a bundled monorepo bridge, i.e. it
@@ -88,9 +176,9 @@ func IsOfficialBundled(dir string) bool {
 	return false
 }
 
-// BridgeStatus describes where a bridge is available from and whether it is
+// Status describes where a bridge is available from and whether it is
 // current. It is computed without network access unless CheckRemote is true.
-type BridgeStatus struct {
+type Status struct {
 	// Embedded is true when the bridge ships inside this binary (go:embed).
 	Embedded bool
 	// Cached is true when the bridge is materialized in the local cache.
@@ -109,10 +197,10 @@ type BridgeStatus struct {
 //     and cached — are reported, with no network traffic.
 //   - CheckRemote=true (used by `--check-updates`): additionally probes the
 //     remote and reports whether a newer supported version exists.
-func (e RegistryEntry) Status(checkRemote bool) BridgeStatus {
-	s := BridgeStatus{}
+func (e RegistryEntry) Status(checkRemote bool) Status {
+	s := Status{}
 	if e.Path != "" {
-		if _, err := domaincraft.Bridges.ReadDir("bridges/" + filepath.ToSlash(e.Path)); err == nil {
+		if _, err := domaincraft.Bridges.ReadDir(embeddedBridgeRel(e.Path)); err == nil {
 			s.Embedded = true
 		}
 	}
@@ -122,15 +210,17 @@ func (e RegistryEntry) Status(checkRemote bool) BridgeStatus {
 	if !checkRemote {
 		return s
 	}
-	u, err := CheckForUpdate(e, 0)
+	// A pinned bridge is fixed at one ref; there is no update to offer.
+	if meta, err := ReadMeta(e); err == nil && meta != nil && meta.Pin != "" {
+		return s
+	}
+	u, err := CheckForUpdateReadOnly(e, 0)
 	if err == nil && u != nil {
-		// Only flag an update if the remote contract is supported, so an
-		// unsupported (neverer-contract) bridge is never offered.
-		if c, rerr := remoteContractVersion(e, u.RemoteBranch); rerr == nil {
-			if cerr := shouldApplyContract(c); cerr == nil {
-				s.Outdated = true
-				s.RemoteReachable = true
-			}
+		s.RemoteReachable = true
+		// Only flag an update when the remote contract can be read and is
+		// supported. A failed probe is "cannot offer update".
+		if gateRemoteContract(e, u.RemoteBranch) == nil {
+			s.Outdated = true
 		}
 	}
 	return s

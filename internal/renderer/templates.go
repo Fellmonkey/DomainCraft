@@ -3,10 +3,13 @@ package renderer
 import (
 	"cmp"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"os"
-	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"text/template"
 
 	"github.com/DomainCraft/DomainCraft/internal/ir"
@@ -18,30 +21,53 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// seedKind is the language-agnostic value kind of a seed field. It is derived
+// from the IR database type; the typed constants keep template formatters from
+// comparing free-form strings.
+type seedKind string
+
+const (
+	seedArray    seedKind = "array"
+	seedUUID     seedKind = "uuid"
+	seedText     seedKind = "text"
+	seedInt      seedKind = "int"
+	seedBigInt   seedKind = "bigint"
+	seedFloat    seedKind = "float"
+	seedDecimal  seedKind = "decimal"
+	seedBool     seedKind = "bool"
+	seedDate     seedKind = "date"
+	seedDateTime seedKind = "datetime"
+	seedJSON     seedKind = "json"
+	seedEnum     seedKind = "enum"
+)
+
+func kindOfSeed(dbType string) seedKind { return seedKind(ir.KindOf(dbType)) }
+
 // LiteralSpec declares how a bridge writes a scalar literal of one IR type in
 // its target language. Loaded from type_mappings.yaml `literals:` (keyed by IR
 // database type; "enum" is a reserved key for user-declared enums).
 type LiteralSpec struct {
-	// Parse is a printf template (one %s) that turns a serialized value into an
-	// expression, e.g. "Guid.Parse(%s)" or "JsonDocument.Parse(%s, default)".
+	// Parse is a printf template (one %s) that turns a serialized value into a
+	// target-language expression (a parse call in languages that need one).
 	Parse string `yaml:"parse"`
-	// Suffix is appended to a bare numeric literal, e.g. "L" (long) or "m" (decimal).
+	// Suffix is appended to a bare numeric literal, e.g. a long or decimal marker.
 	Suffix string `yaml:"suffix"`
-	// Default is the value-less default expression, e.g. "Guid.NewGuid()" or "0m".
+	// Default is the value-less default expression, e.g. a fresh identifier or
+	// a numeric zero, in the bridge's target language.
 	Default string `yaml:"default"`
-	// Member (enums) is a printf template (type, value) for a compile-time member
-	// reference, e.g. "%s.%s" -> "OrderStatus.Draft".
+	// Member (enums) is a printf template (type, value) for a compile-time
+	// reference to an enum member, e.g. "%s.%s".
 	Member string `yaml:"member"`
-	// Zero (enums) is a printf template (type) for a zero-valued enum, e.g. "(%s)0".
+	// Zero (enums) is a printf template (type) for a zero-valued enum expression.
 	Zero string `yaml:"zero"`
 }
 
 // ArrayLiteralSpec declares how a bridge writes array literals. %s placeholders
-// are filled with the bridge's array type (e.g. "List<int>").
+// are filled with the bridge's array type.
 type ArrayLiteralSpec struct {
-	Open  string `yaml:"open"`  // e.g. "new %s { "
-	Close string `yaml:"close"` // e.g. " }"
-	Empty string `yaml:"empty"` // e.g. "new %s()"
+	Open  string `yaml:"open"`  // bridge-specific opening delimiter/expression
+	Close string `yaml:"close"` // bridge-specific closing delimiter
+	Empty string `yaml:"empty"` // bridge-specific empty-array expression
 }
 
 // typeMappings is the raw shape of a bridge's type_mappings.yaml. A composed
@@ -72,9 +98,7 @@ func (r *Renderer) buildFuncMap() (template.FuncMap, error) {
 	if err != nil {
 		return nil, err
 	}
-	for key, value := range bridgeFuncs {
-		funcMap[key] = value
-	}
+	maps.Copy(funcMap, bridgeFuncs)
 	return funcMap, nil
 }
 
@@ -82,9 +106,11 @@ func (r *Renderer) buildFuncMap() (template.FuncMap, error) {
 // (no error) when the file is absent — a bridge with no mappings contributes
 // nothing, and the merged result drives the language functions.
 func (r *Renderer) loadTypeMappings(dir string) (*typeMappings, error) {
-	data, err := os.ReadFile(filepath.Join(dir, "type_mappings.yaml"))
+	// Same guard as templates and helpers: a symlinked mapping file must not
+	// pull configuration from outside the bridge directory.
+	data, err := readBridgeSource(dir, "type_mappings.yaml")
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, err
@@ -106,29 +132,16 @@ func mergeTypeMappings(base, overlay *typeMappings) *typeMappings {
 	if overlay == nil {
 		overlay = &typeMappings{}
 	}
-	mergeStrings := func(dst, src map[string]string) map[string]string {
-		if len(dst) == 0 && len(src) == 0 {
-			return nil
-		}
-		m := make(map[string]string, len(dst)+len(src))
-		for k, v := range dst {
-			m[k] = v
-		}
-		for k, v := range src {
-			m[k] = v
-		}
-		return m
-	}
 	out := &typeMappings{
-		Types:          mergeStrings(base.Types, overlay.Types),
-		Behaviors:      mergeStrings(base.Behaviors, overlay.Behaviors),
-		InputTypes:     mergeStrings(base.InputTypes, overlay.InputTypes),
-		ColumnSizes:    mergeStrings(base.ColumnSizes, overlay.ColumnSizes),
+		Types:          mergeMaps(base.Types, overlay.Types),
+		Behaviors:      mergeMaps(base.Behaviors, overlay.Behaviors),
+		InputTypes:     mergeMaps(base.InputTypes, overlay.InputTypes),
+		ColumnSizes:    mergeMaps(base.ColumnSizes, overlay.ColumnSizes),
 		ArrayFormat:    cmp.Or(overlay.ArrayFormat, base.ArrayFormat),
 		NullableFormat: cmp.Or(overlay.NullableFormat, base.NullableFormat),
 		EnumNullable:   overlay.EnumNullable || base.EnumNullable,
-		ValueTypes:     overlay.ValueTypes,
-		Literals:       mergeLiterals(base.Literals, overlay.Literals),
+		ValueTypes:     slices.Clone(overlay.ValueTypes),
+		Literals:       mergeMaps(base.Literals, overlay.Literals),
 		Array: ArrayLiteralSpec{
 			Open:  cmp.Or(overlay.Array.Open, base.Array.Open),
 			Close: cmp.Or(overlay.Array.Close, base.Array.Close),
@@ -136,29 +149,27 @@ func mergeTypeMappings(base, overlay *typeMappings) *typeMappings {
 		},
 	}
 	if len(out.ValueTypes) == 0 {
-		out.ValueTypes = base.ValueTypes
+		out.ValueTypes = slices.Clone(base.ValueTypes)
 	}
 	return out
 }
 
-func mergeLiterals(base, overlay map[string]LiteralSpec) map[string]LiteralSpec {
-	if len(base) == 0 && len(overlay) == 0 {
+// mergeMaps overlays src on dst without mutating either input. Two empty maps
+// merge to nil so bridges with no mapping keep a zero-valued result.
+func mergeMaps[V any](dst, src map[string]V) map[string]V {
+	if len(dst) == 0 && len(src) == 0 {
 		return nil
 	}
-	m := make(map[string]LiteralSpec, len(base)+len(overlay))
-	for k, v := range base {
-		m[k] = v
-	}
-	for k, v := range overlay {
-		m[k] = v
-	}
+	m := make(map[string]V, len(dst)+len(src))
+	maps.Copy(m, dst)
+	maps.Copy(m, src)
 	return m
 }
 
 // getBridgeSpecificFuncs loads type_mappings from every bridge in the chain
 // (base-first, adapter last) and merges them before building the language
 // functions, so an adapter inherits its base's type mapping and can override it.
-func (r *Renderer) getBridgeSpecificFuncs() (map[string]interface{}, error) {
+func (r *Renderer) getBridgeSpecificFuncs() (map[string]any, error) {
 	var merged *typeMappings
 	for _, src := range r.sources {
 		m, err := r.loadTypeMappings(src.dir)
@@ -170,46 +181,81 @@ func (r *Renderer) getBridgeSpecificFuncs() (map[string]interface{}, error) {
 	return buildBridgeFuncs(merged, r.log), nil
 }
 
+// formatSpec renders a bridge-declared printf spec. An absent spec yields an
+// empty expression — the core never substitutes syntax a bridge did not declare.
+func formatSpec(format string, args ...any) string {
+	if format == "" {
+		return ""
+	}
+	return fmt.Sprintf(format, args...)
+}
+
+// dedupWarn emits each identical warning once per Render. A missing spec is
+// discovered once per field otherwise, burying the useful diagnostics under
+// dozens of identical lines.
+type dedupWarn struct {
+	mu   sync.Mutex
+	log  *logger.Logger
+	seen map[string]bool
+}
+
+func (w *dedupWarn) Warn(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	w.mu.Lock()
+	if w.seen[msg] {
+		w.mu.Unlock()
+		return
+	}
+	w.seen[msg] = true
+	w.mu.Unlock()
+	w.log.Warn("%s", msg)
+}
+
+// warnMissingSpec reports a spec the bridge must declare in type_mappings.yaml.
+// Logger.Warn is nil-safe, so silent mode needs no extra guard.
+func warnMissingSpec(w *dedupWarn, kind, key string) {
+	w.Warn("type_mappings.yaml has no %s for %q; emitting an empty expression", kind, key)
+}
+
 // buildBridgeFuncs turns a merged type_mappings into the template func map that
 // bridges use to map IR types into language-specific code. A nil mapping (no
 // type_mappings.yaml anywhere in the chain) yields no bridge-specific funcs.
-func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]interface{} {
-	bridgeFuncs := make(map[string]interface{})
+// Each registrar owns one group of keys; the map keys and closure behavior are
+// the contract, so splitting the registrars does not change any value.
+func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
+	bridgeFuncs := make(map[string]any)
 	if m == nil {
 		return bridgeFuncs
 	}
-	mapping := m
 
-	arrayFormat := mapping.ArrayFormat
-	if arrayFormat == "" {
-		arrayFormat = "%s[]" // default: generic array syntax (override in type_mappings.yaml for target language)
-	}
+	w := &dedupWarn{log: log, seen: make(map[string]bool)}
+	languageType := registerTypeFuncs(bridgeFuncs, m, w)
+	registerLiteralFuncs(bridgeFuncs, m, w, languageType)
+	registerValueFuncs(bridgeFuncs, m, w)
+	return bridgeFuncs
+}
 
-	nullableSuffix := mapping.NullableFormat
-	if nullableSuffix == "" {
-		nullableSuffix = "" // no default — bridges must set nullable_format explicitly
-	}
-
+// registerTypeFuncs registers languageType and isValueType. It returns the
+// languageType closure so the literal registrars reuse the very same mapping.
+func registerTypeFuncs(funcs map[string]any, m *typeMappings, w *dedupWarn) func(string, bool) string {
 	// wrapNullable applies the bridge-specific nullable format to a type name.
 	wrapNullable := func(typeName string) string {
-		return typeName + nullableSuffix
-	}
-
-	// Build set of value types for quick lookup
-	valueTypeSet := make(map[string]bool, len(mapping.ValueTypes))
-	for _, vt := range mapping.ValueTypes {
-		valueTypeSet[vt] = true
+		return typeName + m.NullableFormat
 	}
 
 	// wrapArray wraps a type name in the bridge-specific array format.
 	wrapArray := func(elementType string) string {
-		return fmt.Sprintf(arrayFormat, elementType)
+		if m.ArrayFormat == "" {
+			warnMissingSpec(w, "array_format", elementType)
+			return ""
+		}
+		return fmt.Sprintf(m.ArrayFormat, elementType)
 	}
 
 	// languageType maps IR database types to language-specific types via type_mappings.yaml
 	languageType := func(dbType string, nullable bool) string {
 		// Check explicit type mapping first (covers primitives and arrays)
-		if mapped, ok := mapping.Types[dbType]; ok {
+		if mapped, ok := m.Types[dbType]; ok {
 			if nullable && !specmeta.IsArrayType(dbType) {
 				return wrapNullable(mapped)
 			}
@@ -224,7 +270,7 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]interface{
 			if specmeta.IsArrayType(dbType) {
 				return wrapArray(formatted)
 			}
-			if nullable && mapping.EnumNullable {
+			if nullable && m.EnumNullable {
 				return wrapNullable(formatted)
 			}
 			return formatted
@@ -232,94 +278,189 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]interface{
 
 		// Primitive array not in explicit mapping — wrap inner type
 		if specmeta.IsArrayType(dbType) {
-			if mapped, ok := mapping.Types[inner]; ok {
+			if mapped, ok := m.Types[inner]; ok {
 				return wrapArray(mapped)
 			}
-			log.Warn("type_mappings.yaml has no type for %q; emitting raw type name %q", inner, inner)
+			w.Warn("type_mappings.yaml has no type for %q; emitting raw type name %q", inner, inner)
 			return wrapArray(inner)
 		}
 
-		log.Warn("type_mappings.yaml has no type for %q; emitting raw type name %q", dbType, dbType)
+		w.Warn("type_mappings.yaml has no type for %q; emitting raw type name %q", dbType, dbType)
 		return dbType
 	}
-	bridgeFuncs["languageType"] = languageType
+	funcs["languageType"] = languageType
 
-	// literalValue renders a scalar value of an IR database type as a bridge
-	// literal/parse expression. value is a native Go value (string, int64,
-	// float64, bool) or the raw string from a domain.yaml default.
-	bridgeFuncs["literalValue"] = func(dbType string, value any) string {
-		kind := ir.KindOf(dbType)
-		spec := mapping.Literals[dbType]
-		switch kind {
-		case "text":
-			return jsonValue(value)
-		case "int", "bigint", "float", "decimal", "bool":
-			return fmt.Sprintf("%v", value) + spec.Suffix
-		case "uuid", "date", "datetime", "json":
-			if spec.Parse == "" {
-				return jsonValue(value)
-			}
-			return fmt.Sprintf(spec.Parse, jsonValue(value))
-		case "enum":
-			e := mapping.Literals["enum"]
-			if e.Parse == "" {
-				return jsonValue(value)
-			}
-			return fmt.Sprintf(e.Parse, languageType(dbType, false), jsonValue(textutil.PascalCase(fmt.Sprintf("%v", value))))
-		}
-		return jsonValue(value)
+	// Build set of value types for quick lookup
+	valueTypeSet := make(map[string]bool, len(m.ValueTypes))
+	for _, vt := range m.ValueTypes {
+		valueTypeSet[vt] = true
 	}
-
-	// literalDefault renders the value-less default expression for a type:
-	// a scalar default, a zero-valued enum, or an empty array.
-	bridgeFuncs["literalDefault"] = func(dbType string) string {
-		if ir.KindOf(dbType) == "array" {
-			return fmt.Sprintf(mapping.Array.Empty, languageType(dbType, false))
-		}
-		spec := mapping.Literals[dbType]
-		if ir.KindOf(dbType) == "enum" {
-			if spec.Zero != "" {
-				return fmt.Sprintf(spec.Zero, languageType(dbType, false))
-			}
-			return fmt.Sprintf("(%s)0", languageType(dbType, false))
-		}
-		if spec.Default == "" {
-			return "default(" + languageType(dbType, false) + ")"
-		}
-		return spec.Default
-	}
-
-	// literalMember renders a compile-time enum member reference (Type.Value),
-	// used for enum defaults in domain.yaml.
-	bridgeFuncs["literalMember"] = func(dbType string, value string) string {
-		if ir.KindOf(dbType) == "enum" {
-			if spec := mapping.Literals["enum"]; spec.Member != "" {
-				return fmt.Sprintf(spec.Member, languageType(dbType, false), textutil.PascalCase(value))
-			}
-			return languageType(dbType, false) + "." + textutil.PascalCase(value)
-		}
-		return jsonValue(value)
-	}
-
-	// arrayLiteralOpen/Close wrap rendered elements in the bridge's array
-	// syntax (e.g. "new List<int> { " ... " }").
-	bridgeFuncs["arrayLiteralOpen"] = func(dbType string) string {
-		return fmt.Sprintf(mapping.Array.Open, languageType(dbType, false))
-	}
-	bridgeFuncs["arrayLiteralClose"] = func() string {
-		return mapping.Array.Close
-	}
-
-	bridgeFuncs["isValueType"] = func(typeName string) bool {
-		if mapped, ok := mapping.Types[typeName]; ok {
+	funcs["isValueType"] = func(typeName string) bool {
+		if mapped, ok := m.Types[typeName]; ok {
 			return valueTypeSet[mapped]
 		}
 		return false
 	}
+	return languageType
+}
 
-	bridgeFuncs["deleteBehaviorName"] = func(value string) string {
+// literalContext carries the bridge-owned specs and the shared formatter
+// closure through one literal-formatting call.
+type literalContext struct {
+	specs        *typeMappings
+	warn         *dedupWarn
+	languageType func(string, bool) string
+}
+
+// kindFormatters holds the three literal operations for one seed kind. A nil
+// operation falls back to the language-neutral JSON expression; that fallback
+// is what an array value or an unknown kind gets from literalValue today.
+type kindFormatters struct {
+	value  func(*literalContext, string, any) string
+	def    func(*literalContext, string) string
+	member func(*literalContext, string, string) string
+}
+
+// literalFormattersByKind is the single kind → formatter table. Adding a kind
+// means adding one row here, not editing three switch statements.
+var literalFormattersByKind = map[seedKind]kindFormatters{
+	seedArray:    {def: arrayDefault},
+	seedEnum:     {value: enumLiteral, def: enumDefault, member: enumMember},
+	seedText:     {value: jsonLiteral, def: scalarDefault},
+	seedInt:      {value: numericLiteral, def: scalarDefault},
+	seedBigInt:   {value: numericLiteral, def: scalarDefault},
+	seedFloat:    {value: numericLiteral, def: scalarDefault},
+	seedDecimal:  {value: numericLiteral, def: scalarDefault},
+	seedBool:     {value: numericLiteral, def: scalarDefault},
+	seedUUID:     {value: parseLiteral, def: scalarDefault},
+	seedDate:     {value: parseLiteral, def: scalarDefault},
+	seedDateTime: {value: parseLiteral, def: scalarDefault},
+	seedJSON:     {value: parseLiteral, def: scalarDefault},
+}
+
+func jsonLiteral(ctx *literalContext, _ string, value any) string {
+	return jsonValueOrFallback(ctx.warn, value)
+}
+
+func numericLiteral(ctx *literalContext, dbType string, value any) string {
+	return fmt.Sprintf("%v", value) + ctx.specs.Literals[dbType].Suffix
+}
+
+func parseLiteral(ctx *literalContext, dbType string, value any) string {
+	spec := ctx.specs.Literals[dbType]
+	if spec.Parse == "" {
+		warnMissingSpec(ctx.warn, "literals.parse", dbType)
+		return jsonValueOrFallback(ctx.warn, value) // JSON literal is language-neutral, not a target-language expression
+	}
+	return formatSpec(spec.Parse, jsonValueOrFallback(ctx.warn, value))
+}
+
+func enumLiteral(ctx *literalContext, dbType string, value any) string {
+	spec := ctx.specs.Literals["enum"]
+	if spec.Parse == "" {
+		warnMissingSpec(ctx.warn, "literals.enum.parse", dbType)
+		return jsonValueOrFallback(ctx.warn, value)
+	}
+	member := textutil.PascalCase(fmt.Sprintf("%v", value))
+	return formatSpec(spec.Parse, ctx.languageType(dbType, false), jsonValueOrFallback(ctx.warn, member))
+}
+
+func scalarDefault(ctx *literalContext, dbType string) string {
+	spec := ctx.specs.Literals[dbType]
+	if spec.Default == "" {
+		warnMissingSpec(ctx.warn, "literals.default", dbType)
+		return ""
+	}
+	return spec.Default
+}
+
+func enumDefault(ctx *literalContext, dbType string) string {
+	spec := ctx.specs.Literals[dbType]
+	if spec.Zero == "" {
+		spec = ctx.specs.Literals["enum"] // generic enum spec covers user-declared enums
+	}
+	if spec.Zero == "" {
+		warnMissingSpec(ctx.warn, "literals.zero", dbType)
+		return ""
+	}
+	return formatSpec(spec.Zero, ctx.languageType(dbType, false))
+}
+
+func arrayDefault(ctx *literalContext, dbType string) string {
+	if ctx.specs.Array.Empty == "" {
+		warnMissingSpec(ctx.warn, "array.empty", dbType)
+		return ""
+	}
+	return formatSpec(ctx.specs.Array.Empty, ctx.languageType(dbType, false))
+}
+
+func enumMember(ctx *literalContext, dbType, value string) string {
+	spec := ctx.specs.Literals["enum"]
+	if spec.Member == "" {
+		warnMissingSpec(ctx.warn, "literals.enum.member", dbType)
+		return ""
+	}
+	return formatSpec(spec.Member, ctx.languageType(dbType, false), textutil.PascalCase(value))
+}
+
+// registerLiteralFuncs registers the literal/array expression funcs. languageType
+// is the closure returned by registerTypeFuncs; literal specs are bridge-owned.
+func registerLiteralFuncs(funcs map[string]any, m *typeMappings, w *dedupWarn, languageType func(string, bool) string) {
+	ctx := &literalContext{specs: m, warn: w, languageType: languageType}
+
+	// literalValue renders a scalar value of an IR database type as a bridge
+	// literal/parse expression. value is a native Go value (string, int64,
+	// float64, bool) or the raw string from a domain.yaml default.
+	funcs["literalValue"] = func(dbType string, value any) string {
+		f := literalFormattersByKind[kindOfSeed(dbType)]
+		if f.value == nil {
+			return jsonLiteral(ctx, dbType, value)
+		}
+		return f.value(ctx, dbType, value)
+	}
+
+	// literalDefault renders the value-less default expression for a type:
+	// a scalar default, a zero-valued enum, or an empty array. Missing specs
+	// produce an empty expression and a warning; the core never invents one.
+	funcs["literalDefault"] = func(dbType string) string {
+		f := literalFormattersByKind[kindOfSeed(dbType)]
+		if f.def == nil {
+			return scalarDefault(ctx, dbType)
+		}
+		return f.def(ctx, dbType)
+	}
+
+	// literalMember renders a compile-time enum member reference (Type.Value),
+	// used for enum defaults in domain.yaml.
+	funcs["literalMember"] = func(dbType string, value string) string {
+		f := literalFormattersByKind[kindOfSeed(dbType)]
+		if f.member == nil {
+			return jsonLiteral(ctx, dbType, value)
+		}
+		return f.member(ctx, dbType, value)
+	}
+
+	// arrayLiteralOpen/Close wrap rendered elements in the bridge's configured
+	// array delimiters.
+	funcs["arrayLiteralOpen"] = func(dbType string) string {
+		if m.Array.Open == "" {
+			warnMissingSpec(w, "array.open", dbType)
+			return ""
+		}
+		return formatSpec(m.Array.Open, languageType(dbType, false))
+	}
+	funcs["arrayLiteralClose"] = func() string {
+		return m.Array.Close
+	}
+}
+
+// registerValueFuncs registers the remaining bridge-specific value/config
+// helpers. columnSize and inputType are conditional: they exist only when the
+// bridge declared the corresponding mapping (no core-side fallback is added).
+func registerValueFuncs(funcs map[string]any, m *typeMappings, w *dedupWarn) {
+	funcs["deleteBehaviorName"] = func(value string) string {
 		key := strings.ToLower(strings.TrimSpace(value))
-		if v, ok := mapping.Behaviors[key]; ok {
+		if v, ok := m.Behaviors[key]; ok {
 			return v
 		}
 		return textutil.PascalCase(value)
@@ -331,35 +472,33 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]interface{
 	// they live in type_mappings.yaml `column_sizes:`, keyed by IR type name.
 	// The input is the IR type name (element type for arrays, the field type
 	// otherwise).
-	if len(mapping.ColumnSizes) > 0 {
-		bridgeFuncs["columnSize"] = func(dbType string) string {
-			return mapping.ColumnSizes[dbType]
+	if len(m.ColumnSizes) > 0 {
+		funcs["columnSize"] = func(dbType string) string {
+			return m.ColumnSizes[dbType]
 		}
 	}
 
-	// inputType maps IR database types to UI input components (e.g. "string" -> "Input", "datetime" -> "DatePicker").
-	// Bridges that generate UI code define input_types in their type_mappings.yaml.
-	if len(mapping.InputTypes) > 0 {
-		bridgeFuncs["inputType"] = func(dbType string) string {
+	// inputType maps IR database types to UI input components. Bridges that
+	// generate UI code declare input_types in their type_mappings.yaml.
+	if len(m.InputTypes) > 0 {
+		funcs["inputType"] = func(dbType string) string {
 			inner := specmeta.ParseArrayInner(dbType)
-			if mapped, ok := mapping.InputTypes[inner]; ok {
+			if mapped, ok := m.InputTypes[inner]; ok {
 				return mapped
 			}
-			if mapped, ok := mapping.InputTypes[dbType]; ok {
+			if mapped, ok := m.InputTypes[dbType]; ok {
 				return mapped
 			}
-			return "Input"
+			warnMissingSpec(w, "input type", dbType)
+			return ""
 		}
 	}
-
-	return bridgeFuncs
 }
 
-func renderTemplateString(pattern string, data any, funcMap template.FuncMap) (string, error) {
-	tpl, err := template.New("path").Funcs(funcMap).Parse(pattern)
-	if err != nil {
-		return "", err
-	}
+// executeTemplateString renders an already-parsed template with one context.
+// Target-path patterns are parsed once per spec by the render loop; parsing
+// them for every entity would repeat identical work on the hot render path.
+func executeTemplateString(tpl *template.Template, data any) (string, error) {
 	var builder strings.Builder
 	if err := tpl.Execute(&builder, data); err != nil {
 		return "", err
@@ -367,10 +506,25 @@ func renderTemplateString(pattern string, data any, funcMap template.FuncMap) (s
 	return builder.String(), nil
 }
 
-func jsonValue(value any) string {
+// jsonValue serializes a value as a language-neutral JSON literal. A value
+// json.Marshal cannot encode returns an error instead of silently emitting a
+// plain-text fallback. text/template surfaces that error at execution time.
+func jsonValue(value any) (string, error) {
 	encoded, err := json.Marshal(value)
 	if err != nil {
+		return "", fmt.Errorf("encode %T as JSON: %w", value, err)
+	}
+	return string(encoded), nil
+}
+
+// jsonValueOrFallback is for literal formatters whose contract is to keep
+// emitting an expression: it warns once about the bad value and falls back to
+// the previous plain-text representation.
+func jsonValueOrFallback(w *dedupWarn, value any) string {
+	encoded, err := jsonValue(value)
+	if err != nil {
+		w.Warn("%v; emitting the plain value %v", err, value)
 		return fmt.Sprintf("%v", value)
 	}
-	return string(encoded)
+	return encoded
 }

@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -8,8 +9,6 @@ import (
 	"time"
 
 	"github.com/DomainCraft/DomainCraft/internal/fsutil"
-
-	"gopkg.in/yaml.v3"
 )
 
 // MetaFileName is the cache-metadata filename stored inside each cached bridge.
@@ -25,6 +24,10 @@ type CacheMeta struct {
 	Version string `json:"version"` // bridge.yaml version at download/update time
 	Commit  string `json:"commit"`  // git HEAD of the local checkout
 	Branch  string `json:"branch"`  // upstream default branch
+	// Pin is the exact ref requested by `owner/repo@ref`. It is empty for
+	// registry IDs and unpinned shorthands. Old metadata has no field, which
+	// decodes to "" and keeps those caches backwards compatible.
+	Pin string `json:"pin,omitempty"`
 	// ClonedAt marks when the bridge was first downloaded.
 	ClonedAt time.Time `json:"cloned_at"`
 	// LastCheckedAt is updated every time the remote is actually contacted, so
@@ -57,7 +60,21 @@ func WriteMeta(entry RegistryEntry, meta *CacheMeta) error {
 	if meta == nil {
 		return fmt.Errorf("cannot write nil cache metadata")
 	}
-	return fsutil.WriteJSON(MetaPath(entry), meta)
+	path := MetaPath(entry)
+	parent := filepath.Dir(path)
+	if err := os.MkdirAll(parent, 0o755); err != nil { //nolint:gosec // bridge cache dirs must stay readable across CLI runs
+		return err
+	}
+	root, rel, err := fsutil.OpenRootFor(parent, path)
+	if err != nil {
+		return fmt.Errorf("open cache root for %q: %w", entry.ID, err)
+	}
+	defer func() { _ = root.Close() }()
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal cache metadata for %q: %w", entry.ID, err)
+	}
+	return fsutil.AtomicWriteRoot(root, rel, data)
 }
 
 // ensureMeta returns the cache metadata for a cached bridge, synthesizing it
@@ -77,11 +94,26 @@ func ensureMeta(entry RegistryEntry) (*CacheMeta, error) {
 	return newMetaFromCache(entry), nil
 }
 
+// modifyMeta performs one read-modify-write of a bridge's cache metadata.
+// A bridge cached before metadata existed is synthesized first, so callers
+// never have to repeat the ensure/mutate/write sequence.
+func modifyMeta(entry RegistryEntry, mutate func(*CacheMeta)) error {
+	meta, err := ensureMeta(entry)
+	if err != nil {
+		return err
+	}
+	if meta == nil {
+		meta = newMetaFromCache(entry)
+	}
+	mutate(meta)
+	return WriteMeta(entry, meta)
+}
+
 // newMetaFromCache builds metadata from the current on-disk checkout. It is
 // best-effort: missing git or an unreadable bridge.yaml degrade gracefully.
 func newMetaFromCache(entry RegistryEntry) *CacheMeta {
 	now := time.Now()
-	meta := &CacheMeta{
+	return &CacheMeta{
 		ID:            entry.ID,
 		Source:        entry.GitHub,
 		Version:       readBridgeVersion(entry),
@@ -90,32 +122,35 @@ func newMetaFromCache(entry RegistryEntry) *CacheMeta {
 		ClonedAt:      now,
 		LastCheckedAt: now,
 	}
-	return meta
 }
 
 // readBridgeVersion parses the `version:` field out of a cached bridge.yaml.
 // Returns "" when the field is absent or the file cannot be read.
 func readBridgeVersion(entry RegistryEntry) string {
-	data, err := os.ReadFile(filepath.Join(CachePath(entry), "bridge.yaml"))
+	manifest, err := LoadManifest(CachePath(entry))
 	if err != nil {
 		return ""
 	}
-	var cfg struct {
-		Version string `yaml:"version"`
-	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return ""
-	}
-	return cfg.Version
+	return manifest.Version
 }
 
-// gitHead returns the current git HEAD commit of the cached checkout, or "".
+// gitHead returns the current git HEAD commit of the cached checkout, or ""
+// when it cannot be read. Callers that must tell "no commit" from "git failed"
+// use gitHeadResult; a failed probe must not be mistaken for an empty HEAD.
 func gitHead(entry RegistryEntry) string {
+	head, _ := gitHeadResult(entry)
+	return head
+}
+
+// gitHeadResult returns the cached checkout's HEAD commit and reports git
+// failures separately. An error means the local commit is unknown — callers
+// must not fall back to a stale metadata commit and compare it with the remote.
+func gitHeadResult(entry RegistryEntry) (string, error) {
 	out, err := runGit(CachePath(entry), "rev-parse", "HEAD")
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("read local bridge HEAD in %q: %w", CachePath(entry), err)
 	}
-	return out
+	return out, nil
 }
 
 // gitBranch returns the current branch of the cached checkout, or "".

@@ -6,13 +6,13 @@ import type { ListResult } from "./types";
 import type { {{ $e.Name }}Create, {{ $e.Name }}Update, {{ $e.Name }}Patch } from "./schemas";
 import type { {{ $e.Name }}Query, {{ $e.Name }}Include } from "./query";
 {{ end }}
-/** Substitutes `{id}` in an endpoint path template (the core's IREndpoint.Path). */
+/** Substitutes `{id}` in an endpoint path template (the core's Endpoint.Path). */
 function fillPath(template: string, id: string | number): string {
   return template.replace("{id}", encodeURIComponent(String(id)));
 }
 
 {{ range $e := .Project.Entities }}
-// Endpoint routes come from the core's endpoint contract (IREntity.Endpoints) —
+// Endpoint routes come from the core's endpoint contract (Entity.Endpoints) —
 // method paths, not hand-written strings.
 export const {{ camelcase $e.NamePlural }}Routes = {
 {{- range $ep := $e.Endpoints }}

@@ -10,153 +10,166 @@ package snapshot
 // Python or a bare `product` in TS are all rewritten by the same rules.
 
 import (
-	"bytes"
 	"cmp"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/DomainCraft/DomainCraft/internal/fsutil"
+	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 	"github.com/DomainCraft/DomainCraft/pkg/textutil"
 )
 
-// rewriteCasings replaces each old identifier with new inside content. Variants
-// are applied longest-first (so a plural form like `Products` is rewritten as a
-// whole before its singular head `Product` could consume it), then
-// alphabetically, keeping output deterministic.
-func rewriteCasings(content []byte, variants map[string]string) []byte {
+// replaceLongest scans content once, decoding it as runes so non-ASCII
+// identifiers are handled correctly. At each position the longest matching
+// variant that passes ok is applied (ties break alphabetically for determinism)
+// and unmatched runes are copied verbatim. Scanning resumes after the ORIGINAL
+// token, so replacement text is never rescanned: Product -> ProductItem cannot
+// turn `Products` into `ProductItemItems`.
+// onMatch is optional: a caller that only needs to know whether a token is
+// present can stop at the first match instead of allocating a rewritten copy.
+func replaceLongest(content []byte, variants map[string]string, ok func([]rune, int, int) bool, onMatch ...func([]byte) bool) []byte {
 	if len(variants) == 0 {
 		return content
 	}
-	keys := make([]string, 0, len(variants))
-	for k := range variants {
-		keys = append(keys, k)
+	type variant struct {
+		old        []rune
+		value      []rune
+		valueBytes []byte
 	}
-	slices.SortFunc(keys, func(a, b string) int {
-		if c := cmp.Compare(len(b), len(a)); c != 0 {
-			return c
-		}
-		return cmp.Compare(a, b)
-	})
-
-	out := content
-	for _, old := range keys {
-		new := variants[old]
-		if old == "" || old == new {
+	vars := make([]variant, 0, len(variants))
+	for old, value := range variants {
+		if old == "" || old == value {
 			continue
 		}
-		out = replaceToken(out, []byte(old), []byte(new))
+		vars = append(vars, variant{old: []rune(old), value: []rune(value), valueBytes: []byte(value)})
 	}
-	return out
-}
+	slices.SortFunc(vars, func(a, b variant) int {
+		if c := cmp.Compare(len(b.old), len(a.old)); c != 0 {
+			return c
+		}
+		return cmp.Compare(string(a.old), string(b.old))
+	})
 
-// replaceToken replaces every structural occurrence of the exact identifier old
-// with new. An occurrence begins at an identifier boundary (not preceded by an
-// identifier character) and stops before any identifier character that is a
-// lowercase ASCII letter. This lets `ProductService` become `ItemService` while
-// both `myProduct` (inner) and `Productivity` (lowercase continuation) survive.
-func replaceToken(content, old, new []byte) []byte {
-	if len(old) == 0 {
-		return content
+	// Decode for matching only. Unmatched positions are copied from the
+	// original bytes: []rune(string(content)) would replace invalid UTF-8 with
+	// U+FFFD and silently corrupt developer-owned files in legacy encodings.
+	rs := make([]rune, 0, len(content))
+	starts := make([]int, 0, len(content))
+	for i := 0; i < len(content); {
+		r, size := utf8.DecodeRune(content[i:])
+		rs = append(rs, r)
+		starts = append(starts, i)
+		i += size
 	}
 	out := make([]byte, 0, len(content))
-	i := 0
-	for i < len(content) {
-		rel := bytes.Index(content[i:], old)
-		if rel < 0 {
-			out = append(out, content[i:]...)
+	for i := 0; i < len(rs); {
+		matched := false
+		for _, v := range vars {
+			if i+len(v.old) > len(rs) {
+				continue
+			}
+			if !hasPrefixRunes(rs[i:], v.old) {
+				continue
+			}
+			if !ok(rs, i, len(v.old)) {
+				continue
+			}
+			if len(onMatch) > 0 && onMatch[0] != nil && onMatch[0](v.valueBytes) {
+				return content
+			}
+			out = append(out, v.valueBytes...)
+			i += len(v.old) // replacement text is never scanned again
+			matched = true
 			break
 		}
-		idx := i + rel
-		out = append(out, content[i:idx]...)
-		if tokenOK(content, idx, old) {
-			out = append(out, new...)
-		} else {
-			out = append(out, old...)
+		if !matched {
+			end := len(content)
+			if i+1 < len(rs) {
+				end = starts[i+1]
+			}
+			out = append(out, content[starts[i]:end]...)
+			i++
 		}
-		i = idx + len(old)
 	}
 	return out
 }
 
-// tokenOK reports whether content[idx:idx+len(old)] is a standalone identifier
-// occurrence. An occurrence must begin at a word boundary (possibly after a
-// single uppercase marker/interface prefix such as `I` in `IProductService`, so
-// that `myProduct` stays untouched) and its following rune, when it is an
-// identifier character, must not be a lowercase ASCII letter (so `Productivity`
-// survives).
-func tokenOK(content []byte, idx int, old []byte) bool {
-	if idx > 0 {
-		prev := content[idx-1]
-		// A lone uppercase prefix letter counts as a boundary (I, X, Z prefixes).
-		prefixOK := prev >= 'A' && prev <= 'Z' && (idx < 2 || !isIdentChar(content[idx-2]))
-		if isIdentChar(prev) && !prefixOK {
-			return false
-		}
+func hasPrefixRunes(s, prefix []rune) bool {
+	if len(prefix) > len(s) {
+		return false
 	}
-	j := idx + len(old)
-	if j < len(content) && isIdentChar(content[j]) {
-		if content[j] >= 'a' && content[j] <= 'z' {
+	for i, r := range prefix {
+		if s[i] != r {
 			return false
 		}
 	}
 	return true
 }
 
-func isIdentChar(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
+// tokenOK reports whether rs[idx:idx+length] is a standalone identifier
+// occurrence. It begins at a word boundary (possibly after a single uppercase
+// marker prefix such as `I` in `IProductService`, so `myProduct` stays
+// untouched) and its following rune, when it is an identifier character, must
+// not be a lowercase letter (so `Productivity` survives). Rune decoding keeps
+// this correct for non-ASCII identifiers.
+func tokenOK(rs []rune, idx, length int) bool {
+	if idx > 0 {
+		prev := rs[idx-1]
+		prefixOK := unicode.IsUpper(prev) && (idx < 2 || !specmeta.IsIdentifierRune(rs[idx-2]))
+		if specmeta.IsIdentifierRune(prev) && !prefixOK {
+			return false
+		}
+	}
+	j := idx + length
+	if j < len(rs) {
+		next := rs[j]
+		if specmeta.IsIdentifierRune(next) && unicode.IsLower(next) {
+			return false
+		}
+	}
+	return true
 }
 
-// entityCasings builds the casing-variant table for an entity rename.
-func entityCasings(oldName, newName string) map[string]string {
-	oldPascal := textutil.PascalCase(oldName)
-	newPascal := textutil.PascalCase(newName)
-	return map[string]string{
-		oldPascal:                                       newPascal,                                       // Product -> Item
-		textutil.CamelCase(oldName):                     textutil.CamelCase(newName),                     // product -> item
-		strings.ToUpper(oldPascal):                      strings.ToUpper(newPascal),                      // PRODUCT -> ITEM
-		textutil.Pluralize(oldPascal):                   textutil.Pluralize(newPascal),                   // Products -> Items
-		textutil.CamelCase(textutil.Pluralize(oldName)): textutil.CamelCase(textutil.Pluralize(newName)), // products -> items
-		strings.ToUpper(textutil.Pluralize(oldPascal)):  strings.ToUpper(textutil.Pluralize(newPascal)),  // PRODUCTS -> ITEMS
+// casingVariants builds the one casing-variant table used by every rename
+// rewrite (content and paths). Callers pass the base form they need: PascalCase
+// for entities and fields, the declared identifier for a project namespace.
+// withPlural adds the plural forms on top of Pascal / camel / UPPER.
+func casingVariants(oldName, newName string, withPlural bool) map[string]string {
+	variants := map[string]string{
+		oldName:                     newName,                     // Product -> Item
+		textutil.CamelCase(oldName): textutil.CamelCase(newName), // product -> item
+		strings.ToUpper(oldName):    strings.ToUpper(newName),    // PRODUCT -> ITEM
 	}
-}
-
-// fieldCasings builds the casing-variant table for a field rename.
-func fieldCasings(oldField, newField string) map[string]string {
-	oldPascal := textutil.PascalCase(oldField)
-	newPascal := textutil.PascalCase(newField)
-	return map[string]string{
-		oldPascal:                    newPascal,                    // Title -> Name
-		textutil.CamelCase(oldField): textutil.CamelCase(newField), // title -> name
-		strings.ToUpper(oldPascal):   strings.ToUpper(newPascal),   // TITLE -> NAME
+	if withPlural {
+		oldPlural := textutil.Pluralize(oldName)
+		newPlural := textutil.Pluralize(newName)
+		variants[oldPlural] = newPlural                                         // Products -> Items
+		variants[textutil.CamelCase(oldPlural)] = textutil.CamelCase(newPlural) // products -> items
+		variants[strings.ToUpper(oldPlural)] = strings.ToUpper(newPlural)       // PRODUCTS -> ITEMS
 	}
-}
-
-// namespaceCasings builds the casing-variant table for a root-namespace rename.
-func namespaceCasings(oldNs, newNs string) map[string]string {
-	return map[string]string{
-		oldNs:                     newNs,
-		textutil.CamelCase(oldNs): textutil.CamelCase(newNs),
-		strings.ToUpper(oldNs):    strings.ToUpper(newNs),
-	}
+	return variants
 }
 
 // RewriteEntityContent rewrites identifier references to an old entity name back
 // to the new one (Pascal / camel / UPPER / plural forms).
 func RewriteEntityContent(content []byte, oldName, newName string) []byte {
-	return rewriteCasings(content, entityCasings(oldName, newName))
+	variants := casingVariants(textutil.PascalCase(oldName), textutil.PascalCase(newName), true)
+	return replaceLongest(content, variants, tokenOK)
 }
 
 // RewriteFieldContent rewrites identifier references to an old field back to the
 // new one (Pascal / camel / UPPER forms).
 func RewriteFieldContent(content []byte, oldField, newField string) []byte {
-	return rewriteCasings(content, fieldCasings(oldField, newField))
+	variants := casingVariants(textutil.PascalCase(oldField), textutil.PascalCase(newField), false)
+	return replaceLongest(content, variants, tokenOK)
 }
 
 // RewriteNamespaceContent rewrites the old root-namespace identifier to the new one.
 func RewriteNamespaceContent(content []byte, oldNs, newNs string) []byte {
-	return rewriteCasings(content, namespaceCasings(oldNs, newNs))
+	return replaceLongest(content, casingVariants(oldNs, newNs, false), tokenOK)
 }
 
 // EntityTransform returns a transform rewriting an old entity identifier to its
@@ -167,9 +180,6 @@ func EntityTransform(oldName, newName string) func([]byte) []byte {
 
 // NamespaceTransform returns a transform rewriting the old root namespace.
 func NamespaceTransform(n *NamespaceMismatch) func([]byte) []byte {
-	if n == nil {
-		return func(b []byte) []byte { return b }
-	}
 	oldNs, newNs := n.OldNamespace, n.NewNamespace
 	return func(b []byte) []byte { return RewriteNamespaceContent(b, oldNs, newNs) }
 }
@@ -208,23 +218,27 @@ func RewriteFile(outputDir, relPath string, transforms ...func([]byte) []byte) (
 	if len(transforms) == 0 {
 		return false, nil
 	}
-	abs := filepath.Join(outputDir, filepath.FromSlash(relPath))
-	data, err := os.ReadFile(abs)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
+	written := false
+	err := withRoot(outputDir, relPath, func(root *os.Root, rel string) error {
+		data, err := root.ReadFile(rel)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
 		}
-		return false, err
-	}
-	out := data
-	for _, t := range transforms {
-		out = t(out)
-	}
-	if string(out) == string(data) {
-		return false, nil
-	}
-	if err := fsutil.AtomicWrite(abs, out); err != nil {
-		return false, err
-	}
-	return true, nil
+		out := data
+		for _, t := range transforms {
+			out = t(out)
+		}
+		if string(out) == string(data) {
+			return nil
+		}
+		if err := fsutil.AtomicWriteRoot(root, rel, out); err != nil {
+			return err
+		}
+		written = true
+		return nil
+	})
+	return written, err
 }

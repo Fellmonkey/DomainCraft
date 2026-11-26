@@ -6,6 +6,7 @@ import (
 
 // TestFullSchemaWithAllFeatures tests a full schema using all features
 func TestFullSchemaWithAllFeatures(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: ECommerce Platform
@@ -191,9 +192,9 @@ entities:
 	}
 
 	// Verify Product relations
-	categoryId := product.Fields["categoryId"]
-	if !categoryId.IsOptional || categoryId.OnDelete != "set_null" {
-		t.Errorf("categoryId should be optional with on_delete:set_null")
+	categoryID := product.Fields["categoryId"]
+	if !categoryID.IsOptional || categoryID.OnDelete != "set_null" {
+		t.Errorf("categoryID should be optional with on_delete:set_null")
 	}
 
 	tagsField := product.Fields["tags"]
@@ -210,9 +211,9 @@ entities:
 
 	// Verify cascade delete
 	orderItem := schema.Entities["OrderItem"]
-	orderIdField := orderItem.Fields["orderId"]
-	if orderIdField.OnDelete != "cascade" {
-		t.Errorf("orderId should have on_delete:cascade")
+	orderIDField := orderItem.Fields["orderId"]
+	if orderIDField.OnDelete != "cascade" {
+		t.Errorf("orderID should have on_delete:cascade")
 	}
 
 	// Verify indexes
@@ -230,14 +231,15 @@ entities:
 
 	// Verify Review with cascade delete
 	review := schema.Entities["Review"]
-	productIdField := review.Fields["productId"]
-	if productIdField.RelationType != "many-to-one" {
-		t.Errorf("review.productId should be many-to-one relation")
+	productIDField := review.Fields["productId"]
+	if productIDField.RelationType != "many-to-one" {
+		t.Errorf("review.productID should be many-to-one relation")
 	}
 }
 
 // TestCircularRelationships tests self-referential (circular) relationships
 func TestCircularRelationships(t *testing.T) {
+	t.Parallel()
 	// A category can have a parent category -- this is a self-referential relationship
 	yamlData := []byte(`
 project:
@@ -256,18 +258,19 @@ entities:
 	}
 
 	category := schema.Entities["Category"]
-	parentId := category.Fields["parentId"]
+	parentID := category.Fields["parentId"]
 
-	if parentId.Type != "relation" || parentId.TargetEntity != "Category" {
-		t.Errorf("parentId should be self-referential relation to Category")
+	if parentID.Type != "relation" || parentID.TargetEntity != "Category" {
+		t.Errorf("parentID should be self-referential relation to Category")
 	}
-	if !parentId.IsOptional {
-		t.Errorf("parentId should be optional")
+	if !parentID.IsOptional {
+		t.Errorf("parentID should be optional")
 	}
 }
 
 // TestDatabaseColumnNameGeneration tests database column name generation
 func TestDatabaseColumnNameGeneration(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -304,17 +307,21 @@ entities:
 	}
 
 	for _, tt := range tests {
-		if field, ok := user.Fields[tt.fieldName]; ok {
-			if field.DatabaseColumnName != tt.wantDbName {
-				t.Errorf("field %s: got db name %v, want %v",
-					tt.fieldName, field.DatabaseColumnName, tt.wantDbName)
+		t.Run(tt.fieldName, func(t *testing.T) {
+			t.Parallel()
+			if field, ok := user.Fields[tt.fieldName]; ok {
+				if field.DatabaseColumnName != tt.wantDbName {
+					t.Errorf("field %s: got db name %v, want %v",
+						tt.fieldName, field.DatabaseColumnName, tt.wantDbName)
+				}
 			}
-		}
+		})
 	}
 }
 
 // TestSeedData tests seed data parsing
 func TestSeedData(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -350,6 +357,7 @@ entities:
 
 // TestEntityOrdering tests entity ordering
 func TestEntityOrdering(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test
@@ -381,6 +389,7 @@ entities:
 
 // TestComplexValidations tests complex validation rules
 func TestComplexValidations(t *testing.T) {
+	t.Parallel()
 	yamlData := []byte(`
 project:
   name: Test

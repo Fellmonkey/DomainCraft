@@ -3,7 +3,7 @@
 
 // Typed query DSL compiled from the core's filter grammar (spec/query.md).
 // The operator vocabulary below is ITERATED from the core
-// (`IRProject.AllFilterOperators`) so adding an operator to the grammar
+// (`Project.AllFilterOperators`) so adding an operator to the grammar
 // updates this client on the next generate instead of drifting.
 //
 // The `filter` object's keys are restricted to the entity's filterable surface
@@ -159,7 +159,7 @@ export type {{ $e.Name }}Include = {{ join " | " $incKeys }};
 export type {{ $e.Name }}Include = never;
 {{- end }}
 
-{{- /* Searchable surface (fix: surfaced from IRProject.SearchableFields) —
+{{- /* Searchable surface (fix: surfaced from Project.SearchableFields) —
        lets a UI show "searches over title, description" without guessing. */ -}}
 {{- $searchKeys := list -}}
 {{- range $f := $e.SearchableFields -}}{{- $searchKeys = append $searchKeys (printf "%q" (camelcase $f.Name)) -}}{{- end }}

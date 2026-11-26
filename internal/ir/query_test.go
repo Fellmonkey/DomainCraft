@@ -5,19 +5,19 @@ import (
 	"testing"
 )
 
-func testEntity() IREntity {
-	category := IREntity{
+func testEntity() Entity {
+	category := Entity{
 		Name: "Category",
-		Fields: []IRField{
+		Fields: []Field{
 			{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 			{Name: "name", DatabaseType: "string"},
 			{Name: "slug", DatabaseType: "string"},
 			{Name: "sortOrder", DatabaseType: "int"},
 		},
 	}
-	return IREntity{
+	return Entity{
 		Name: "Product",
-		Fields: []IRField{
+		Fields: []Field{
 			{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 			{Name: "name", DatabaseType: "string"},
 			{Name: "description", DatabaseType: "text"},
@@ -33,16 +33,17 @@ func testEntity() IREntity {
 			{Name: "categoryId", DatabaseType: "uuid", IsRelation: true, RelationTarget: "Category"},
 			{Name: "createdAt", DatabaseType: "datetime"}, // feature field
 		},
-		RelationsOut: []IRRelation{
+		RelationsOut: []Relation{
 			{FieldName: "categoryId", TargetEntity: &category, NavigationName: "Category", IsMany: false},
 		},
 	}
 }
 
 func TestSearchableSortableFilterableFields(t *testing.T) {
+	t.Parallel()
 	e := testEntity()
 
-	names := func(fields []IRField) []string {
+	names := func(fields []Field) []string {
 		var out []string
 		for _, f := range fields {
 			out = append(out, f.Name)
@@ -63,32 +64,38 @@ func TestSearchableSortableFilterableFields(t *testing.T) {
 }
 
 func TestFilterOperators(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
+		name   string
 		dbType string
 		want   []FilterOp
 	}{
-		{"string", []FilterOp{OpEq, OpNe, OpContains, OpStartsWith, OpEndsWith, OpIn}},
-		{"boolean", []FilterOp{OpEq, OpNe}},
-		{"decimal", []FilterOp{OpEq, OpNe, OpGt, OpGte, OpLt, OpLte, OpIn}},
-		{"uuid", []FilterOp{OpEq, OpNe, OpIn}},
-		{"Status", []FilterOp{OpEq, OpNe, OpIn}},
-		{"array(string)", nil},
-		{"jsonb", nil},
+		{"string", "string", []FilterOp{OpEq, OpNe, OpContains, OpStartsWith, OpEndsWith, OpIn}},
+		{"boolean", "boolean", []FilterOp{OpEq, OpNe}},
+		{"decimal", "decimal", []FilterOp{OpEq, OpNe, OpGt, OpGte, OpLt, OpLte, OpIn}},
+		{"uuid", "uuid", []FilterOp{OpEq, OpNe, OpIn}},
+		{"enum_status", "Status", []FilterOp{OpEq, OpNe, OpIn}},
+		{"array_string", "array(string)", nil},
+		{"jsonb", "jsonb", nil},
 	}
 	for _, c := range cases {
-		f := IRField{DatabaseType: c.dbType}
-		got := f.FilterOperators()
-		if len(got) == 0 && len(c.want) == 0 {
-			continue
-		}
-		if !reflect.DeepEqual(got, c.want) {
-			t.Errorf("FilterOperators(%q) = %v, want %v", c.dbType, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			f := Field{DatabaseType: c.dbType}
+			got := f.FilterOperators()
+			if len(got) == 0 && len(c.want) == 0 {
+				return
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Errorf("FilterOperators(%q) = %v, want %v", c.dbType, got, c.want)
+			}
+		})
 	}
 }
 
 func TestAllFilterOperators(t *testing.T) {
-	got := (IRProject{}).AllFilterOperators()
+	t.Parallel()
+	got := (Project{}).AllFilterOperators()
 	want := []FilterOp{OpEq, OpNe, OpGt, OpGte, OpLt, OpLte, OpIn, OpContains, OpStartsWith, OpEndsWith}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("AllFilterOperators() = %v, want %v", got, want)
@@ -96,6 +103,7 @@ func TestAllFilterOperators(t *testing.T) {
 }
 
 func TestFilterablePaths(t *testing.T) {
+	t.Parallel()
 	e := testEntity()
 	paths := e.FilterablePaths()
 
@@ -126,6 +134,7 @@ func TestFilterablePaths(t *testing.T) {
 }
 
 func TestQuerySchema(t *testing.T) {
+	t.Parallel()
 	e := testEntity()
 	q := e.QuerySchema()
 
@@ -146,26 +155,31 @@ func TestQuerySchema(t *testing.T) {
 }
 
 func TestCursorField(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
+		name   string
 		pkType string
 		want   bool
 	}{
-		{"int", true},
-		{"bigint", true},
-		{"uuid", false},
-		{"string", false},
-		{"date", false},
+		{"int", "int", true},
+		{"bigint", "bigint", true},
+		{"uuid", "uuid", false},
+		{"string", "string", false},
+		{"date", "date", false},
 	}
 	for _, c := range cases {
-		e := IREntity{Fields: []IRField{{Name: "id", DatabaseType: c.pkType, IsPrimary: true}}}
-		got := e.CursorField()
-		if (got != nil) != c.want {
-			t.Errorf("CursorField(pk=%s) = %v, want non-nil=%v", c.pkType, got != nil, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			e := Entity{Fields: []Field{{Name: "id", DatabaseType: c.pkType, IsPrimary: true}}}
+			got := e.CursorField()
+			if (got != nil) != c.want {
+				t.Errorf("CursorField(pk=%s) = %v, want non-nil=%v", c.pkType, got != nil, c.want)
+			}
+		})
 	}
 
 	// No PK -> nil.
-	if got := (IREntity{Fields: []IRField{{Name: "name"}}}).CursorField(); got != nil {
+	if got := (Entity{Fields: []Field{{Name: "name"}}}).CursorField(); got != nil {
 		t.Errorf("CursorField() with no PK = %v, want nil", got)
 	}
 }

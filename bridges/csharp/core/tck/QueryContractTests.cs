@@ -37,7 +37,7 @@ public class QueryContractTests
     [Fact]
     public void FilterOperator_vocabulary_is_canonical_and_not_drifted()
     {
-        // Generated from IRProject.AllFilterOperators — a hand-maintained
+        // Generated from Project.AllFilterOperators — a hand-maintained
         // parallel grammar would fail here.
         var names = Enum.GetNames<FilterOperator>();
         Assert.Equal(

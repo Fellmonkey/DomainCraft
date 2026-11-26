@@ -2,97 +2,11 @@ package bridge
 
 import (
 	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/DomainCraft/DomainCraft/internal/appdir"
 )
-
-// gitAvailable reports whether git is installed (bridge update handling needs it).
-func gitAvailable() bool {
-	_, err := exec.LookPath("git")
-	return err == nil
-}
-
-// testGit runs git in dir and returns combined output, failing the test on error.
-func testGit(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Env = append(gitScrubbedEnv(), "GIT_AUTHOR_NAME=domaincraft-test", "GIT_AUTHOR_EMAIL=test@example.com")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s in %s: %v\n%s", strings.Join(args, " "), dir, err, out)
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// makeBridgeRepo creates a non-bare git repo at dir with a bridge.yaml committed
-// on the given branch. Returns the repo path.
-func makeBridgeRepo(t *testing.T, dir, branch string) {
-	t.Helper()
-	testGit(t, dir, "init", "-q", "-b", branch)
-	testGit(t, dir, "config", "user.email", "test@domaincraft.dev")
-	testGit(t, dir, "config", "user.name", "DomainCraft Test")
-	writeBridgeYAML(t, dir, "1.0.0")
-	testGit(t, dir, "add", ".")
-	testGit(t, dir, "commit", "-q", "-m", "init")
-}
-
-// writeBridgeYAML writes a minimal bridge.yaml with the given version.
-func writeBridgeYAML(t *testing.T, dir, version string) {
-	t.Helper()
-	body := "name: test-bridge\nversion: \"" + version + "\"\n"
-	if err := os.WriteFile(filepath.Join(dir, "bridge.yaml"), []byte(body), 0o644); err != nil {
-		t.Fatalf("write bridge.yaml: %v", err)
-	}
-}
-
-// cacheEntry returns a RegistryEntry whose cache path is under the test cache root.
-func cacheEntry(id, source string) RegistryEntry {
-	return RegistryEntry{ID: id, GitHub: source}
-}
-
-func TestMetaRoundTrip(t *testing.T) {
-	root := t.TempDir()
-	appdir.SetBaseForTesting(root)
-	defer appdir.SetBaseForTesting("")
-
-	entry := cacheEntry("test-bridge", "owner/bridge")
-
-	// Nothing cached yet -> no meta, not cached.
-	if _, err := ReadMeta(entry); err != nil {
-		t.Fatalf("ReadMeta on missing meta: %v", err)
-	}
-
-	now := time.Now()
-	meta := &CacheMeta{
-		ID:            entry.ID,
-		Source:        entry.GitHub,
-		Version:       "1.0.0",
-		Commit:        "abc123",
-		Branch:        "main",
-		ClonedAt:      now,
-		LastCheckedAt: now,
-	}
-	if err := WriteMeta(entry, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	got, err := ReadMeta(entry)
-	if err != nil {
-		t.Fatalf("ReadMeta: %v", err)
-	}
-	if got.Version != "1.0.0" || got.Commit != "abc123" || got.Source != "owner/bridge" {
-		t.Fatalf("round-trip mismatch: %+v", got)
-	}
-	if !got.ClonedAt.Equal(now) {
-		t.Fatalf("ClonedAt not preserved: got %v want %v", got.ClonedAt, now)
-	}
-}
 
 // TestCheckAndApplyUpdate exercises the full freshness flow: GitHub API
 // detection (faked offline) plus a real git fetch+reset apply against a local
@@ -105,17 +19,8 @@ func TestCheckAndApplyUpdate(t *testing.T) {
 	appdir.SetBaseForTesting(root)
 	defer appdir.SetBaseForTesting("")
 
-	// Bare remote acting as the bridge's origin.
-	remote := filepath.Join(root, "remote.git")
-	testGit(t, root, "init", "--bare", "-b", "main", "remote.git")
-	testGit(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
-
-	// Working repo that we push to the remote.
-	src := filepath.Join(root, "src")
-	os.MkdirAll(src, 0o755)
-	makeBridgeRepo(t, src, "main")
-	testGit(t, src, "remote", "add", "origin", remote)
-	testGit(t, src, "push", "-q", "-u", "origin", "main")
+	// Bare remote acting as the bridge's origin, with a working source repo.
+	remote, src := newRemoteWithBridge(t, root, "main", "")
 
 	// "Download" the bridge into our cache just like EnsureBridge would.
 	entry := RegistryEntry{ID: "test-bridge", GitHub: "owner/test-bridge"}
@@ -126,18 +31,7 @@ func TestCheckAndApplyUpdate(t *testing.T) {
 	}
 
 	// Fake the GitHub API: report the current head of the local bare remote.
-	headCommit := func() string { return testGit(t, remote, "rev-parse", "HEAD") }
-	oldHTTP := httpGetBodyFn
-	httpGetBodyFn = func(url string) ([]byte, error) {
-		switch {
-		case strings.Contains(url, "/commits/main"):
-			return []byte(`{"sha":"` + headCommit() + `"}`), nil
-		case strings.Contains(url, "/repos/owner/test-bridge"):
-			return []byte(`{"default_branch":"main"}`), nil
-		}
-		return nil, os.ErrNotExist
-	}
-	defer func() { httpGetBodyFn = oldHTTP }()
+	stub := stubGitHubAPI(t, testGit(t, remote, "rev-parse", "HEAD"), "")
 
 	// No update yet: local checkout already at the remote tip.
 	upd, err := CheckForUpdate(entry, 0)
@@ -168,6 +62,7 @@ func TestCheckAndApplyUpdate(t *testing.T) {
 	testGit(t, src, "add", ".")
 	testGit(t, src, "commit", "-q", "-m", "bump version")
 	testGit(t, src, "push", "-q", "origin", "main")
+	stub.sha = testGit(t, remote, "rev-parse", "HEAD")
 
 	// Now an update is detected.
 	upd, err = CheckForUpdate(entry, 0)
@@ -206,7 +101,9 @@ func TestEnsureMetaSynthesizesForLegacyCache(t *testing.T) {
 
 	entry := RegistryEntry{ID: "legacy-bridge", GitHub: "owner/legacy-bridge"}
 	cacheDir := CachePath(entry)
-	os.MkdirAll(cacheDir, 0o755)
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	makeBridgeRepo(t, cacheDir, "main")
 
 	// No metadata file exists (legacy cache), but the checkout is usable.
@@ -225,17 +122,20 @@ func TestEnsureMetaSynthesizesForLegacyCache(t *testing.T) {
 	}
 }
 
-// TestCheckForUpdateViaGitHubAPI verifies update detection through the GitHub
-// REST API for a cached bridge that has no usable git checkout (e.g. a bridge
-// directory copied without its .git).
-func TestCheckForUpdateViaGitHubAPI(t *testing.T) {
+// TestCheckForUpdateSkippedWithoutGitCheckout pins the F22 rule: a cache whose
+// HEAD cannot be read has no trustworthy local commit. Even when the GitHub API
+// reports a different SHA, that stale metadata commit must not produce a false
+// "update available" (the same outcome as an offline probe).
+func TestCheckForUpdateSkippedWithoutGitCheckout(t *testing.T) {
 	root := t.TempDir()
 	appdir.SetBaseForTesting(root)
 	defer appdir.SetBaseForTesting("")
 
 	entry := RegistryEntry{ID: "github-bridge", GitHub: "owner/github-bridge"}
 	cacheDir := CachePath(entry)
-	os.MkdirAll(cacheDir, 0o755)
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	writeBridgeYAML(t, cacheDir, "1.0.0")
 
 	// No .git in the checkout, but metadata records the local commit.
@@ -253,29 +153,23 @@ func TestCheckForUpdateViaGitHubAPI(t *testing.T) {
 	}
 
 	// Fake the GitHub API responses.
-	oldHTTP := httpGetBodyFn
-	httpGetBodyFn = func(url string) ([]byte, error) {
-		switch {
-		case strings.Contains(url, "/commits/main"):
-			return []byte(`{"sha":"new-remote-commit"}`), nil
-		case strings.Contains(url, "/repos/owner/github-bridge"):
-			return []byte(`{"default_branch":"main"}`), nil
-		}
-		return nil, os.ErrNotExist
-	}
-	defer func() { httpGetBodyFn = oldHTTP }()
+	stubGitHubAPI(t, "new-remote-commit", "")
 
 	upd, err := CheckForUpdate(entry, 0)
 	if err != nil {
 		t.Fatalf("CheckForUpdate: %v", err)
 	}
-	if upd == nil {
-		t.Fatal("expected an update to be detected via the GitHub API")
+	if upd != nil {
+		t.Fatalf("a cache without a readable HEAD must not offer an update: %+v", upd)
 	}
-	if upd.RemoteCommit != "new-remote-commit" || upd.RemoteBranch != "main" {
-		t.Fatalf("unexpected update info: %+v", upd)
+	after, err := ReadMeta(entry)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
 	}
-	if upd.LocalVersion != "1.0.0" {
-		t.Fatalf("wrong local version: %q", upd.LocalVersion)
+	if after.Commit != "old-local-commit" {
+		t.Fatalf("stale commit was overwritten despite git failing: %q", after.Commit)
+	}
+	if after.LastCheckedAt.Equal(meta.LastCheckedAt) {
+		t.Fatal("CheckForUpdate stopped recording the probe attempt")
 	}
 }

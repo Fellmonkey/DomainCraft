@@ -1,7 +1,10 @@
 name: ci
 
 on:
+  # PR checks cover feature branches. Push runs only after a merge to main,
+  # so the same commit is not tested twice.
   push:
+    branches: [main]
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
@@ -9,16 +12,24 @@ on:
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+env:
+  GO_VERSION: '1.27.4'
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# Independent gates run in parallel. On a local 16-core machine the sequential
+# steps cost ~13s lint + ~8s govulncheck + ~23s race tests; one job serialized
+# all of them.
 jobs:
   test:
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -27,12 +38,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.27'
+          go-version: ${{ env.GO_VERSION }}
           cache: true
           cache-dependency-path: go.sum
 
@@ -42,24 +53,82 @@ jobs:
       - name: Build
         run: go build ./cmd/domaincraft
 
-      - name: Vet
-        run: go vet ./...
+      - name: Build WASM validator (js/wasm smoke)
+        # The validator entry point is build-tagged js&&wasm, so the native
+        # build above cannot see parser/validator/lexer/specmeta breakage.
+        # Cross-compile to a temp path: no .wasm artifact is committed here.
+        # The committed GUI binary is refreshed by hand with make build-wasm-gui.
+        shell: bash
+        run: GOOS=js GOARCH=wasm go build -o "$RUNNER_TEMP/validate.wasm" ./cmd/wasm-validator
 
       - name: Test
-        run: go test ./...
+        # Shuffles order because suites mutate package-global seams.
+        # CI must never skip the bundled-bridge contract gate via local opt-out.
+        # -count=1 keeps the result deterministic; on this repo the test cache
+        # costs more to hash (~25s of embedded bridge files) than to rebuild.
+        # Step-level env works on both bash and PowerShell runners.
+        env:
+          DOMAINCRAFT_LOCAL_DEV: ""
+        run: go test -race -count=1 -shuffle=on ./...
+
+      - name: Integration tests
+        run: go test -race -count=1 -shuffle=on -tags=integration ./internal/bridge
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Check go.mod/go.sum are tidy
+        run: make check-tidy
+
+      - name: Lint
+        # Same command as the local gate; the version lives in the Makefile.
+        run: make lint
+
+  vuln:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Vulnerability scan
+        # Pinned in the Makefile, not @latest, so the gate is reproducible.
+        run: make vulncheck
 
   schema-check:
     name: Verify generated schema is up to date
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.27'
+          go-version: ${{ env.GO_VERSION }}
           cache: true
           cache-dependency-path: go.sum
 

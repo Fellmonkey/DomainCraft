@@ -15,9 +15,16 @@ import (
 // that starts depending on a newer contract — long before it ships. The
 // byte-identical output half is a follow-up golden test.
 func TestBundledBridgesLoad(t *testing.T) {
+	t.Parallel()
 	root := filepath.Join("..", "..", "bridges")
 	if _, err := os.Stat(root); err != nil {
-		t.Skipf("no bundled bridges tree at %s: %v", root, err)
+		// In a standalone checkout the monorepo tree is absent. Skipping is only
+		// acceptable when the developer explicitly opts into that local-dev mode;
+		// otherwise a missing tree would silently certify zero bridges in CI.
+		if os.Getenv("DOMAINCRAFT_LOCAL_DEV") != "" {
+			t.Skipf("no bundled bridges tree at %s (DOMAINCRAFT_LOCAL_DEV set): %v", root, err)
+		}
+		t.Fatalf("bundled bridges tree missing at %s: %v", root, err)
 	}
 
 	var found int

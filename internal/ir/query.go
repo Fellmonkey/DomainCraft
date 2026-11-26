@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"slices"
 
+	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 	"github.com/DomainCraft/DomainCraft/pkg/textutil"
 )
 
@@ -16,6 +17,7 @@ import (
 // the core so every bridge serializes the same vocabulary.
 type FilterOp string
 
+// Filter operators in canonical grammar order.
 const (
 	OpEq         FilterOp = "eq"
 	OpNe         FilterOp = "ne"
@@ -29,19 +31,35 @@ const (
 	OpEndsWith   FilterOp = "endsWith"
 )
 
+// filterOpsByKind is the single source for which operators apply to which
+// field kind. FilterOperators and the canonical vocabulary both derive from it.
+var filterOpsByKind = map[string][]FilterOp{
+	"text":    {OpEq, OpNe, OpContains, OpStartsWith, OpEndsWith, OpIn},
+	"boolean": {OpEq, OpNe},
+	"ordered": {OpEq, OpNe, OpGt, OpGte, OpLt, OpLte, OpIn},
+	"scalar":  {OpEq, OpNe, OpIn},
+}
+
+// allFilterOps is the canonical operator vocabulary. Every caller gets a clone
+// so a bridge cannot mutate the core's contract at runtime.
+var allFilterOps = []FilterOp{OpEq, OpNe, OpGt, OpGte, OpLt, OpLte, OpIn, OpContains, OpStartsWith, OpEndsWith}
+
+// jsonTextFilterOps is the text-semantics subset allowed on any JSON leaf:
+// equality/set/string predicates compare the extracted value as text.
+var jsonTextFilterOps = []FilterOp{OpEq, OpNe, OpIn, OpContains, OpStartsWith, OpEndsWith}
+
 // AllFilterOperators returns the complete, canonical filter-operator vocabulary
 // in a deterministic order. The set is fixed by the core (spec/query.md) so
 // every bridge serializes the same operator names. A bridge iterates this to
 // emit its runtime operator enum (member names via `pascalcase`) instead of
 // hand-writing a parallel vocabulary that can drift out of sync with the core.
-func (IRProject) AllFilterOperators() []FilterOp {
-	return []FilterOp{OpEq, OpNe, OpGt, OpGte, OpLt, OpLte, OpIn, OpContains, OpStartsWith, OpEndsWith}
+func (Project) AllFilterOperators() []FilterOp {
+	return slices.Clone(allFilterOps)
 }
 
-// jsonTextOperators is the text-semantics operator set allowed on any JSON
-// leaf: equality/set/string predicates compare the extracted value as text.
+// jsonTextOperators is the text-semantics operator set allowed on any JSON leaf.
 func jsonTextOperators() []FilterOp {
-	return []FilterOp{OpEq, OpNe, OpIn, OpContains, OpStartsWith, OpEndsWith}
+	return slices.Clone(jsonTextFilterOps)
 }
 
 // jsonFilterOperators is the operator set for a JSON path leaf. The value type
@@ -50,8 +68,8 @@ func jsonTextOperators() []FilterOp {
 // extracted value) and are only valid on a `jsonb` column — `json` stores an
 // opaque, untyped document, so only text-semantics operators are allowed there.
 func jsonFilterOperators(dbType string) []FilterOp {
-	if dbType == "jsonb" {
-		return []FilterOp{OpEq, OpNe, OpGt, OpGte, OpLt, OpLte, OpIn, OpContains, OpStartsWith, OpEndsWith}
+	if dbType == specmeta.FieldTypeJSONB {
+		return slices.Clone(allFilterOps)
 	}
 	return jsonTextOperators()
 }
@@ -72,26 +90,30 @@ const (
 // FilterOperators returns the comparison operators a field's type supports, in
 // a canonical order. Bridges use this to emit a field's allowed-filter map
 // without re-deriving which operator is valid for which type.
-func (f IRField) FilterOperators() []FilterOp {
+func (f Field) FilterOperators() []FilterOp {
+	var kind string
 	switch {
 	case f.IsText():
-		return []FilterOp{OpEq, OpNe, OpContains, OpStartsWith, OpEndsWith, OpIn}
+		kind = "text"
 	case f.IsBoolean():
-		return []FilterOp{OpEq, OpNe}
+		kind = "boolean"
 	case f.IsInteger() || f.IsFloat() || f.IsDate() || f.IsDateTime():
-		return []FilterOp{OpEq, OpNe, OpGt, OpGte, OpLt, OpLte, OpIn}
+		kind = "ordered"
 	case f.IsUuid(), f.IsEnum():
-		return []FilterOp{OpEq, OpNe, OpIn}
-	default:
+		kind = "scalar"
+	}
+	ops, ok := filterOpsByKind[kind]
+	if !ok {
 		return nil
 	}
+	return slices.Clone(ops)
 }
 
 // SearchableFields returns the scalar text fields eligible for a free-text
 // `search` (case-insensitive contains across each). Relations, enums, JSON
 // blobs, arrays, hidden and feature fields are excluded.
-func (e IREntity) SearchableFields() []IRField {
-	return e.queryFields(func(f IRField) bool {
+func (e Entity) SearchableFields() []Field {
+	return e.queryFields(func(f Field) bool {
 		return f.IsText() && !f.IsFeatureField() && !f.IsPrimary && !f.IsHidden
 	})
 }
@@ -99,22 +121,21 @@ func (e IREntity) SearchableFields() []IRField {
 // SortableFields returns the scalar fields a list endpoint may order by.
 // Relations, enums, JSON blobs, arrays, hidden and feature fields and the
 // primary key are excluded (the PK is the default order, not an explicit key).
-func (e IREntity) SortableFields() []IRField {
-	return e.queryFields(func(f IRField) bool {
-		return !f.IsFeatureField() && !f.IsPrimary && !f.IsRelation &&
-			!f.IsEnum() && !f.IsArray() && !f.IsJson() && !f.IsHidden
+func (e Entity) SortableFields() []Field {
+	return e.queryFields(func(f Field) bool {
+		return f.isFilterableScalar() && !f.IsEnum()
 	})
 }
 
 // FilterableFields returns the scalar fields that may be filtered by value:
 // every scalar type (including enums) except feature fields, the primary key,
 // relations, arrays, JSON blobs and hidden fields.
-func (e IREntity) FilterableFields() []IRField {
-	return e.queryFields(func(f IRField) bool { return f.isFilterableScalar() })
+func (e Entity) FilterableFields() []Field {
+	return e.queryFields(func(f Field) bool { return f.isFilterableScalar() })
 }
 
-func (e IREntity) queryFields(pred func(IRField) bool) []IRField {
-	out := make([]IRField, 0, len(e.Fields))
+func (e Entity) queryFields(pred func(Field) bool) []Field {
+	out := make([]Field, 0, len(e.Fields))
 	for _, f := range e.Fields {
 		if pred(f) {
 			out = append(out, f)
@@ -126,7 +147,7 @@ func (e IREntity) queryFields(pred func(IRField) bool) []IRField {
 // isFilterableScalar reports whether the field is a scalar eligible for value
 // filtering (not a feature field, primary key, relation, array, JSON blob or
 // hidden field). It is the shared predicate behind FilterableFields.
-func (f IRField) isFilterableScalar() bool {
+func (f Field) isFilterableScalar() bool {
 	return !f.IsFeatureField() && !f.IsPrimary && !f.IsRelation &&
 		!f.IsArray() && !f.IsJson() && !f.IsHidden
 }
@@ -148,10 +169,11 @@ type FilterPathSpec struct {
 // one-hop to-one relation paths (e.g. "category.name") and JSON roots (e.g.
 // "meta", whose key path is open-ended). Output is sorted by path for
 // deterministic rendering.
-func (e IREntity) FilterablePaths() []FilterPathSpec {
-	var out []FilterPathSpec
+func (e Entity) FilterablePaths() []FilterPathSpec {
+	filterable := e.FilterableFields()
+	out := make([]FilterPathSpec, 0, len(filterable)+len(e.RelationsOut)+len(e.Fields))
 
-	for _, f := range e.FilterableFields() {
+	for _, f := range filterable {
 		out = append(out, FilterPathSpec{Path: f.Name, Kind: SegmentScalar, Operators: f.FilterOperators()})
 	}
 
@@ -190,8 +212,8 @@ func (e IREntity) FilterablePaths() []FilterPathSpec {
 // and filter are peers of the same list-query contract (spec/query.md), not a
 // filter-first API.
 type QuerySchema struct {
-	Searchable []IRField
-	Sortable   []IRField
+	Searchable []Field
+	Sortable   []Field
 	Filterable []FilterPathSpec
 }
 
@@ -200,7 +222,7 @@ type QuerySchema struct {
 // compare with `>` and order by. It returns nil for uuid/text/date keys, where
 // keyset comparison is not reliably translatable across providers — those
 // entities fall back to offset pagination.
-func (e IREntity) CursorField() *IRField {
+func (e Entity) CursorField() *Field {
 	pk := e.PrimaryKey()
 	if pk == nil {
 		return nil
@@ -214,7 +236,7 @@ func (e IREntity) CursorField() *IRField {
 // QuerySchema returns the entity's full query surface in one object. Bridges
 // iterate this instead of calling SearchableFields/SortableFields/FilterablePaths
 // separately.
-func (e IREntity) QuerySchema() QuerySchema {
+func (e Entity) QuerySchema() QuerySchema {
 	return QuerySchema{
 		Searchable: e.SearchableFields(),
 		Sortable:   e.SortableFields(),

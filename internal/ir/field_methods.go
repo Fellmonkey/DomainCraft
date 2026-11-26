@@ -2,22 +2,24 @@ package ir
 
 import "strings"
 
-// HasValidation reports whether the field has the named validation.
-func (f IRField) HasValidation(name string) bool {
+// validation is the single case-insensitive lookup behind both public helpers.
+func (f Field) validation(name string) (string, bool) {
 	for _, validation := range f.Validations {
 		if strings.EqualFold(validation.Name, name) {
-			return true
+			return validation.Value, true
 		}
 	}
-	return false
+	return "", false
+}
+
+// HasValidation reports whether the field has the named validation.
+func (f Field) HasValidation(name string) bool {
+	_, ok := f.validation(name)
+	return ok
 }
 
 // ValidationValue returns the first validation value for the given name.
-func (f IRField) ValidationValue(name string) string {
-	for _, validation := range f.Validations {
-		if strings.EqualFold(validation.Name, name) {
-			return validation.Value
-		}
-	}
-	return ""
+func (f Field) ValidationValue(name string) string {
+	value, _ := f.validation(name)
+	return value
 }

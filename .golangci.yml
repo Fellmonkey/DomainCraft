@@ -1,0 +1,29 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters:
+  enable:
+    - govet
+    - errcheck
+    - ineffassign
+    - staticcheck
+    - unused
+    - modernize
+    - revive
+    - gosec
+    - bodyclose
+    - errorlint
+    - nolintlint
+  exclusions:
+    rules:
+      # Test fixtures use 0644 files and t.TempDir paths on purpose; gosec's
+      # file-permission and path-taint rules target production code.
+      - path: '(.+)_test\.go$'
+        linters: [gosec]

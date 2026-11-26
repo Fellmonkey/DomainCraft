@@ -3,6 +3,7 @@ package interactive
 import (
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -14,33 +15,35 @@ import (
 func setInput(s string) {
 	promptInput = strings.NewReader(s)
 	promptOutput = io.Discard
-	promptReader = nil
 }
 
 func TestConfirm(t *testing.T) {
 	cases := []struct {
+		name  string
 		input string
 		want  bool
 		err   error
 	}{
-		{"\n", false, nil},             // Enter on default (No)
-		{"\x1b[D\n", true, nil},        // ← moves to Yes
-		{"\x1b[C\n", false, nil},       // → stays on No
-		{"\x1b[D\x1b[C\n", false, nil}, // Yes then back to No
-		{"\x1b", false, errAborted},    // Esc cancels
+		{"default_no", "\n", false, nil},              // Enter on default (No)
+		{"left_to_yes", "\x1b[D\n", true, nil},        // ← moves to Yes
+		{"right_stays_no", "\x1b[C\n", false, nil},    // → stays on No
+		{"yes_then_no", "\x1b[D\x1b[C\n", false, nil}, // Yes then back to No
+		{"esc_aborts", "\x1b", false, errAborted},     // Esc cancels
 	}
 	for _, c := range cases {
-		setInput(c.input)
-		got, err := confirm("?", "")
-		if !errors.Is(err, c.err) {
-			t.Fatalf("confirm(%q) error = %v, want %v", c.input, err, c.err)
-		}
-		if err != nil {
-			continue
-		}
-		if got != c.want {
-			t.Errorf("confirm(%q) = %v, want %v", c.input, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			setInput(c.input)
+			got, err := confirm("?", "")
+			if !errors.Is(err, c.err) {
+				t.Fatalf("confirm(%q) error = %v, want %v", c.input, err, c.err)
+			}
+			if err != nil {
+				return
+			}
+			if got != c.want {
+				t.Errorf("confirm(%q) = %v, want %v", c.input, got, c.want)
+			}
+		})
 	}
 }
 
@@ -200,5 +203,72 @@ func TestPromptDeleteFilesEmpty(t *testing.T) {
 	}
 	if got != nil {
 		t.Errorf("PromptDeleteFiles(nil) = %v, want nil", got)
+	}
+}
+
+func TestRunPrompt(t *testing.T) {
+	var keys []keyKind
+	draws := 0
+	draw := func() []string { draws++; return []string{"line"} }
+	onKey := func(k key) (bool, error) {
+		keys = append(keys, k.kind)
+		if k.kind == keyEsc {
+			return true, errAborted
+		}
+		return k.kind == keyEnter, nil
+	}
+
+	// Initial draw, one redraw after Down, none after Enter.
+	setInput("\x1b[B\n")
+	if err := runPrompt(draw, onKey); err != nil {
+		t.Fatal(err)
+	}
+	if draws != 2 {
+		t.Errorf("draws = %d, want 2 (initial + after Down)", draws)
+	}
+	if want := []keyKind{keyDown, keyEnter}; !slices.Equal(keys, want) {
+		t.Errorf("keys = %v, want %v", keys, want)
+	}
+
+	// Esc aborts before a redraw.
+	keys = nil
+	draws = 0
+	setInput("\x1b")
+	if err := runPrompt(draw, onKey); !errors.Is(err, errAborted) {
+		t.Fatalf("runPrompt(esc) error = %v, want errAborted", err)
+	}
+	if draws != 1 || !slices.Equal(keys, []keyKind{keyEsc}) {
+		t.Errorf("esc: draws = %d, keys = %v; want 1, [keyEsc]", draws, keys)
+	}
+}
+
+func TestNumberedMenu(t *testing.T) {
+	got := numberedMenu("Title", "desc", []string{"  1) one", "  2) two"}, 1)
+	want := []string{
+		lineField(ansiBold + "Title"),
+		lineField("  desc"),
+		lineField("  1) one"),
+		lineFocus("  2) two"),
+		lineField(ansiDim + "  ↑/↓ or 1-9 to move, Enter to confirm"),
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("numberedMenu() = %q, want %q", got, want)
+	}
+}
+
+func TestPromptFilesEmpty(t *testing.T) {
+	for _, call := range []struct {
+		name string
+		fn   func() ([]string, error)
+	}{
+		{"promptFiles", func() ([]string, error) { return promptFiles("t", "d", nil) }},
+		{"PromptRenameFiles", func() ([]string, error) { return PromptRenameFiles("Old", "New", nil) }},
+	} {
+		t.Run(call.name, func(t *testing.T) {
+			got, err := call.fn()
+			if err != nil || got != nil {
+				t.Errorf("empty files = %v, %v; want nil, nil", got, err)
+			}
+		})
 	}
 }

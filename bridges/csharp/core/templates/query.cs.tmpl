@@ -19,7 +19,7 @@ namespace {{ .Project.Name | pascalcase }}.Application.Query;
 /// <summary>
 /// A comparison operator in the DomainCraft filter grammar (spec/query.md).
 /// The member list is generated from the core's canonical operator vocabulary
-/// (IRProject.AllFilterOperators), so this bridge never hand-maintains a parallel
+/// (Project.AllFilterOperators), so this bridge never hand-maintains a parallel
 /// grammar that can drift out of sync.
 /// </summary>
 public enum FilterOperator
@@ -428,7 +428,7 @@ public static class SortApplier
 }
 
 /// <summary>
-/// The normalized list-query contract (the runtime mirror of the core's IRQuery):
+/// The normalized list-query contract (the runtime mirror of the core's Query contract):
 /// the raw search/filter/sort strings plus clamped pagination. The repository
 /// resolves the strings against the entity's filterable/sortable schema.
 /// </summary>
@@ -473,7 +473,7 @@ public sealed class ListQuery
     /// <summary>
     /// Normalizes transport parameters into a ListQuery: `limit` wins over
     /// `pageSize`, the default fills in, and page/pageSize are clamped (the
-    /// runtime mirror of IRPaginationConfig.NormalizePage/EffectivePageSize).
+    /// runtime mirror of PaginationConfig.NormalizePage/EffectivePageSize).
     /// </summary>
     public static ListQuery FromQuery(int page, int? pageSize, int? limit, string? sort, string? search, string? filter, string? cursor, string? include, int defaultPageSize, int maxPageSize)
     {

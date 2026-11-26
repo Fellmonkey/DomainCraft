@@ -1,5 +1,31 @@
 package main
 
+import (
+	"context"
+	"errors"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/DomainCraft/DomainCraft/internal/bridge"
+)
+
 func main() {
-	Execute()
+	// run returns an exit code instead of calling os.Exit, so signal.Notify's
+	// stop() defer runs before the process exits.
+	os.Exit(run())
+}
+
+func run() int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	// One holder for every cancellable child: git, probes and migrations.
+	bridge.SetCommandContext(ctx)
+	if err := Execute(); err != nil {
+		if errors.Is(err, errUsage) {
+			return 2
+		}
+		return 1
+	}
+	return 0
 }

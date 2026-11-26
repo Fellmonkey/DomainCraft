@@ -1,4 +1,7 @@
+// Package bridge resolves, caches and updates bridge directories.
 package bridge
+
+import "slices"
 
 // RegistryEntry describes a known bridge in the registry.
 type RegistryEntry struct {
@@ -13,10 +16,6 @@ type RegistryEntry struct {
 	// or local bridges). The ID→Path mapping lives here, in the registry — it
 	// is never derived from directory names at resolution time.
 	Path string
-	// Layer is the bridge's open layer identifier (core/domain/persistence/
-	// transport, core/client/framework/offline, ...). It matches the `layer:`
-	// field each bridge declares, so --replace matches what it documents.
-	Layer string
 	// Deprecated marks legacy bridges kept resolvable for existing `extends:`
 	// chains but hidden from interactive selection and flagged in `bridges`.
 	Deprecated bool
@@ -32,7 +31,6 @@ var DefaultRegistry = []RegistryEntry{
 		Language:    "C#",
 		GitHub:      "DomainCraft/domaincraft-bridge-csharp-core",
 		Path:        "csharp/core",
-		Layer:       "core",
 	},
 	{
 		ID:          "csharp-domain",
@@ -41,7 +39,6 @@ var DefaultRegistry = []RegistryEntry{
 		Language:    "C#",
 		GitHub:      "DomainCraft/domaincraft-bridge-csharp-domain",
 		Path:        "csharp/domain",
-		Layer:       "domain",
 	},
 	{
 		ID:          "csharp-efcore",
@@ -50,7 +47,6 @@ var DefaultRegistry = []RegistryEntry{
 		Language:    "C#",
 		GitHub:      "DomainCraft/domaincraft-bridge-csharp-efcore",
 		Path:        "csharp/persistence/efcore",
-		Layer:       "persistence",
 	},
 	{
 		ID:          "csharp-rest",
@@ -59,7 +55,6 @@ var DefaultRegistry = []RegistryEntry{
 		Language:    "C#",
 		GitHub:      "DomainCraft/domaincraft-bridge-csharp-rest",
 		Path:        "csharp/transport/rest",
-		Layer:       "transport",
 	},
 	{
 		ID:          "csharp-restful",
@@ -93,7 +88,6 @@ var DefaultRegistry = []RegistryEntry{
 		Language:    "TypeScript",
 		GitHub:      "DomainCraft/domaincraft-bridge-ts-core",
 		Path:        "typescript/core",
-		Layer:       "core",
 	},
 	{
 		ID:          "ts-client",
@@ -102,7 +96,6 @@ var DefaultRegistry = []RegistryEntry{
 		Language:    "TypeScript",
 		GitHub:      "DomainCraft/domaincraft-bridge-ts-client",
 		Path:        "typescript/client",
-		Layer:       "client",
 	},
 	{
 		ID:          "react-rest",
@@ -111,7 +104,6 @@ var DefaultRegistry = []RegistryEntry{
 		Language:    "TypeScript",
 		GitHub:      "DomainCraft/domaincraft-bridge-react",
 		Path:        "typescript/react",
-		Layer:       "framework",
 	},
 }
 
@@ -122,7 +114,7 @@ type Registry struct {
 
 // NewRegistry creates a registry from the given entries.
 func NewRegistry(entries []RegistryEntry) *Registry {
-	return &Registry{entries: entries}
+	return &Registry{entries: slices.Clone(entries)}
 }
 
 // Default returns a registry backed by the built-in bridge list.
@@ -132,34 +124,16 @@ func Default() *Registry {
 
 // All returns every registered bridge.
 func (r *Registry) All() []RegistryEntry {
-	return r.entries
+	return slices.Clone(r.entries)
 }
 
 // ByID finds a bridge by its unique ID. Returns nil if not found.
 func (r *Registry) ByID(id string) *RegistryEntry {
 	for i := range r.entries {
 		if r.entries[i].ID == id {
-			return &r.entries[i]
+			cp := r.entries[i]
+			return &cp
 		}
 	}
 	return nil
-}
-
-// OfficialPath returns the monorepo-relative location (`bridges/<Path>`) of an
-// official bridge, or "" when the ID is unknown or has no fixed position.
-// This is the single source of truth for the ID→path mapping — callers must
-// never derive it from directory names.
-func (r *Registry) OfficialPath(id string) string {
-	if e := r.ByID(id); e != nil {
-		return e.Path
-	}
-	return ""
-}
-
-// ByIDDeprecated reports whether the named bridge is deprecated.
-func (r *Registry) ByIDDeprecated(id string) bool {
-	if e := r.ByID(id); e != nil {
-		return e.Deprecated
-	}
-	return false
 }

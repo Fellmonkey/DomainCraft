@@ -13,6 +13,7 @@ package seed
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -30,7 +31,10 @@ type Options struct {
 }
 
 // Generate builds deterministic mock seed for every entity in the project.
-func Generate(project *ir.IRProject, opts Options) *ir.SeedDataset {
+func Generate(project *ir.Project, opts Options) *ir.SeedDataset {
+	if project == nil {
+		return &ir.SeedDataset{}
+	}
 	if opts.CountPerEntity <= 0 {
 		opts.CountPerEntity = 2
 	}
@@ -39,8 +43,8 @@ func Generate(project *ir.IRProject, opts Options) *ir.SeedDataset {
 	// Primary keys generated so far, keyed by entity name, so FK references can
 	// point at real, already-generated parent rows (project.Entities is already
 	// topologically sorted by the IR builder).
-	generated := map[string][]interface{}{}
-	counter := opts.Seed
+	generated := map[string][]any{}
+	g := &genContext{project: project, generated: generated, counter: opts.Seed}
 
 	for i := range project.Entities {
 		entity := &project.Entities[i]
@@ -56,14 +60,7 @@ func Generate(project *ir.IRProject, opts Options) *ir.SeedDataset {
 				if field.IsSensitive() || field.IsFeatureField() {
 					continue
 				}
-				v := valueFor(field, entity, project, generated, &counter, n)
-				rec.Fields = append(rec.Fields, ir.SeedValue{
-					Field:      field.Name,
-					DBType:     field.DatabaseType,
-					IsRelation: field.IsRelation,
-					IsMany:     field.IsMany,
-					Value:      v,
-				})
+				rec.Fields = append(rec.Fields, seedValue(field, valueFor(g, field, n)))
 			}
 			em.Records = append(em.Records, rec)
 
@@ -81,11 +78,23 @@ func Generate(project *ir.IRProject, opts Options) *ir.SeedDataset {
 	return ds
 }
 
+// seedValue is the single constructor for a typed seed field, shared by the
+// generated and the developer-provided seed paths.
+func seedValue(field ir.Field, value any) ir.SeedValue {
+	return ir.SeedValue{
+		Field:      field.Name,
+		DBType:     field.DatabaseType,
+		IsRelation: field.IsRelation,
+		IsMany:     field.IsMany,
+		Value:      value,
+	}
+}
+
 // Normalize converts the developer's explicit `seed:` rows (raw maps) into the
 // same typed SeedRecord shape Generate produces. Values are coerced to native
 // Go types based on the field's IR database type, so a bridge serializes both
 // explicit and generated seed through one code path.
-func Normalize(project *ir.IRProject) *ir.SeedDataset {
+func Normalize(project *ir.Project) *ir.SeedDataset {
 	if project == nil {
 		return &ir.SeedDataset{}
 	}
@@ -105,13 +114,7 @@ func Normalize(project *ir.IRProject) *ir.SeedDataset {
 				if !ok {
 					continue
 				}
-				rec.Fields = append(rec.Fields, ir.SeedValue{
-					Field:      field.Name,
-					DBType:     field.DatabaseType,
-					IsRelation: field.IsRelation,
-					IsMany:     field.IsMany,
-					Value:      coerceValue(val, field.DatabaseType),
-				})
+				rec.Fields = append(rec.Fields, seedValue(field, coerceValue(val, field.DatabaseType)))
 			}
 			em.Records = append(em.Records, rec)
 		}
@@ -121,7 +124,7 @@ func Normalize(project *ir.IRProject) *ir.SeedDataset {
 }
 
 // primaryKey returns the entity's primary key field, or nil.
-func primaryKey(entity *ir.IREntity) *ir.IRField {
+func primaryKey(entity *ir.Entity) *ir.Field {
 	for i := range entity.Fields {
 		if entity.Fields[i].IsPrimary {
 			return &entity.Fields[i]
@@ -130,67 +133,86 @@ func primaryKey(entity *ir.IREntity) *ir.IRField {
 	return nil
 }
 
+// genContext is the state shared by one mock-seed generation run: the project
+// contract, the PKs generated so far (for FK references) and the UUID counter.
+type genContext struct {
+	project   *ir.Project
+	generated map[string][]any
+	counter   int
+}
+
 // valueFor produces one field value for generated mock seed, honoring type,
 // validations, defaults and relations.
-func valueFor(field ir.IRField, entity *ir.IREntity, project *ir.IRProject, generated map[string][]interface{}, counter *int, record int) interface{} {
+func valueFor(g *genContext, field ir.Field, record int) any {
 	// Default value wins when the model declares one (and it's not a function).
 	if field.DefaultValue != "" && !field.DefaultIsFunc {
+		// The lexer stores `default:[a, b]` as a raw string; the same parser
+		// is used by coerceValue for developer-provided seed values.
+		if out, ok := coerceArrayDefault(field.DefaultValue, field.DatabaseType); ok {
+			return out
+		}
 		return coerceValue(field.DefaultValue, field.DatabaseType)
 	}
 
 	if field.IsRelation {
-		return relationValue(field, generated)
+		return relationValue(g, field, record)
 	}
 
-	return scalarValue(field, project, counter, record)
+	return scalarValue(g, field, record)
 }
 
 // relationValue returns a reference to an existing parent row. For a [many]
 // collection the value is nil (the child side owns the FK); for a single FK it
-// returns the parent's primary-key value. When no parent was generated yet
-// (self-reference or a dependency cycle) it falls back to nil.
-func relationValue(field ir.IRField, generated map[string][]interface{}) interface{} {
+// cycles through the parent's primary keys by record index, so a [unique] FK
+// can back a one-to-one relation without colliding with a sibling row. When no
+// parent was generated yet (self-reference or a dependency cycle) it falls
+// back to nil.
+func relationValue(g *genContext, field ir.Field, record int) any {
 	if field.IsMany {
 		return nil
 	}
-	pks, ok := generated[field.RelationTarget]
+	pks, ok := g.generated[field.RelationTarget]
 	if !ok || len(pks) == 0 {
 		return nil
 	}
-	return pks[0]
+	if record < 0 {
+		record = 0
+	}
+	return pks[record%len(pks)]
 }
 
 // scalarValue produces a scalar value from the field's type and constraints.
-func scalarValue(field ir.IRField, project *ir.IRProject, counter *int, record int) interface{} {
+func scalarValue(g *genContext, field ir.Field, record int) any {
 	dbType := field.DatabaseType
 
 	if field.IsArray() {
 		inner := specmeta.ParseArrayInner(dbType)
-		elem := innerValue(inner, field, project, counter, record)
-		return []interface{}{elem}
+		elem := innerValue(g, inner, field, record)
+		return []any{elem}
 	}
 
-	switch dbType {
+	// FieldKind is the single classification shared with the validator and IR.
+	switch specmeta.FieldKind(strings.ToLower(dbType)) {
 	case "uuid":
-		*counter = *counter + 1
-		return fmt.Sprintf("00000000-0000-0000-0000-%012d", *counter)
-	case "string", "text":
+		g.counter++
+		return fmt.Sprintf("00000000-0000-0000-0000-%012d", g.counter)
+	case "text":
 		return stringValue(field, record)
 	case "int", "bigint":
 		return intValue(field, record)
 	case "float", "decimal":
 		return floatValue(field, record)
-	case "boolean":
+	case "bool":
 		return true
 	case "date":
 		return "2024-01-01"
 	case "datetime":
 		return "2024-01-01T00:00:00Z"
-	case "json", "jsonb":
+	case "json":
 		return "{}"
 	default:
 		// Enum (or unknown) — use the first declared value when available.
-		if values, ok := project.Enums[dbType]; ok && len(values) > 0 {
+		if values, ok := g.project.Enums[dbType]; ok && len(values) > 0 {
 			return values[0]
 		}
 		return ""
@@ -198,12 +220,12 @@ func scalarValue(field ir.IRField, project *ir.IRProject, counter *int, record i
 }
 
 // innerValue produces a scalar for an array element type.
-func innerValue(dbType string, field ir.IRField, project *ir.IRProject, counter *int, record int) interface{} {
-	inner := ir.IRField{Name: field.Name, DatabaseType: dbType}
+func innerValue(g *genContext, dbType string, field ir.Field, record int) any {
+	inner := ir.Field{Name: field.Name, DatabaseType: dbType}
 	if specmeta.IsPrimitive(strings.ToLower(dbType)) {
-		return scalarValue(inner, project, counter, record)
+		return scalarValue(g, inner, record)
 	}
-	if values, ok := project.Enums[dbType]; ok && len(values) > 0 {
+	if values, ok := g.project.Enums[dbType]; ok && len(values) > 0 {
 		return values[0]
 	}
 	return ""
@@ -211,7 +233,7 @@ func innerValue(dbType string, field ir.IRField, project *ir.IRProject, counter 
 
 // stringValue returns a valid mock string, honoring email/url validations and
 // min/max length constraints (via the normalized ValidationRules contract).
-func stringValue(field ir.IRField, record int) string {
+func stringValue(field ir.Field, record int) string {
 	isEmail, isURL := false, false
 	minLen, maxLen := "", ""
 	for _, r := range field.ValidationRules() {
@@ -237,95 +259,142 @@ func stringValue(field ir.IRField, record int) string {
 		v = fmt.Sprintf("mock_%s_%d", strings.ToLower(field.Name), record+1)
 	}
 
-	if n, err := strconv.Atoi(minLen); err == nil && len(v) < n {
+	if n, err := strconv.Atoi(minLen); err == nil && n > 0 && len(v) < n {
 		v += strings.Repeat("x", n-len(v))
 	}
-	if n, err := strconv.Atoi(maxLen); err == nil && len(v) > n {
-		v = v[:n]
+	// Clamp defensively: a hand-built IR may bypass the validator, so a
+	// negative max must never reach a slice index and an oversized max must
+	// never exceed the string length.
+	if n, err := strconv.Atoi(maxLen); err == nil {
+		v = v[:min(max(n, 0), len(v))]
+	}
+	return v
+}
+
+// stepExclusiveInt64 moves one representable unit away from an exclusive
+// integer bound. At MaxInt64/MinInt64 there is no next value, so adding or
+// subtracting one would wrap to the opposite end; keep the bound instead.
+func stepExclusiveInt64(v int64, delta int) int64 {
+	if delta > 0 {
+		if v == math.MaxInt64 {
+			return v
+		}
+		return v + 1
+	}
+	if v == math.MinInt64 {
+		return v
+	}
+	return v - 1
+}
+
+// stepExclusiveFloat64 moves one unit away from an exclusive float bound.
+// Float64 has no integer wraparound.
+func stepExclusiveFloat64(v float64, delta int) float64 {
+	if delta > 0 {
+		return v + 1
+	}
+	return v - 1
+}
+
+// clampNumericBounds applies the normalized min_value/max_value rules to a
+// numeric mock value. An exclusive bound steps one unit past the bound; an
+// inclusive bound lands on it. Rules are applied in their normalized order,
+// each one clamping the current value. Int and float paths share this loop so
+// their bound semantics cannot drift apart.
+func clampNumericBounds[T ~int64 | ~float64](v T, rules []ir.ValidationRule, parse func(string) (T, error), step func(T, int) T) T {
+	for _, r := range rules {
+		n, err := parse(r.Value)
+		if err != nil {
+			continue
+		}
+		switch {
+		case r.Kind == "min_value" && r.Exclusive && v <= n:
+			v = step(n, 1)
+		case r.Kind == "min_value" && v < n:
+			v = n
+		case r.Kind == "max_value" && r.Exclusive && v >= n:
+			v = step(n, -1)
+		case r.Kind == "max_value" && v > n:
+			v = n
+		}
 	}
 	return v
 }
 
 // intValue returns an int honoring the numeric min/max bounds (inclusive or
 // exclusive) from the normalized ValidationRules contract.
-func intValue(field ir.IRField, record int) int64 {
-	v := int64(record + 1)
-	for _, r := range field.ValidationRules() {
-		n, err := strconv.ParseInt(r.Value, 10, 64)
-		if err != nil {
-			continue
-		}
-		switch {
-		case r.Kind == "min_value" && r.Exclusive && v <= n:
-			v = n + 1
-		case r.Kind == "min_value" && v < n:
-			v = n
-		case r.Kind == "max_value" && r.Exclusive && v >= n:
-			v = n - 1
-		case r.Kind == "max_value" && v > n:
-			v = n
-		}
-	}
-	return v
+func intValue(field ir.Field, record int) int64 {
+	parse := func(s string) (int64, error) { return strconv.ParseInt(s, 10, 64) }
+	return clampNumericBounds(int64(record+1), field.ValidationRules(), parse, stepExclusiveInt64)
 }
 
 // floatValue returns a float honoring the numeric min/max bounds (inclusive or
 // exclusive) from the normalized ValidationRules contract.
-func floatValue(field ir.IRField, record int) float64 {
-	v := float64(record+1) + 0.5
-	for _, r := range field.ValidationRules() {
-		n, err := strconv.ParseFloat(r.Value, 64)
-		if err != nil {
-			continue
-		}
-		switch {
-		case r.Kind == "min_value" && r.Exclusive && v <= n:
-			v = n + 1
-		case r.Kind == "min_value" && v < n:
-			v = n
-		case r.Kind == "max_value" && r.Exclusive && v >= n:
-			v = n - 1
-		case r.Kind == "max_value" && v > n:
-			v = n
-		}
+func floatValue(field ir.Field, record int) float64 {
+	parse := func(s string) (float64, error) { return strconv.ParseFloat(s, 64) }
+	return clampNumericBounds(float64(record+1)+0.5, field.ValidationRules(), parse, stepExclusiveFloat64)
+}
+
+// coerceArrayDefault parses a bracketed array default the same way for
+// generated mock data and for developer-provided seed values.
+func coerceArrayDefault(raw, dbType string) ([]any, bool) {
+	if !specmeta.IsArrayType(dbType) || !strings.HasPrefix(raw, "[") || !strings.HasSuffix(raw, "]") {
+		return nil, false
 	}
-	return v
+	inner := specmeta.ParseArrayInner(dbType)
+	elements := specmeta.SplitArrayDefault(raw)
+	out := make([]any, 0, len(elements))
+	for _, element := range elements {
+		out = append(out, coerceValue(element, inner))
+	}
+	return out, true
 }
 
 // coerceValue converts a declared seed/default value (from YAML: string, number,
 // bool, list or map) to the field's native Go type.
-func coerceValue(value interface{}, dbType string) interface{} {
+func coerceValue(value any, dbType string) any {
 	inner := specmeta.ParseArrayInner(dbType)
 
 	// Arrays produce a slice of coerced elements.
 	if specmeta.IsArrayType(dbType) {
-		if list, ok := value.([]interface{}); ok {
-			out := make([]interface{}, 0, len(list))
+		if list, ok := value.([]any); ok {
+			out := make([]any, 0, len(list))
 			for _, item := range list {
 				out = append(out, coerceValue(item, inner))
 			}
 			return out
 		}
-		return []interface{}{}
+		if raw, ok := value.(string); ok {
+			if out, parsed := coerceArrayDefault(raw, dbType); parsed {
+				return out
+			}
+		}
+		return []any{}
 	}
 
-	switch {
-	case specmeta.IsNumeric(inner):
-		if inner == "int" || inner == "bigint" {
-			switch v := value.(type) {
-			case int:
+	switch specmeta.FieldKind(strings.ToLower(inner)) {
+	case "int", "bigint":
+		switch v := value.(type) {
+		case int:
+			return int64(v)
+		case int64:
+			return v
+		case float64:
+			// Truncation of a fraction is the established contract; wrapping an
+			// out-of-range float is not. Normalize accepts hand-built IR too, so
+			// guard the conversion against producing a value nobody declared.
+			const twoPow63 = 9223372036854775808.0
+			if v >= -twoPow63 && v < twoPow63 {
 				return int64(v)
-			case int64:
-				return v
-			case float64:
-				return int64(v)
-			case string:
-				if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-					return n
-				}
 			}
 			return int64(0)
+		case string:
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+				return n
+			}
 		}
+		return int64(0)
+	case "float", "decimal":
 		switch v := value.(type) {
 		case float64:
 			return v
@@ -339,7 +408,7 @@ func coerceValue(value interface{}, dbType string) interface{} {
 			}
 		}
 		return float64(0)
-	case specmeta.IsBooleanType(inner):
+	case "bool":
 		switch v := value.(type) {
 		case bool:
 			return v
@@ -349,9 +418,7 @@ func coerceValue(value interface{}, dbType string) interface{} {
 			}
 		}
 		return false
-	case inner == "uuid", inner == "string", inner == "text", inner == "date", inner == "datetime":
-		return fmt.Sprintf("%v", value)
-	case inner == "json", inner == "jsonb":
+	case specmeta.FieldKindJSON:
 		return value // keep maps/slices/strings as-is for the bridge's JSON serializer
 	default:
 		// Enum value name (or unknown) — keep as a string.

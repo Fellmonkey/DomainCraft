@@ -8,7 +8,7 @@ import { can, type EntityName, type PermissionOp } from "./permissions";
 import type { {{ if $auth.Endpoints.HasLogin }}AuthResponse, LoginRequest, {{ end }}{{ if or $auth.Endpoints.HasRegister $auth.Endpoints.HasSetup }}RegisterRequest, {{ end }}{{ $auth.Entity }} } from "./types";
 
 // Auth endpoint paths come from the core's endpoint contract
-// (IRProject.AuthEndpoints) — only endpoints enabled in domain.yaml exist here.
+// (Project.AuthEndpoints) — only endpoints enabled in domain.yaml exist here.
 const AUTH_ROUTES = {
 {{- range .Project.AuthEndpoints }}
   {{ .Operation }}: {{ jsonValue .Path }},

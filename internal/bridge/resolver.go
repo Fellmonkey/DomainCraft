@@ -1,11 +1,26 @@
 package bridge
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+// ErrInvalidRef marks a bridge reference rejected by validation, so CLI
+// commands can map it to a usage exit code instead of a runtime failure.
+var ErrInvalidRef = errors.New("invalid bridge reference")
+
+// asInvalidRef tags an error so the CLI can classify it as usage (exit 2).
+// Multiple %w verbs keep both the marker and the original cause in the chain.
+func asInvalidRef(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %w", ErrInvalidRef, err)
+}
 
 // Resolver maps a bridge identifier to a local filesystem path.
 // The identifier can be:
@@ -32,78 +47,214 @@ func (r *Resolver) WithEnsureOptions(opts *EnsureOptions) *Resolver {
 
 // Resolve maps a bridge identifier to a local path containing bridge.yaml.
 // Returns ("", nil) when input is empty — caller must handle interactive selection.
+// Resolution order is local path → registry ID → GitHub shorthand; a handled
+// step returns done=true, otherwise the next step is tried.
 func (r *Resolver) Resolve(input string) (string, error) {
 	if input == "" {
 		return "", nil
 	}
+	if path, done, err := r.resolveLocal(input); done {
+		return path, err
+	}
+	if path, done, err := r.resolveRegistry(input); done {
+		return path, err
+	}
+	if path, done, err := r.resolveGitHub(input); done {
+		return path, err
+	}
+	return "", asInvalidRef(fmt.Errorf("bridge %q not found: not a local path, registry ID, or owner/repo", input))
+}
 
-	// 1. Local path — use directly. Bare names that exist in the CWD count too.
-	if info, err := os.Stat(input); err == nil {
-		if info.IsDir() {
-			bridgeFile := filepath.Join(input, "bridge.yaml")
-			if _, err := os.Stat(bridgeFile); err == nil {
-				return input, nil
-			}
-			return "", fmt.Errorf("directory %q does not contain bridge.yaml", input)
-		}
-		return filepath.Dir(input), nil
+// resolveLocal handles a local path, including bare names that exist in the
+// CWD. An existing directory without bridge.yaml and a missing path-like input
+// are hard errors; other missing paths fall through to remote resolution.
+func (r *Resolver) resolveLocal(input string) (string, bool, error) {
+	dir, _, err := LocalBridgePaths(input)
+	if err == nil {
+		return dir, true, nil
+	}
+	if _, ok := errors.AsType[*missingBridgeConfigError](err); ok {
+		// The path exists but is not a bridge. That is a hard error, never a
+		// registry ID or GitHub shorthand.
+		return "", true, asInvalidRef(err)
 	}
 
 	// Path-like inputs ("../x", "./x", "/x", "~/x", "C:\\x") that do not
 	// exist are an error, never a GitHub shorthand: a missing "../bridge"
 	// must not turn into a clone of github.com/../bridge.git.
 	if looksLikePath(input) {
-		abs, _ := filepath.Abs(input)
-		return "", fmt.Errorf("bridge %q not found: no such local path (tried %q); for GitHub use owner/repo", input, abs)
-	}
-
-	// 2. Registry ID — check cache, clone if needed.
-	if entry := r.registry.ByID(input); entry != nil {
-		return EnsureBridge(*entry, r.ensure)
-	}
-
-	// 3. GitHub shorthand "owner/repo" — clone directly. An owner of "." or
-	// ".." would be a path fragment, not a GitHub user (looksLikePath already
-	// rejects dot-led inputs; this keeps step 3 correct on its own too).
-	if parts := strings.SplitN(input, "/", 2); len(parts) == 2 && parts[0] != "" && parts[1] != "" && parts[0] != "." && parts[0] != ".." {
-		repo, ref := splitPinRef(input)
-		entry := RegistryEntry{
-			ID:     parts[1],
-			GitHub: repo,
+		// Abs is only used for the diagnostic; the original input remains the
+		// authoritative value if it cannot be resolved.
+		abs, absErr := filepath.Abs(input)
+		if absErr != nil {
+			abs = input
 		}
-		path, err := EnsureBridge(entry, r.ensure)
-		if err != nil {
-			return "", err
-		}
-		if ref != "" {
-			if err := checkoutPinnedRef(path, ref); err != nil {
-				return "", err
-			}
-		}
-		return path, nil
+		return "", true, asInvalidRef(fmt.Errorf("bridge %q not found: no such local path (tried %q); for GitHub use owner/repo", input, abs))
 	}
+	return "", false, nil
+}
 
-	return "", fmt.Errorf("bridge %q not found: not a local path, registry ID, or owner/repo", input)
+// resolveRegistry handles registry IDs by checking the cache and cloning if
+// needed.
+func (r *Resolver) resolveRegistry(input string) (string, bool, error) {
+	entry := r.registry.ByID(input)
+	if entry == nil {
+		return "", false, nil
+	}
+	path, err := EnsureBridge(*entry, r.ensure)
+	return path, true, err
+}
+
+// resolveGitHub handles the "owner/repo" shorthand. An owner of "." or ".."
+// would be a path fragment, not a GitHub user (resolveLocal already rejects
+// dot-led inputs; the check in parseGitHubRef keeps this step correct on its
+// own too).
+func (r *Resolver) resolveGitHub(input string) (string, bool, error) {
+	repo, ref, err := parseGitHubRef(input)
+	if err != nil {
+		return "", true, asInvalidRef(err)
+	}
+	if repo == "" {
+		return "", false, nil
+	}
+	entry := RegistryEntry{
+		// Owner-scoped: the bare repository name would collide in the
+		// cache with another owner's repo of the same name.
+		ID:     cacheIDForGitHub(repo),
+		GitHub: repo,
+	}
+	path, err := EnsureBridge(entry, r.ensure)
+	if err != nil {
+		return "", true, err
+	}
+	if ref != "" {
+		if err := checkoutPinnedRef(path, ref); err != nil {
+			return "", true, err
+		}
+		// Persist the pin: a later cache refresh must not silently move a
+		// pinned bridge onto the default branch.
+		if err := recordPin(entry, ref); err != nil {
+			return "", true, err
+		}
+	}
+	return path, true, nil
+}
+
+// parseGitHubRef splits an `owner/repo@ref` shorthand and validates both parts.
+// The pin is split first: a ref may legally contain "/", while a repository
+// name may not.
+func parseGitHubRef(input string) (repo, ref string, err error) {
+	repo, ref = splitPinRef(input)
+	parts := strings.SplitN(repo, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" || parts[0] == "." || parts[0] == ".." {
+		// An empty repo is the single "not an owner/repo" signal for callers.
+		return "", "", nil
+	}
+	if strings.ContainsAny(parts[1], "/\\") || parts[1] == "." || parts[1] == ".." {
+		return "", "", fmt.Errorf("bridge %q not found: invalid repository name", input)
+	}
+	if ref != "" {
+		if err := validatePinRef(ref); err != nil {
+			return "", "", err
+		}
+	}
+	return repo, ref, nil
+}
+
+// missingBridgeConfigError marks an existing directory that has no bridge.yaml.
+// Resolve surfaces it verbatim instead of falling through to registry/GitHub
+// resolution; the renderer fails closed on the same error.
+type missingBridgeConfigError struct{ dir string }
+
+// Error reports the directory lacking bridge.yaml.
+func (e *missingBridgeConfigError) Error() string {
+	return fmt.Sprintf("directory %q does not contain bridge.yaml", e.dir)
+}
+
+// LocalBridgePaths validates a local bridge reference and returns its directory
+// and bridge.yaml path. A directory must contain bridge.yaml; a file is treated
+// as the config itself and yields its parent directory. Missing or unreadable
+// paths are errors. This is the single normalization used by both the resolver
+// and the renderer, so a path accepted by one is accepted by the other.
+func LocalBridgePaths(input string) (dir, configFile string, err error) {
+	info, err := os.Stat(input)
+	if err != nil {
+		return "", "", fmt.Errorf("bridge path %q: %w", input, err)
+	}
+	if !info.IsDir() {
+		return filepath.Dir(input), input, nil
+	}
+	config := filepath.Join(input, "bridge.yaml")
+	if _, err := os.Stat(config); err != nil {
+		return "", "", &missingBridgeConfigError{dir: input}
+	}
+	return input, config, nil
 }
 
 // splitPinRef splits a `owner/repo@ref` shorthand into the repository and the
 // pinned ref (commit SHA, tag or branch). A bare `owner/repo` has no ref.
 func splitPinRef(s string) (repo, ref string) {
-	if i := strings.LastIndexByte(s, '@'); i > 0 {
-		return s[:i], s[i+1:]
+	before, after, found := strings.CutLast(s, "@")
+	if found && before != "" {
+		return before, after
 	}
 	return s, ""
+}
+
+// validatePinRef enforces a strict git-ref grammar before a user-supplied ref
+// is handed to rev-parse/checkout. A leading '-' would become a git option and
+// revision expressions ("..", "~", "^", "@{") would escape the "one ref"
+// contract, so they are rejected before any command runs.
+func validatePinRef(ref string) error {
+	if ref == "" {
+		return fmt.Errorf("invalid pinned ref: empty")
+	}
+	if strings.HasPrefix(ref, "-") {
+		return fmt.Errorf("invalid pinned ref %q: leading '-' would be parsed as a git option", ref)
+	}
+	if strings.HasPrefix(ref, "/") || strings.HasSuffix(ref, "/") {
+		return fmt.Errorf("invalid pinned ref %q: leading or trailing '/'", ref)
+	}
+	if strings.Contains(ref, "..") || strings.Contains(ref, "//") || strings.Contains(ref, "@{") {
+		return fmt.Errorf("invalid pinned ref %q: traversal or revision expression", ref)
+	}
+	if strings.HasSuffix(ref, ".lock") {
+		return fmt.Errorf("invalid pinned ref %q: '.lock' suffix", ref)
+	}
+	for _, r := range ref {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-' || r == '_' || r == '.' || r == '/' || r == '+':
+		default:
+			return fmt.Errorf("invalid pinned ref %q: character %q is not allowed", ref, r)
+		}
+	}
+	return nil
 }
 
 // checkoutPinnedRef checks that the pinned ref exists in the checkout and
 // switches the cached bridge to it, so community-bridge resolution is pinned to
 // a specific commit/tag rather than "whatever main is today".
 func checkoutPinnedRef(dir, ref string) error {
+	if err := validatePinRef(ref); err != nil {
+		return err
+	}
 	if _, err := runGit(dir, "rev-parse", "--verify", ref+"^{commit}"); err != nil {
 		return fmt.Errorf("pinned ref %q not found in %s: %w", ref, dir, err)
 	}
 	_, err := runGit(dir, "checkout", "-q", ref)
 	return err
+}
+
+// recordPin stores the pin in cache metadata so a later update cannot move the
+// checkout off the requested ref. Legacy metadata without the field decodes to
+// an empty pin and is left untouched.
+func recordPin(entry RegistryEntry, ref string) error {
+	return modifyMeta(entry, func(meta *CacheMeta) {
+		meta.Pin = ref
+		meta.Commit = gitHead(entry)
+		meta.LastCheckedAt = time.Now()
+	})
 }
 
 // looksLikePath reports whether input is path-like — relative ("../x", "./x"),

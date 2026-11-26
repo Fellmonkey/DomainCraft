@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,8 +12,9 @@ import (
 )
 
 func TestSaveLoadRoundtrip(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
-	path := SnapshotPath(dir)
+	path := Path(dir)
 
 	snap := New("csharp-restful", testProject("Product"), []renderer.RenderedFile{
 		{Path: "src/Domain/Entities/Product.cs", Entity: "Product", Written: true},
@@ -46,6 +48,7 @@ func TestSaveLoadRoundtrip(t *testing.T) {
 }
 
 func TestLoadMissingSnapshotReturnsNil(t *testing.T) {
+	t.Parallel()
 	loaded, err := Load(filepath.Join(t.TempDir(), "nope", "snapshot.json"))
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -55,7 +58,58 @@ func TestLoadMissingSnapshotReturnsNil(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsIncompatibleFormatVersion(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		version int
+		wantErr bool
+	}{
+		{name: "legacy zero", version: 0, wantErr: true},
+		{name: "future version", version: 2, wantErr: true},
+		{name: "negative version", version: -1, wantErr: true},
+		{name: "current version", version: FormatVersion, wantErr: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := Path(dir)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			data := []byte(fmt.Sprintf(`{"format_version":%d,"bridge":"demo","entities":{},"files":[]}`, tt.version))
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				t.Fatalf("write snapshot: %v", err)
+			}
+
+			loaded, err := Load(path)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Load() accepted format_version %d, want error", tt.version)
+				}
+				if loaded != nil {
+					t.Errorf("Load() returned a snapshot on error: %+v", loaded)
+				}
+				for _, want := range []string{path, fmt.Sprint(FormatVersion), fmt.Sprint(tt.version)} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("error %q missing %q", err.Error(), want)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if loaded == nil || loaded.FormatVersion != FormatVersion {
+				t.Fatalf("loaded snapshot = %+v, want format_version %d", loaded, FormatVersion)
+			}
+		})
+	}
+}
+
 func TestComputeDiffDeletedEntity(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeTestFile(t, dir, "src/Domain/Entities/Product.cs")
 	writeTestFile(t, dir, "src/Services/ProductService.cs")
@@ -87,6 +141,7 @@ func TestComputeDiffDeletedEntity(t *testing.T) {
 }
 
 func TestComputeDiffRenameAndTypeChange(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeTestFile(t, dir, "src/Domain/Entities/Product.cs")
 	writeTestFile(t, dir, "src/Services/ProductService.cs")
@@ -102,13 +157,13 @@ func TestComputeDiffRenameAndTypeChange(t *testing.T) {
 	}
 
 	// Product -> Item (via old_name) and id type changed uuid -> int.
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Item",
 				OldName:    "Product",
 				NamePlural: "Items",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "int", IsPrimary: true},
 					{Name: "name", DatabaseType: "string"},
 				},
@@ -140,6 +195,7 @@ func TestComputeDiffRenameAndTypeChange(t *testing.T) {
 }
 
 func TestRenameRelPath(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		rel, old, new, want string
 	}{
@@ -152,13 +208,17 @@ func TestRenameRelPath(t *testing.T) {
 		{"src/Shared/Constants.cs", "Product", "Item", "src/Shared/Constants.cs"},
 	}
 	for _, tt := range tests {
-		if got := RenameRelPath(tt.rel, tt.old, tt.new); got != tt.want {
-			t.Errorf("RenameRelPath(%q, %q, %q) = %q, want %q", tt.rel, tt.old, tt.new, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
+			if got := RenameRelPath(tt.rel, tt.old, tt.new); got != tt.want {
+				t.Errorf("RenameRelPath(%q, %q, %q) = %q, want %q", tt.rel, tt.old, tt.new, got, tt.want)
+			}
+		})
 	}
 }
 
 func TestDeleteFileAndRenameEntityFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeTestFile(t, dir, "src/Services/ProductService.cs")
 
@@ -183,6 +243,7 @@ func TestDeleteFileAndRenameEntityFile(t *testing.T) {
 }
 
 func TestComputeDiffNamespaceRename(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeTestFile(t, dir, "src/Application/Services/UserService.cs")
 	writeTestFile(t, dir, "src/WebApi/Program.cs")
@@ -220,6 +281,7 @@ func TestComputeDiffNamespaceRename(t *testing.T) {
 }
 
 func TestComputeDiffFieldRename(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeTestFile(t, dir, "src/Application/Services/ProductService.cs")
 
@@ -236,12 +298,12 @@ func TestComputeDiffFieldRename(t *testing.T) {
 	}
 
 	// name: string [required, old_name: title] — title -> name, same string type.
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Product",
 				NamePlural: "Products",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{
 						Name:                  "name",
@@ -279,6 +341,7 @@ func TestComputeDiffFieldRename(t *testing.T) {
 }
 
 func TestComputeDiffChainedFieldRename(t *testing.T) {
+	t.Parallel()
 	// The developer renamed title -> name, generated, but NEVER applied the
 	// migration. Then they renamed name -> description and generated again. The
 	// previous snapshot shows that `name` was itself a rename (of `title`), so the
@@ -293,12 +356,12 @@ func TestComputeDiffChainedFieldRename(t *testing.T) {
 		},
 	}
 
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Product",
 				NamePlural: "Products",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{
 						Name:                  "description",
@@ -327,6 +390,7 @@ func TestComputeDiffChainedFieldRename(t *testing.T) {
 }
 
 func TestComputeDiffFieldRenameSkipsTypeChangeOnly(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	// Field keeps its name but the type changes — that is a type change, not a rename.
@@ -334,7 +398,7 @@ func TestComputeDiffFieldRenameSkipsTypeChangeOnly(t *testing.T) {
 		Entities: map[string]EntityState{"Product": {Fields: map[string]string{"price": "int"}}},
 	}
 	project := testProject("Product")
-	project.Entities[0].Fields = []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}, {Name: "price", DatabaseType: "decimal", DatabaseColumnName: "price"}}
+	project.Entities[0].Fields = []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}, {Name: "price", DatabaseType: "decimal", DatabaseColumnName: "price"}}
 
 	diff := ComputeDiff(old, project, dir)
 	if len(diff.FieldRenames) != 0 {
@@ -346,6 +410,7 @@ func TestComputeDiffFieldRenameSkipsTypeChangeOnly(t *testing.T) {
 }
 
 func TestComputeDiffDeletedEntityWithoutFiles(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// Files are NOT created on disk — should filter them out.
 
@@ -368,6 +433,7 @@ func TestComputeDiffDeletedEntityWithoutFiles(t *testing.T) {
 }
 
 func TestComputeDiffMultipleDeletedEntities(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeTestFile(t, dir, "src/Domain/Entities/Product.cs")
 	writeTestFile(t, dir, "src/Domain/Entities/Category.cs")
@@ -414,6 +480,7 @@ func TestComputeDiffMultipleDeletedEntities(t *testing.T) {
 }
 
 func TestComputeDiffEntityRenameOnly(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeTestFile(t, dir, "src/Domain/Entities/Product.cs")
 	writeTestFile(t, dir, "src/Services/ProductService.cs")
@@ -429,13 +496,13 @@ func TestComputeDiffEntityRenameOnly(t *testing.T) {
 	}
 
 	// Product -> Item, fields unchanged.
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Item",
 				OldName:    "Product",
 				NamePlural: "Items",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{Name: "name", DatabaseType: "string"},
 				},
@@ -466,6 +533,7 @@ func TestComputeDiffEntityRenameOnly(t *testing.T) {
 }
 
 func TestComputeDiffEntityRenameWithoutFiles(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// No files created on disk.
 
@@ -478,13 +546,13 @@ func TestComputeDiffEntityRenameWithoutFiles(t *testing.T) {
 		},
 	}
 
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Item",
 				OldName:    "Product",
 				NamePlural: "Items",
-				Fields:     []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
+				Fields:     []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
 			},
 		},
 	}
@@ -499,6 +567,7 @@ func TestComputeDiffEntityRenameWithoutFiles(t *testing.T) {
 }
 
 func TestComputeDiffFieldRenameWithTypeChange(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeTestFile(t, dir, "src/Services/ProductService.cs")
 
@@ -515,12 +584,12 @@ func TestComputeDiffFieldRenameWithTypeChange(t *testing.T) {
 	}
 
 	// title: string -> name: text [old_name: title] — rename AND type change.
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Product",
 				NamePlural: "Products",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{
 						Name:                  "name",
@@ -559,6 +628,7 @@ func TestComputeDiffFieldRenameWithTypeChange(t *testing.T) {
 }
 
 func TestComputeDiffSimultaneousChanges(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeTestFile(t, dir, "src/Domain/Entities/Item.cs")
 	writeTestFile(t, dir, "src/Services/ItemService.cs")
@@ -582,13 +652,13 @@ func TestComputeDiffSimultaneousChanges(t *testing.T) {
 	// Product -> Item (rename), title -> name (field rename), price int -> decimal (type change).
 	// Category: deleted.
 	// User: unchanged.
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Item",
 				OldName:    "Product",
 				NamePlural: "Items",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{
 						Name:                  "name",
@@ -603,7 +673,7 @@ func TestComputeDiffSimultaneousChanges(t *testing.T) {
 			{
 				Name:       "User",
 				NamePlural: "Users",
-				Fields: []ir.IRField{
+				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{Name: "email", DatabaseType: "string"},
 				},
@@ -660,6 +730,7 @@ func TestComputeDiffSimultaneousChanges(t *testing.T) {
 }
 
 func TestComputeDiffMultipleRenames(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeTestFile(t, dir, "src/Domain/Entities/Item.cs")
 	writeTestFile(t, dir, "src/Domain/Entities/Group.cs")
@@ -678,24 +749,24 @@ func TestComputeDiffMultipleRenames(t *testing.T) {
 	}
 
 	// Product -> Item, Category -> Group, User unchanged.
-	project := &ir.IRProject{
-		Entities: []ir.IREntity{
+	project := &ir.Project{
+		Entities: []ir.Entity{
 			{
 				Name:       "Item",
 				OldName:    "Product",
 				NamePlural: "Items",
-				Fields:     []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
+				Fields:     []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
 			},
 			{
 				Name:       "Group",
 				OldName:    "Category",
 				NamePlural: "Groups",
-				Fields:     []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
+				Fields:     []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
 			},
 			{
 				Name:       "User",
 				NamePlural: "Users",
-				Fields:     []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
+				Fields:     []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}},
 			},
 		},
 	}
@@ -717,6 +788,7 @@ func TestComputeDiffMultipleRenames(t *testing.T) {
 }
 
 func TestComputeDiffExistingFileFiltersDeleted(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// Only create A.cs — B.cs does not exist on disk.
 	writeTestFile(t, dir, "src/Services/A.cs")
@@ -745,10 +817,10 @@ func TestComputeDiffExistingFileFiltersDeleted(t *testing.T) {
 	}
 }
 
-func testProject(entityName string) *ir.IRProject {
-	return &ir.IRProject{
-		Entities: []ir.IREntity{
-			{Name: entityName, NamePlural: entityName + "s", Fields: []ir.IRField{{Name: "id", DatabaseType: "uuid", IsPrimary: true}}},
+func testProject(entityName string) *ir.Project {
+	return &ir.Project{
+		Entities: []ir.Entity{
+			{Name: entityName, NamePlural: entityName + "s", Fields: []ir.Field{{Name: "id", DatabaseType: "uuid", IsPrimary: true}}},
 		},
 	}
 }
@@ -765,7 +837,9 @@ func writeTestFile(t *testing.T, root, rel string) {
 }
 
 func TestTypeChangeReport(t *testing.T) {
+	t.Parallel()
 	t.Run("empty diff yields empty report", func(t *testing.T) {
+		t.Parallel()
 		d := &Diff{}
 		if got := d.TypeChangeReport(); got != "" {
 			t.Errorf("report = %q, want empty", got)
@@ -773,6 +847,7 @@ func TestTypeChangeReport(t *testing.T) {
 	})
 
 	t.Run("lists changes and custom files", func(t *testing.T) {
+		t.Parallel()
 		d := &Diff{TypeChanges: []TypeChange{
 			{Entity: "Product", Field: "price", OldType: "decimal", NewType: "int", CustomFiles: []string{"src/Services/ProductService.cs"}},
 			{Entity: "Order", Field: "note", OldType: "text", NewType: "string"},
@@ -791,4 +866,86 @@ func TestTypeChangeReport(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestReplaceScaffoldedFileKeepsSourceOnRemoveFailure guards the --prune
+// replace path: a failed source removal must never destroy the developer's
+// file, and the destination must already hold the transformed content.
+func TestReplaceScaffoldedFileKeepsSourceOnRemoveFailure(t *testing.T) {
+	// This test mutates the removeFileFn seam, so it must not run in parallel.
+	dir := t.TempDir()
+	sourceRel := "src/Services/ProductService.cs"
+	destRel := "src/Services/ItemService.cs"
+	source := filepath.Join(dir, filepath.FromSlash(sourceRel))
+	dest := filepath.Join(dir, filepath.FromSlash(destRel))
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(source, []byte("// developer hook for ProductService\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if err := os.WriteFile(dest, []byte("// scaffolded ItemService\n"), 0o644); err != nil {
+		t.Fatalf("write destination: %v", err)
+	}
+
+	original := removeFileFn
+	t.Cleanup(func() { removeFileFn = original })
+	removeFileFn = func(*os.Root, string) error { return fmt.Errorf("remove failed") }
+
+	transform := func(b []byte) []byte {
+		return []byte(strings.ReplaceAll(string(b), "Product", "Item"))
+	}
+	err := ReplaceScaffoldedFile(dir, sourceRel, destRel, transform)
+	if err == nil {
+		t.Fatal("expected error from failed source removal")
+	}
+
+	gotDest, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("read destination: %v", err)
+	}
+	if !strings.Contains(string(gotDest), "developer hook for ItemService") {
+		t.Errorf("destination lost the developer content: %q", gotDest)
+	}
+	if strings.Contains(string(gotDest), "scaffolded") {
+		t.Errorf("destination still holds the scaffolded content: %q", gotDest)
+	}
+	if _, err := os.Stat(source); err != nil {
+		t.Errorf("source was removed before the destination was committed: %v", err)
+	}
+}
+
+func TestReplaceScaffoldedFileSucceeds(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sourceRel := "src/Services/ProductService.cs"
+	destRel := "src/Services/ItemService.cs"
+	source := filepath.Join(dir, filepath.FromSlash(sourceRel))
+	dest := filepath.Join(dir, filepath.FromSlash(destRel))
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(source, []byte("// developer hook for ProductService\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if err := os.WriteFile(dest, []byte("// scaffolded ItemService\n"), 0o644); err != nil {
+		t.Fatalf("write destination: %v", err)
+	}
+
+	transform := func(b []byte) []byte {
+		return []byte(strings.ReplaceAll(string(b), "Product", "Item"))
+	}
+	if err := ReplaceScaffoldedFile(dir, sourceRel, destRel, transform); err != nil {
+		t.Fatalf("ReplaceScaffoldedFile() error = %v", err)
+	}
+	gotDest, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("read destination: %v", err)
+	}
+	if !strings.Contains(string(gotDest), "developer hook for ItemService") {
+		t.Errorf("destination = %q, want transformed developer content", gotDest)
+	}
+	if _, err := os.Stat(source); !os.IsNotExist(err) {
+		t.Errorf("source still exists or stat failed: %v", err)
+	}
 }

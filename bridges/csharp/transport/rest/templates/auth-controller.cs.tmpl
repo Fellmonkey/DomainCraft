@@ -51,7 +51,7 @@ public class {{ $authType }}Controller : ControllerBase
         _configuration = configuration;
     }
 
-{{- /* The auth endpoint contract (IRProject.AuthEndpoints) is the single source of
+{{- /* The auth endpoint contract (Project.AuthEndpoints) is the single source of
        truth for which endpoints exist, their HTTP method and anonymity. Only the
        C#-specific bodies live here. */ -}}
 {{- range .Project.AuthEndpoints }}

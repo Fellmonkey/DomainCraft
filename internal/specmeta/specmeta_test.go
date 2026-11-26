@@ -1,8 +1,13 @@
 package specmeta
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 func TestIsPrimitive(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -19,23 +24,27 @@ func TestIsPrimitive(t *testing.T) {
 		{"uuid", true},
 		{"json", true},
 		{"jsonb", true},
-		{"STRING", false},       // case-sensitive, callers must lowercase
+		{"STRING", false},        // case-sensitive, callers must lowercase
 		{"ProductStatus", false}, // enum
-		{"enum", false},         // meta-type
-		{"array", false},        // meta-type
-		{"relation", false},     // meta-type
+		{"enum", false},          // meta-type
+		{"array", false},         // meta-type
+		{"relation", false},      // meta-type
 		{"", false},
 	}
 
 	for _, tt := range tests {
-		got := IsPrimitive(tt.input)
-		if got != tt.want {
-			t.Errorf("IsPrimitive(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
+			got := IsPrimitive(tt.input)
+			if got != tt.want {
+				t.Errorf("IsPrimitive(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
 func TestFieldTypesDerivedCorrectly(t *testing.T) {
+	t.Parallel()
 	expected := len(PrimitiveFieldTypes) + len(MetaFieldTypes)
 	if len(FieldTypes) != expected {
 		t.Errorf("len(FieldTypes) = %d, want %d (= PrimitiveFieldTypes + MetaFieldTypes)", len(FieldTypes), expected)
@@ -50,6 +59,7 @@ func TestFieldTypesDerivedCorrectly(t *testing.T) {
 }
 
 func TestIsNumeric(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -65,13 +75,17 @@ func TestIsNumeric(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsNumeric(tt.input); got != tt.want {
-			t.Errorf("IsNumeric(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
+			if got := IsNumeric(tt.input); got != tt.want {
+				t.Errorf("IsNumeric(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
 func TestIsStringType(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -83,13 +97,17 @@ func TestIsStringType(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsStringType(tt.input); got != tt.want {
-			t.Errorf("IsStringType(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
+			if got := IsStringType(tt.input); got != tt.want {
+				t.Errorf("IsStringType(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
 func TestIsBooleanType(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -101,13 +119,17 @@ func TestIsBooleanType(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsBooleanType(tt.input); got != tt.want {
-			t.Errorf("IsBooleanType(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
+			if got := IsBooleanType(tt.input); got != tt.want {
+				t.Errorf("IsBooleanType(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
 func TestIsIndexType(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -121,13 +143,17 @@ func TestIsIndexType(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsIndexType(tt.input); got != tt.want {
-			t.Errorf("IsIndexType(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
+			if got := IsIndexType(tt.input); got != tt.want {
+				t.Errorf("IsIndexType(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
 func TestIsCacheProvider(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -139,13 +165,57 @@ func TestIsCacheProvider(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsCacheProvider(tt.input); got != tt.want {
-			t.Errorf("IsCacheProvider(%q) = %v, want %v", tt.input, got, tt.want)
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
+			if got := IsCacheProvider(tt.input); got != tt.want {
+				t.Errorf("IsCacheProvider(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCacheProvidersShareInfraCacheStores(t *testing.T) {
+	t.Parallel()
+	if len(CacheProviders) != len(InfraCacheStores) || len(CacheProviders) == 0 {
+		t.Fatalf("cache vocabularies differ in length: %d vs %d", len(CacheProviders), len(InfraCacheStores))
+	}
+	for i := range CacheProviders {
+		if CacheProviders[i] != InfraCacheStores[i] {
+			t.Errorf("CacheProviders[%d] = %q, InfraCacheStores[%d] = %q", i, CacheProviders[i], i, InfraCacheStores[i])
+		}
+	}
+	// Both names must share one backing slice, not two copies that can drift.
+	if &CacheProviders[0] != &InfraCacheStores[0] {
+		t.Error("CacheProviders and InfraCacheStores do not share the same backing slice")
+	}
+}
+
+func TestStringModifierPredicatesMatchSlices(t *testing.T) {
+	t.Parallel()
+	for _, mod := range stringValidationModifiers {
+		if !IsStringValidationModifier(mod) {
+			t.Errorf("IsStringValidationModifier(%q) = false, want true", mod)
+		}
+	}
+	for _, mod := range StringOnlyValidationModifiers {
+		if !IsStringOnlyValidationModifier(mod) {
+			t.Errorf("IsStringOnlyValidationModifier(%q) = false, want true", mod)
+		}
+	}
+	for _, mod := range StringFlagValidationModifiers {
+		if !IsStringFlagValidationModifier(mod) {
+			t.Errorf("IsStringFlagValidationModifier(%q) = false, want true", mod)
+		}
+	}
+	for _, mod := range []string{"gte", "lte", "unknown", ""} {
+		if IsStringOnlyValidationModifier(mod) || IsStringFlagValidationModifier(mod) {
+			t.Errorf("numeric/unknown modifier %q must not be a string-only or string flag modifier", mod)
 		}
 	}
 }
 
 func TestIsMultiTenancyMode(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -157,13 +227,17 @@ func TestIsMultiTenancyMode(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsMultiTenancyMode(tt.input); got != tt.want {
-			t.Errorf("IsMultiTenancyMode(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
+			if got := IsMultiTenancyMode(tt.input); got != tt.want {
+				t.Errorf("IsMultiTenancyMode(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
 func TestIsPermissionKey(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -176,13 +250,17 @@ func TestIsPermissionKey(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsPermissionKey(tt.input); got != tt.want {
-			t.Errorf("IsPermissionKey(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
+			if got := IsPermissionKey(tt.input); got != tt.want {
+				t.Errorf("IsPermissionKey(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
 func TestIsStringValidationModifier(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -198,13 +276,17 @@ func TestIsStringValidationModifier(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsStringValidationModifier(tt.input); got != tt.want {
-			t.Errorf("IsStringValidationModifier(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
+			if got := IsStringValidationModifier(tt.input); got != tt.want {
+				t.Errorf("IsStringValidationModifier(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
 func TestIsNumericValidationModifier(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -218,13 +300,17 @@ func TestIsNumericValidationModifier(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsNumericValidationModifier(tt.input); got != tt.want {
-			t.Errorf("IsNumericValidationModifier(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
+			if got := IsNumericValidationModifier(tt.input); got != tt.want {
+				t.Errorf("IsNumericValidationModifier(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
 func TestFindAuthEntity(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		entityOrder  []string
@@ -264,6 +350,7 @@ func TestFindAuthEntity(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := FindAuthEntity(tt.entityOrder, tt.entityFields)
 			if got != tt.want {
 				t.Errorf("FindAuthEntity() = %q, want %q", got, tt.want)
@@ -273,6 +360,7 @@ func TestFindAuthEntity(t *testing.T) {
 }
 
 func TestIsSortDirection(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -284,13 +372,17 @@ func TestIsSortDirection(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsSortDirection(tt.input); got != tt.want {
-			t.Errorf("IsSortDirection(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
+			if got := IsSortDirection(tt.input); got != tt.want {
+				t.Errorf("IsSortDirection(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
 func TestHasEmailAndPassword(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		fieldNames []string
@@ -305,6 +397,7 @@ func TestHasEmailAndPassword(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := HasEmailAndPassword(tt.fieldNames); got != tt.want {
 				t.Errorf("HasEmailAndPassword(%v) = %v, want %v", tt.fieldNames, got, tt.want)
 			}
@@ -313,6 +406,7 @@ func TestHasEmailAndPassword(t *testing.T) {
 }
 
 func TestFuncDefaultsContainsExpectedEntries(t *testing.T) {
+	t.Parallel()
 	if _, ok := FuncDefaults["now"]; !ok {
 		t.Error("FuncDefaults missing 'now'")
 	}
@@ -328,6 +422,7 @@ func TestFuncDefaultsContainsExpectedEntries(t *testing.T) {
 }
 
 func TestIsDatabase(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -343,13 +438,17 @@ func TestIsDatabase(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsDatabase(tt.input); got != tt.want {
-			t.Errorf("IsDatabase(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
+			if got := IsDatabase(tt.input); got != tt.want {
+				t.Errorf("IsDatabase(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
 func TestIsAPIStyle(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
@@ -362,31 +461,39 @@ func TestIsAPIStyle(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsAPIStyle(tt.input); got != tt.want {
-			t.Errorf("IsAPIStyle(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
+			if got := IsAPIStyle(tt.input); got != tt.want {
+				t.Errorf("IsAPIStyle(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
 func TestIsAuthType(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  bool
 	}{
 		{"jwt", true},
 		{"none", true},
-		{"JWT", false},  // case-sensitive
+		{"JWT", false}, // case-sensitive
 		{"oauth", false},
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := IsAuthType(tt.input); got != tt.want {
-			t.Errorf("IsAuthType(%q) = %v, want %v", tt.input, got, tt.want)
-		}
+		t.Run(fmt.Sprintf("%v", tt), func(t *testing.T) {
+			t.Parallel()
+			if got := IsAuthType(tt.input); got != tt.want {
+				t.Errorf("IsAuthType(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
 func TestBuildEntityFields(t *testing.T) {
+	t.Parallel()
 	entityOrder := []string{"User", "Product"}
 	getFields := func(name string) []string {
 		switch name {
@@ -413,8 +520,273 @@ func TestBuildEntityFields(t *testing.T) {
 }
 
 func TestBuildEntityFieldsEmptyOrder(t *testing.T) {
-	result := BuildEntityFields(nil, func(name string) []string { return nil })
+	t.Parallel()
+	result := BuildEntityFields(nil, func(_ string) []string { return nil })
 	if len(result) != 0 {
 		t.Errorf("BuildEntityFields(nil) returned %d entries, want 0", len(result))
+	}
+}
+
+func TestNumericFieldTypesDerivedFromGroups(t *testing.T) {
+	t.Parallel()
+	want := []string{"int", "bigint", "float", "decimal"}
+	if len(NumericFieldTypes) != len(want) {
+		t.Fatalf("NumericFieldTypes = %v, want %v", NumericFieldTypes, want)
+	}
+	for i := range want {
+		if NumericFieldTypes[i] != want[i] {
+			t.Errorf("NumericFieldTypes[%d] = %q, want %q", i, NumericFieldTypes[i], want[i])
+		}
+	}
+}
+
+// A comma inside a quoted array element is data, not a separator. The lexer
+// and the seed/validator paths must agree on the same split.
+// Every declared primitive must have an explicit kind. Without this guard a
+// new primitive would fall through FieldKind's defensive "text" branch and
+// silently change validation and seed coercion.
+func TestFieldKindCoversEveryPrimitive(t *testing.T) {
+	t.Parallel()
+	for _, name := range PrimitiveFieldTypes {
+		if got := FieldKind(name); got == FieldKindEnum {
+			t.Errorf("FieldKind(%q) = enum; add an explicit case", name)
+		}
+	}
+	if got := FieldKind("NotAPrimitive"); got != FieldKindEnum {
+		t.Errorf("FieldKind(unknown) = %q, want %q", got, FieldKindEnum)
+	}
+}
+
+func TestSplitArrayDefaultRespectsQuotes(t *testing.T) {
+	t.Parallel()
+	got := SplitArrayDefault(`["a,b", "c"]`)
+	if len(got) != 2 || !strings.Contains(got[0], "a,b") || !strings.Contains(got[1], "c") {
+		t.Fatalf("SplitArrayDefault = %q, want two elements with the comma inside the first", got)
+	}
+	if SplitRespectingQuotes(`default:["a,b", other]`) == nil {
+		t.Fatal("SplitRespectingQuotes returned nil")
+	}
+}
+
+func TestEffectiveContractVersion(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		declared int
+		want     int
+	}{
+		{name: "absent declaration defaults to shared constant", declared: 0, want: ContractVersion},
+		{name: "negative declaration defaults to shared constant", declared: -1, want: ContractVersion},
+		{name: "explicit version is preserved", declared: 1, want: 1},
+		{name: "explicit version is preserved", declared: ContractVersion, want: ContractVersion},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := EffectiveContractVersion(c.declared); got != c.want {
+				t.Errorf("EffectiveContractVersion(%d) = %d, want %d", c.declared, got, c.want)
+			}
+		})
+	}
+}
+
+func TestIsIntegralType(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{name: "int", in: "int", want: true},
+		{name: "bigint", in: "bigint", want: true},
+		{name: "float is not integral", in: "float"},
+		{name: "decimal is not integral", in: "decimal"},
+		{name: "enum is not integral", in: "Status"},
+		{name: "empty", in: ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsIntegralType(c.in); got != c.want {
+				t.Errorf("IsIntegralType(%q) = %v, want %v", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestIsFloatType(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{name: "float", in: "float", want: true},
+		{name: "decimal", in: "decimal", want: true},
+		{name: "int is not float", in: "int"},
+		{name: "bigint is not float", in: "bigint"},
+		{name: "enum is not float", in: "Status"},
+		{name: "empty", in: ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsFloatType(c.in); got != c.want {
+				t.Errorf("IsFloatType(%q) = %v, want %v", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestIsValidIdentifier(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{name: "single letter", in: "A", want: true},
+		{name: "underscore", in: "_", want: true},
+		{name: "mixed case with digits", in: "Order_2Item", want: true},
+		{name: "leading digit rejected", in: "2Item"},
+		{name: "hyphen rejected", in: "order-item"},
+		{name: "space rejected", in: "order item"},
+		{name: "non-ASCII rejected", in: "продукт"},
+		{name: "empty rejected", in: ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsValidIdentifier(c.in); got != c.want {
+				t.Errorf("IsValidIdentifier(%q) = %v, want %v", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestArrayDeclarationRequiresClosingParen(t *testing.T) {
+	t.Parallel()
+	for _, dbType := range []string{"array(int", "array(Status", "array(", "array"} {
+		if IsArrayType(dbType) {
+			t.Errorf("IsArrayType(%q) = true, want false", dbType)
+		}
+		if got := ParseArrayInner(dbType); got != dbType {
+			t.Errorf("ParseArrayInner(%q) = %q, want unchanged", dbType, got)
+		}
+	}
+	for _, c := range []struct{ in, want string }{
+		{in: "array(int)", want: "int"},
+		{in: "array(Status)", want: "Status"},
+	} {
+		if !IsArrayType(c.in) {
+			t.Errorf("IsArrayType(%q) = false, want true", c.in)
+		}
+		if got := ParseArrayInner(c.in); got != c.want {
+			t.Errorf("ParseArrayInner(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestIsSingleBackRelationField(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name                   string
+		isRelation, isMany     bool
+		targetName, sourceName string
+		want                   bool
+	}{
+		{name: "single FK back", isRelation: true, targetName: "Order", sourceName: "Order", want: true},
+		{name: "many is not a back FK", isRelation: true, isMany: true, targetName: "Order", sourceName: "Order"},
+		{name: "points elsewhere", isRelation: true, targetName: "User", sourceName: "Order"},
+		{name: "scalar field", targetName: "Order", sourceName: "Order"},
+		{name: "empty target", isRelation: true, sourceName: "Order"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsSingleBackRelationField(c.isRelation, c.isMany, c.targetName, c.sourceName); got != c.want {
+				t.Errorf("IsSingleBackRelationField(%t, %t, %q, %q) = %t, want %t",
+					c.isRelation, c.isMany, c.targetName, c.sourceName, got, c.want)
+			}
+		})
+	}
+}
+
+func TestFieldKind(t *testing.T) {
+	t.Parallel()
+	want := map[string]string{
+		FieldTypeUUID: "uuid", FieldTypeString: "text", FieldTypeText: "text",
+		FieldTypeInt: "int", FieldTypeBigint: "bigint", FieldTypeFloat: "float", FieldTypeDecimal: "decimal",
+		FieldTypeBoolean: "bool", FieldTypeDate: "date", FieldTypeDatetime: "datetime",
+		FieldTypeJSON: "json", FieldTypeJSONB: "json",
+	}
+	for _, typ := range PrimitiveFieldTypes {
+		expected, ok := want[typ]
+		if !ok {
+			t.Fatalf("no expected kind for primitive type %q", typ)
+		}
+		if got := FieldKind(typ); got != expected {
+			t.Errorf("FieldKind(%q) = %q, want %q", typ, got, expected)
+		}
+	}
+	if got := FieldKind("Status"); got != "enum" {
+		t.Errorf("FieldKind(Status) = %q, want enum", got)
+	}
+}
+
+func TestHasIDSuffix(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"categoryId", "categoryID"} {
+		if !HasIDSuffix(name) {
+			t.Errorf("HasIDSuffix(%q) = false, want true", name)
+		}
+	}
+	for _, name := range []string{"id", "category", "", "fluid", "squid", "avoid", "categoryid"} {
+		if HasIDSuffix(name) {
+			t.Errorf("HasIDSuffix(%q) = true, want false", name)
+		}
+	}
+}
+
+func TestIsIdentifierRune(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   rune
+		want bool
+	}{
+		{name: "ascii letter", in: 'a', want: true},
+		{name: "ascii digit", in: '7', want: true},
+		{name: "underscore", in: '_', want: true},
+		{name: "unicode letter", in: 'é', want: true},
+		{name: "unicode digit", in: '७', want: true},
+		{name: "dash", in: '-', want: false},
+		{name: "space", in: ' ', want: false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsIdentifierRune(c.in); got != c.want {
+				t.Errorf("IsIdentifierRune(%q) = %v, want %v", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestJSONReturnsDefensiveCopies(t *testing.T) {
+	t.Parallel()
+	before := len(PrimitiveFieldTypes)
+	out := JSON()
+	list := out["primitiveFieldTypes"].([]string)
+	list[0] = "mutated"
+	if PrimitiveFieldTypes[0] == "mutated" || len(PrimitiveFieldTypes) != before {
+		t.Fatal("mutating JSON() changed the canonical primitive field types")
+	}
+	defs := out["featureFieldDefs"].(map[string]FeatureFieldDef)
+	for key := range defs {
+		delete(defs, key)
+	}
+	if len(FeatureFieldDefs) == 0 {
+		t.Fatal("mutating JSON() emptied the canonical feature field defs")
 	}
 }

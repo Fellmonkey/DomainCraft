@@ -1,0 +1,334 @@
+package snapshot
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/DomainCraft/DomainCraft/internal/renderer"
+)
+
+func TestDeleteFileIsIdempotent(t *testing.T) {
+	if err := DeleteFile(t.TempDir(), "already-gone.cs"); err != nil {
+		t.Fatalf("DeleteFile on a missing file = %v, want nil", err)
+	}
+}
+
+func TestRenameEntityFileLeavesExistingDestination(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "ProductService.cs")
+	dst := filepath.Join(dir, "ItemService.cs")
+	if err := os.WriteFile(src, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, renamed, err := RenameEntityFile(dir, "ProductService.cs", "Product", "Item")
+	if err != nil || renamed {
+		t.Fatalf("RenameEntityFile = %v, %v; want no rename", renamed, err)
+	}
+	data, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "keep" {
+		t.Errorf("destination overwritten: %q", data)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Errorf("source removed despite existing destination: %v", err)
+	}
+}
+
+func TestRenameEntityFileWithUnchangedNameIsNoop(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ItemService.cs")
+	if err := os.WriteFile(path, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	newRel, renamed, err := RenameEntityFile(dir, "ItemService.cs", "Item", "Item")
+	if err != nil || renamed || newRel != "ItemService.cs" {
+		t.Fatalf("RenameEntityFile = %q, %v, %v; want unchanged no-op", newRel, renamed, err)
+	}
+}
+
+func TestComputeDiffReportsSkippedManifestPaths(t *testing.T) {
+	old := &Snapshot{Files: []renderer.RenderedFile{{Path: "../escape.cs", Entity: "User", Custom: true}}}
+	var warnings []string
+	ComputeDiff(old, testProject("User"), t.TempDir(), func(format string, args ...any) {
+		warnings = append(warnings, fmt.Sprintf(format, args...))
+	})
+	if len(warnings) == 0 {
+		t.Fatal("unsafe manifest path was dropped without a warning")
+	}
+}
+
+// R4: Save must leave a complete, parseable snapshot even when replacing an
+// existing one (atomic write, no leftover temp files).
+func TestSaveReplacesSnapshotWithoutTempLeftovers(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := Path(dir)
+
+	if err := Save(path, New("demo", testProject("Product"), nil)); err != nil {
+		t.Fatalf("initial Save() error = %v", err)
+	}
+	if err := Save(path, New("demo", testProject("Item"), nil)); err != nil {
+		t.Fatalf("replacement Save() error = %v", err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("saved snapshot is not valid JSON: %v", err)
+	}
+	if _, ok := loaded.Entities["Item"]; !ok {
+		t.Errorf("replacement snapshot lost the new entity: %+v", loaded.Entities)
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("read snapshot dir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp-") {
+			t.Errorf("leftover snapshot temp file: %s", e.Name())
+		}
+	}
+}
+
+// R5 (content): replacement text must never be rescanned, so an entity renamed
+// to a name containing the old name cannot double-apply the plural variant.
+func TestRewriteEntityContentDoesNotRescanReplacement(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, in, want string
+	}{
+		{
+			name: "plural and singular",
+			in:   "Products Product ProductService",
+			want: "ProductItems ProductItem ProductItemService",
+		},
+		{
+			name: "camel forms",
+			in:   "var products = productService;",
+			want: "var productItems = productItemService;",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := string(RewriteEntityContent([]byte(tt.in), "Product", "ProductItem"))
+			if got != tt.want {
+				t.Errorf("rewrite\ngot:  %q\nwant: %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// R5 (path): RenameRelPath uses the same single-pass matcher, so plural/singular
+// replacements in file paths cannot be applied twice.
+func TestRenameRelPathDoesNotRescanReplacement(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, in, want string
+	}{
+		{
+			name: "plural controller",
+			in:   "src/WebApi/Controllers/ProductsController.cs",
+			want: "src/WebApi/Controllers/ProductItemsController.cs",
+		},
+		{
+			name: "singular entity",
+			in:   "src/Domain/Entities/Product.cs",
+			want: "src/Domain/Entities/ProductItem.cs",
+		},
+		{
+			name: "singular service",
+			in:   "src/Services/ProductService.cs",
+			want: "src/Services/ProductItemService.cs",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := RenameRelPath(tt.in, "Product", "ProductItem"); got != tt.want {
+				t.Errorf("RenameRelPath(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// R8: identifier boundaries must be rune-aware. Non-ASCII letters before the
+// old token are identifier characters, so "caféProduct" must not be rewritten.
+func TestRewriteEntityContentUnicodeIdentifierBoundaries(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, in, want string
+	}{
+		{
+			name: "latin accent before token",
+			in:   "var caféProduct = 1; var Product = 2;",
+			want: "var caféProduct = 1; var Item = 2;",
+		},
+		{
+			name: "cyrillic before token",
+			in:   "var приветProduct = 1; var Product = 2;",
+			want: "var приветProduct = 1; var Item = 2;",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := string(RewriteEntityContent([]byte(tt.in), "Product", "Item"))
+			if got != tt.want {
+				t.Errorf("rewrite\ngot:  %q\nwant: %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// R6: --prune follows symlinks, so a snapshot path through a symlink that
+// leaves the output tree must be rejected even though it is lexically local.
+func TestSafeRelPathRejectsSymlinkEscape(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "victim.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatalf("write victim: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Skipf("symlinks unavailable on this host: %v", err)
+	}
+	if _, err := safeRelPath(root, "escape/victim.txt"); err == nil {
+		t.Fatal("safeRelPath accepted a path that follows a symlink outside outputDir")
+	}
+}
+
+// R7: every snapshot-supplied path (orphan files, custom files and namespace
+// checks) goes through safeRelPath before os.Stat/os.ReadFile.
+func TestComputeDiffIgnoresSnapshotPathsThroughSymlinks(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	outside := t.TempDir()
+	victim := filepath.Join(outside, "victim.txt")
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Skipf("symlinks unavailable on this host: %v", err)
+	}
+
+	t.Run("orphan file list", func(t *testing.T) {
+		if err := os.WriteFile(victim, []byte("keep"), 0o644); err != nil {
+			t.Fatalf("write victim: %v", err)
+		}
+		old := &Snapshot{
+			Entities: map[string]EntityState{"Product": {Fields: map[string]string{"id": "uuid"}}},
+			Files: []renderer.RenderedFile{
+				{Path: "escape/victim.txt", Entity: "Product", Custom: true},
+			},
+		}
+		diff := ComputeDiff(old, testProject("User"), root)
+		if len(diff.Deleted) != 1 {
+			t.Fatalf("got %d deleted entities, want 1", len(diff.Deleted))
+		}
+		if len(diff.Deleted[0].Files) != 0 {
+			t.Errorf("symlink-escaped file leaked into orphan list: %+v", diff.Deleted[0].Files)
+		}
+	})
+
+	t.Run("namespace mismatch", func(t *testing.T) {
+		if err := os.WriteFile(victim, []byte("namespace OldNs.App;"), 0o644); err != nil {
+			t.Fatalf("write victim: %v", err)
+		}
+		old := &Snapshot{
+			ProjectNamespace: "OldNs",
+			Files: []renderer.RenderedFile{
+				{Path: "escape/victim.txt", Custom: true},
+			},
+		}
+		project := testProject("User")
+		project.Name = "NewNs"
+		if n := ComputeDiff(old, project, root).NamespaceRename; n != nil {
+			t.Errorf("symlink-escaped file leaked into namespace mismatch: %+v", n)
+		}
+	})
+}
+
+// Snapshot metadata must not carry a wall-clock timestamp: two runs on the
+// same domain.yaml have to produce byte-identical output.
+func TestSnapshotJSONHasNoTimestamp(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := Path(dir)
+	other := Path(filepath.Join(dir, "second-run"))
+
+	if err := Save(path, New("demo", testProject("Product"), nil)); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if strings.Contains(string(data), "created_at") {
+		t.Errorf("snapshot.json contains a wall-clock timestamp")
+	}
+
+	// Identical input saved to a different path must produce identical bytes.
+	if err := Save(other, New("demo", testProject("Product"), nil)); err != nil {
+		t.Fatalf("second Save() error = %v", err)
+	}
+	otherData, err := os.ReadFile(other)
+	if err != nil {
+		t.Fatalf("ReadFile(second) error = %v", err)
+	}
+	if !bytes.Equal(data, otherData) {
+		t.Errorf("two saves of the same model differ:\nfirst:  %s\nsecond: %s", data, otherData)
+	}
+}
+
+// The mutation helpers must refuse symlinks even when the link stays inside
+// outputDir: os.Root confines the operation, RefuseSymlinks rejects the link.
+func TestDeleteFileRefusesInternalSymlink(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	realDir := filepath.Join(root, "real")
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	target := filepath.Join(realDir, "Product.cs")
+	if err := os.WriteFile(target, []byte("keep"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	if err := os.Symlink(realDir, filepath.Join(root, "link")); err != nil {
+		t.Skipf("symlinks unavailable on this host: %v", err)
+	}
+	if err := DeleteFile(root, "link/Product.cs"); err == nil {
+		t.Fatal("DeleteFile followed a symlink inside outputDir")
+	}
+	data, err := os.ReadFile(target)
+	if err != nil || string(data) != "keep" {
+		t.Errorf("DeleteFile removed the symlink target: data=%q err=%v", data, err)
+	}
+}
+
+func TestRenameEntityFileRefusesBrokenSymlinkDestination(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	source := filepath.Join(root, "ProductService.cs")
+	if err := os.WriteFile(source, []byte("custom"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	dest := filepath.Join(root, "ItemService.cs")
+	if err := os.Symlink(filepath.Join(root, "missing-target"), dest); err != nil {
+		t.Skipf("symlinks unavailable on this host: %v", err)
+	}
+	_, renamed, err := RenameEntityFile(root, "ProductService.cs", "Product", "Item")
+	if err == nil {
+		t.Fatal("RenameEntityFile accepted a symlink as destination")
+	}
+	if renamed {
+		t.Error("rename reported success despite the symlink destination")
+	}
+	if _, err := os.Stat(source); err != nil {
+		t.Errorf("source was moved despite the symlink destination: %v", err)
+	}
+}

@@ -4,54 +4,75 @@ import "slices"
 
 // sortEntities reorders the slice by FK dependencies using Kahn's algorithm.
 // The order is deterministic: ties are broken by entity name.
-// It returns a new slice because relations hold *IREntity pointers into the
+// It returns a new slice because relations hold *Entity pointers into the
 // original backing array; the original must stay intact until every pointer has
 // been rebound to its new location.
-func sortEntities(entities []IREntity) []IREntity {
+func sortEntities(entities []Entity) []Entity {
 	byName := make(map[string]int, len(entities))
 	for i, e := range entities {
 		byName[e.Name] = i
 	}
 
 	// deps[i] = set of entity names that entities[i] depends on (must come first).
-	deps := make([]map[string]bool, len(entities))
+	// dependents[name] is the inverse edge: indices that must wait for name.
+	// Building it once avoids rescanning every entity for every popped name.
 	inDegree := make([]int, len(entities))
+	dependents := make(map[string][]int, len(entities))
 	for i, entity := range entities {
 		depSet := make(map[string]bool)
 		for _, rel := range entity.RelationsOut {
 			if !rel.IsMany && rel.TargetEntity != nil && rel.TargetEntity.Name != entity.Name {
-				depSet[rel.TargetEntity.Name] = true
+				target := rel.TargetEntity.Name
+				if !depSet[target] {
+					depSet[target] = true
+					dependents[target] = append(dependents[target], i)
+				}
 			}
 		}
-		deps[i] = depSet
 		inDegree[i] = len(depSet)
 	}
 
 	// Initialize the queue with all entities that have no dependencies.
-	ready := make([]string, 0)
+	ready := make([]string, 0, len(entities))
 	for i, e := range entities {
 		if inDegree[i] == 0 {
 			ready = append(ready, e.Name)
 		}
 	}
-	// Deterministic ordering: process ready entities in name order.
 	slices.Sort(ready)
+
+	// Appending is O(1); only an out-of-order append makes the queue unsorted.
+	// Deferring the sort until the next pop turns fan-out (N-1 insertions at
+	// one step) into one sort instead of N-1 full-slice copies. Ascending
+	// insertions never set dirty and keep the old O(1) append path.
+	//
+	// This is load-bearing, not micro-optimization: an unconditional sort at
+	// every pop was measured at +2884% on BenchmarkSortEntities/fanout/2000
+	// (303µs -> 9067µs, benchstat p=0.008) with identical allocations. Do not
+	// "simplify" it away.
+	dirty := false
+	insertReady := func(name string) {
+		if len(ready) > 0 && name < ready[len(ready)-1] {
+			dirty = true
+		}
+		ready = append(ready, name)
+	}
 
 	order := make([]string, 0, len(entities))
 	for len(ready) > 0 {
+		if dirty {
+			slices.Sort(ready)
+			dirty = false
+		}
 		name := ready[0]
 		ready = ready[1:]
 		order = append(order, name)
 
-		// For every entity depending on this one, decrement in-degree.
-		for i := range entities {
-			if deps[i][name] {
-				inDegree[i]--
-				if inDegree[i] == 0 {
-					// Insert in sorted order to keep processing deterministic.
-					ready = append(ready, entities[i].Name)
-					slices.Sort(ready)
-				}
+		// Decrement only the entities that actually depend on this name.
+		for _, i := range dependents[name] {
+			inDegree[i]--
+			if inDegree[i] == 0 {
+				insertReady(entities[i].Name)
 			}
 		}
 	}
@@ -75,12 +96,12 @@ func sortEntities(entities []IREntity) []IREntity {
 	// Build the reordered slice. The source `entities` backing array is left
 	// untouched, so every TargetEntity pointer still points to valid memory we
 	// can read the name from while rebinding it to the new slice.
-	sorted := make([]IREntity, 0, len(entities))
+	sorted := make([]Entity, 0, len(entities))
 	for _, name := range order {
 		sorted = append(sorted, entities[byName[name]])
 	}
 
-	relocated := make(map[string]*IREntity, len(sorted))
+	relocated := make(map[string]*Entity, len(sorted))
 	for i := range sorted {
 		relocated[sorted[i].Name] = &sorted[i]
 	}

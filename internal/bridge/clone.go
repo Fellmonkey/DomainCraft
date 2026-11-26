@@ -1,28 +1,109 @@
 package bridge
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/DomainCraft/DomainCraft/internal/appdir"
+	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 )
-
-// BridgeCacheDir returns ~/.domaincraft/bridges/.
-// Falls back to .domaincraft/bridges in the current directory if the home directory is unavailable.
-func BridgeCacheDir() string {
-	dir, err := appdir.UnionDir("bridges")
-	if err != nil {
-		return filepath.Join(".domaincraft", "bridges")
-	}
-	return dir
-}
 
 // CachePath returns the local cache directory for a bridge entry.
 func CachePath(entry RegistryEntry) string {
-	return filepath.Join(BridgeCacheDir(), entry.ID)
+	return filepath.Join(appdir.UnionDir("bridges"), entry.ID)
+}
+
+// cacheIDForGitHub derives a cache-safe ID for a GitHub shorthand. Using the
+// bare repository name would make alice/utils and bob/utils share one cache
+// directory (and one checkout, including its migrations:). The owner is part
+// of the key, with "__" as an unambiguous separator that keeps validateCacheID
+// happy: no separators, no dot segments, a single local path component.
+func cacheIDForGitHub(repo string) string {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok || owner == "" || name == "" {
+		return repo
+	}
+	return owner + "__" + name
+}
+
+// cacheSourceMatches reports whether an existing checkout belongs to the
+// expected GitHub repository. A foreign cache is replaced, never reused: it
+// can carry another owner's templates, migrations and metadata.
+func cacheSourceMatches(entry RegistryEntry) bool {
+	meta, err := ReadMeta(entry)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		// A corrupt or unreadable metadata file is not proof of ownership —
+		// but neither is proof of foreign ownership. The checkout's origin can
+		// still prove it; on success rebuild the metadata instead of letting
+		// the caller discard a working checkout and re-clone it.
+		if !cacheOriginMatches(entry) {
+			return false
+		}
+		// Metadata is advisory: proven ownership must not be thrown away
+		// because the rewrite failed. A later run retries the rewrite.
+		_ = WriteMeta(entry, newMetaFromCache(entry))
+		return true
+	}
+	if meta == nil {
+		// Legacy cache without metadata: fall back to git's origin. Fail closed
+		// when there is no remote or it names a different repository.
+		return cacheOriginMatches(entry)
+	}
+	if meta.Source == "" {
+		return false // metadata without a source cannot prove ownership
+	}
+	return meta.Source == entry.GitHub
+}
+
+// cacheOriginMatches checks the checkout's git origin against the expected
+// repository. It is the ownership proof for legacy caches and for metadata
+// that could not be read. Fail closed on a missing or foreign origin.
+func cacheOriginMatches(entry RegistryEntry) bool {
+	out, err := runGit(CachePath(entry), "remote", "get-url", "origin")
+	if err != nil {
+		return false
+	}
+	return githubOriginMatches(out, entry.GitHub)
+}
+
+// githubHost is the canonical host for bridge sources. Origin checks, redirect
+// policy and clone URL construction all derive from it so a host change cannot
+// leave one of them pointing elsewhere.
+const githubHost = "github.com"
+
+// githubOriginMatches compares a git origin with the expected GitHub slug.
+// A substring check would accept an unrelated repository whose name merely
+// contains the expected one.
+func githubOriginMatches(origin, repo string) bool {
+	origin = strings.TrimSuffix(strings.TrimSpace(origin), ".git")
+	for _, prefix := range []string{
+		"https://" + githubHost + "/",
+		"http://" + githubHost + "/",
+		"ssh://git@" + githubHost + "/",
+		"git@" + githubHost + ":",
+		"git://" + githubHost + "/",
+	} {
+		if origin == prefix+repo {
+			return true
+		}
+	}
+	return false
+}
+
+// validateCacheID rejects bridge IDs that could resolve outside the cache
+// directory. IDs come from registry entries and from `owner/repo` refs, so a
+// separator or a dot segment would otherwise let CloneBridge and ApplyUpdate
+// write to or delete an arbitrary path under the user's account.
+func validateCacheID(id string) error {
+	if id == "" || id == "." || id == ".." || !filepath.IsLocal(id) || filepath.Base(id) != id || strings.ContainsAny(id, "/\\") {
+		return fmt.Errorf("unsafe bridge id %q", id)
+	}
+	return nil
 }
 
 // IsCached checks whether a bridge is already cloned and contains bridge.yaml.
@@ -62,26 +143,42 @@ type EnsureOptions struct {
 // the cached copy fresh by checking the upstream repo for newer versions.
 // Returns the local path to the bridge directory.
 func EnsureBridge(entry RegistryEntry, opts *EnsureOptions) (string, error) {
+	if err := validateCacheID(entry.ID); err != nil {
+		return "", err
+	}
 	if entry.GitHub == "" {
 		return "", fmt.Errorf("bridge %q has no GitHub repository configured", entry.ID)
 	}
 
 	cacheDir := CachePath(entry)
+	if IsCached(entry) && !cacheSourceMatches(entry) {
+		// A cache entry from a different repository must not be served as this
+		// bridge: another owner's code and migration commands would be used.
+		if err := os.RemoveAll(cacheDir); err != nil {
+			return "", fmt.Errorf("remove foreign bridge cache %q: %w", cacheDir, err)
+		}
+	}
 	if !IsCached(entry) {
 		// Offline fallback: materialize the embedded copy before cloning.
-		if ok, err := TryMaterializeEmbedded(entry, opts); err != nil {
+		ok, err := TryMaterializeEmbedded(entry, opts)
+		if err != nil {
 			return "", err
-		} else if ok {
+		}
+		if ok {
 			return cacheDir, nil
 		}
 		if err := CloneBridge(entry); err != nil {
 			return "", err
 		}
 
-		// Verify the cloned repo contains bridge.yaml.
+		// Verify the cloned repo contains bridge.yaml. Fail closed: the missing
+		// manifest stays the primary error even if cleanup also fails.
 		if !IsCached(entry) {
-			os.RemoveAll(cacheDir)
-			return "", fmt.Errorf("cloned bridge %q does not contain bridge.yaml", entry.ID)
+			missing := fmt.Errorf("cloned bridge %q does not contain bridge.yaml", entry.ID)
+			if err := os.RemoveAll(cacheDir); err != nil {
+				return "", errors.Join(missing, fmt.Errorf("remove incomplete cache %q: %w", cacheDir, err))
+			}
+			return "", missing
 		}
 
 		if err := WriteMeta(entry, newMetaFromCache(entry)); err != nil {
@@ -115,6 +212,12 @@ func maybeUpdate(entry RegistryEntry, opts *EnsureOptions) error {
 		interval = 0 // check now, regardless of when we last looked
 	}
 
+	// A pinned bridge is deliberately fixed at one ref; refreshing it would
+	// silently replace the version the user selected.
+	if meta, err := ReadMeta(entry); err == nil && meta != nil && meta.Pin != "" {
+		return nil
+	}
+
 	update, err := CheckForUpdate(entry, interval)
 	if err != nil {
 		return err
@@ -125,12 +228,11 @@ func maybeUpdate(entry RegistryEntry, opts *EnsureOptions) error {
 
 	// Contract gate: never offer (and thus never download) an upstream bridge
 	// this core cannot support. The hard check is re-done in ApplyUpdate; this
-	// only avoids prompting for an update that would be rejected anyway.
-	if c, rerr := remoteContractVersion(entry, update.RemoteBranch); rerr == nil {
-		if cerr := shouldApplyContract(c); cerr != nil {
-			warnOpts(opts, "skipping update of %q: %v", entry.ID, cerr)
-			return nil
-		}
+	// only avoids prompting for an update that would be rejected anyway. A
+	// failed probe is "cannot offer update", never "assume supported".
+	if cerr := gateRemoteContract(entry, update.RemoteBranch); cerr != nil {
+		warnOpts(opts, "skipping update of %q: %v", entry.ID, cerr)
+		return nil
 	}
 
 	// No policy set: keep the cached version and surface the availability.
@@ -168,23 +270,50 @@ func warnOpts(opts *EnsureOptions, format string, args ...any) {
 	}
 }
 
+// prepareCloneCacheDir checks the whole cache path for planted symlinks before
+// creating the parent directory. A clone must not follow a link out of the
+// cache any more than embedded materialization or metadata writes may.
+func prepareCloneCacheDir(cacheDir string) error {
+	cacheRoot := appdir.UnionDir("bridges")
+	_, err := fsutil.AbsPathWithin(cacheRoot, cacheDir)
+	if err == nil {
+		err = fsutil.RefuseSymlinks(cacheRoot, cacheDir)
+	}
+	if err != nil {
+		return fmt.Errorf("prepare bridge cache dir %q: %w", cacheDir, err)
+	}
+	parent := filepath.Dir(cacheDir)
+	if err := os.MkdirAll(parent, 0o755); err != nil { //nolint:gosec // bridge cache dirs must stay readable across CLI runs
+		return fmt.Errorf("create cache directory: %w", err)
+	}
+	return nil
+}
+
 // CloneBridge performs a shallow git clone of the bridge repository.
 func CloneBridge(entry RegistryEntry) error {
+	if err := validateCacheID(entry.ID); err != nil {
+		return err
+	}
 	if _, err := exec.LookPath("git"); err != nil {
 		return fmt.Errorf("git is required to download bridges but was not found in PATH")
 	}
 
 	cacheDir := CachePath(entry)
-	parent := filepath.Dir(cacheDir)
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return fmt.Errorf("create cache directory: %w", err)
+	if err := prepareCloneCacheDir(cacheDir); err != nil {
+		return err
 	}
 
-	url := fmt.Sprintf("https://github.com/%s.git", entry.GitHub)
-	cmd := exec.Command("git", "clone", "--depth", "1", url, cacheDir)
+	url := fmt.Sprintf("https://%s/%s.git", githubHost, entry.GitHub)
+	ctx, cancel := gitCommandContext()
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", url, cacheDir) //nolint:gosec // args passed separately; no shell interpretation
+	cmd.Env = gitScrubbedEnv()
 	if out, err := cmd.CombinedOutput(); err != nil {
-		os.RemoveAll(cacheDir)
-		return fmt.Errorf("clone %s: %w: %s", url, err, out)
+		cloneErr := fmt.Errorf("clone %s: %w: %s", url, err, out)
+		if rerr := os.RemoveAll(cacheDir); rerr != nil {
+			return errors.Join(cloneErr, fmt.Errorf("remove incomplete cache %q: %w", cacheDir, rerr))
+		}
+		return cloneErr
 	}
 	return nil
 }

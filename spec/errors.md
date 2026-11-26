@@ -10,7 +10,7 @@ shape, but both expose the same machine-readable codes.
 
 ## 1. Validation rules (from the core)
 
-`IRField.ValidationRules()` returns normalized rules. Each rule carries:
+`Field.ValidationRules()` returns normalized rules. Each rule carries:
 
 | field      | meaning                                                              |
 |------------|----------------------------------------------------------------------|
@@ -59,7 +59,7 @@ use a minimal, consistent envelope:
 | `CONSTRAINT_CONFLICT`   | 409  | any other database constraint violation         |
 
 Unique constraints are core-owned: the core computes the constraint name
-(`IRIndex.DatabaseName()`) and the field set (`IREntity.AllIndexes()`), so a
+(`Index.DatabaseName()`) and the field set (`Entity.AllIndexes()`), so a
 bridge can map a database unique violation (PostgreSQL `SqlState 23505`) back to
 the offending field and report `{ code: "UNIQUE_CONFLICT", message: "<field> must
 be unique" }` — never a bare 500.
@@ -89,7 +89,7 @@ Paginated list endpoints return a `PagedResult<T>`-shaped payload:
 
 Field names are part of the contract and must match across bridges (JSON
 `camelCase`). Request normalization is defined in `spec/query.md`
-(`IRPaginationConfig` / `ListQuery.FromQuery`): `limit` wins over `pageSize`,
+(`PaginationConfig` / `ListQuery.FromQuery`): `limit` wins over `pageSize`,
 both clamp to `1..max_page_size`, `page >= 1`. In keyset (cursor) mode
 `nextCursor` carries the last row's primary key (or `null` at the end); offset
 mode leaves it `null`.

@@ -15,17 +15,21 @@ make install-deps && make build   # → bin/domaincraft
 make test && make lint
 ```
 
+`make test` needs only Go. `make test-affected` additionally needs a working `python3` (or `python`) on `PATH` — the script uses it to walk the affected-package graph. Without it, run `make test`.
+
 **Validate and generate:**
 
 ```bash
 make cli-validate DOMAIN=examples/domain.yaml
-make cli-generate DOMAIN=examples/domain.yaml BRIDGE=../domaincraft-bridge-csharp-rest OUTPUT=/tmp/out
+make cli-generate DOMAIN=examples/domain.yaml BRIDGE=csharp-rest OUTPUT=/tmp/out
 # direct:
 go run ./cmd/domaincraft validate --domain domain.yaml
 go run ./cmd/domaincraft generate --domain domain.yaml --bridge ../my-bridge --output ./out
 # swap a layer without forking:
-go run ./cmd/domaincraft generate --domain domain.yaml --bridge ../domaincraft-bridge-csharp-rest --replace persistence=../my-dapper --output ./out
+go run ./cmd/domaincraft generate --domain domain.yaml --bridge csharp-rest --replace persistence=../my-dapper --output ./out
 ```
+
+Sibling `domaincraft-bridge-*` directories are legacy mirrors of the old standalone repos — they are not part of a fresh monorepo clone.
 
 `--bridge` accepts a local path, a registry ID (`csharp-rest`, `ts-core`) or `owner/repo`. `--replace` accepts `layer=bridgeRef` or `bridgeId=bridgeRef` (repeatable). Create a starter `domain.yaml` by hand or in [Studio](https://fellmonkey.github.io/domaincraft-studio/) — an example is `examples/domain.yaml`.
 
@@ -36,7 +40,7 @@ domain.yaml → Parser → Lexer → Validator → IR Builder → Renderer → G
                                                       → Snapshot (.domaincraft/snapshot.json)
 ```
 
-The **IR** is the contract. Templates read a fully linked `IRProject` — the core never contains C# or TypeScript. Composition is `extends` + `layer` + `--replace` (see [Axes and layers](https://fellmonkey.github.io/domaincraft-site/docs/concepts/three-axes/) and [Architecture](https://fellmonkey.github.io/domaincraft-site/docs/concepts/architecture/)).
+The **IR** is the contract. Templates read a fully linked `Project` — the core never contains C# or TypeScript. Composition is `extends` + `layer` + `--replace` (see [Axes and layers](https://fellmonkey.github.io/domaincraft-site/docs/concepts/three-axes/) and [Architecture](https://fellmonkey.github.io/domaincraft-site/docs/concepts/architecture/)).
 
 ## Creating a new bridge
 

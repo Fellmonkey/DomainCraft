@@ -1,16 +1,24 @@
 package ir
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 )
 
+// cloneField detaches a field's validation slice so mutating a DTO field cannot
+// silently change the entity field it was projected from.
+func cloneField(f Field) Field {
+	f.Validations = slices.Clone(f.Validations)
+	return f
+}
+
 // IsSensitive reports whether the field holds credentials that must never be
 // serialized into a response DTO (currently: a field literally named "password").
 // Sensitive fields are also excluded from the generic create/update projections
 // — the auth flow handles them explicitly (hashing on write, never returning).
-func (f IRField) IsSensitive() bool {
+func (f Field) IsSensitive() bool {
 	return strings.EqualFold(f.Name, "password")
 }
 
@@ -18,7 +26,7 @@ func (f IRField) IsSensitive() bool {
 // (audit, audit_log, soft_delete, optimistic_lock, ...). Feature fields are
 // server-managed: they are returned in read projections but never accepted from
 // a client in a create request.
-func (f IRField) IsFeatureField() bool {
+func (f Field) IsFeatureField() bool {
 	_, ok := specmeta.FeatureFieldDefs[f.Name]
 	return ok
 }
@@ -27,8 +35,28 @@ func (f IRField) IsFeatureField() bool {
 // token. It is readable and accepted on update (so the client can send the
 // version it last read) but is never copied from the request body into the
 // entity — the server owns the increment.
-func (f IRField) IsConcurrencyToken() bool {
+func (f Field) IsConcurrencyToken() bool {
 	return f.IsFeatureField() && f.Name == "version"
+}
+
+// projectFields applies one field predicate to all four DTO projections. When
+// featureLast is set, server-managed fields move behind developer fields so a
+// response reads identity/data first and timestamps/version last. cloneField
+// keeps each projection detached from the entity's validation slice.
+func (e Entity) projectFields(pred func(Field) bool, featureLast bool) []Field {
+	out := make([]Field, 0, len(e.Fields))
+	var feature []Field
+	for _, f := range e.Fields {
+		if !pred(f) {
+			continue
+		}
+		if featureLast && f.IsFeatureField() {
+			feature = append(feature, cloneField(f))
+			continue
+		}
+		out = append(out, cloneField(f))
+	}
+	return append(out, feature...)
 }
 
 // ReadFields returns the fields exposed in a read (response) DTO: every field
@@ -36,51 +64,31 @@ func (f IRField) IsConcurrencyToken() bool {
 // readable. Feature (server-managed) fields are ordered last, after the
 // developer-declared fields, so a response DTO reads naturally (identity and
 // data first, timestamps and the version token at the end).
-func (e IREntity) ReadFields() []IRField {
-	out := make([]IRField, 0, len(e.Fields))
-	var feature []IRField
-	for _, f := range e.Fields {
-		if f.IsHidden || f.IsSensitive() {
-			continue
-		}
-		if f.IsFeatureField() {
-			feature = append(feature, f)
-			continue
-		}
-		out = append(out, f)
-	}
-	return append(out, feature...)
+func (e Entity) ReadFields() []Field {
+	return e.projectFields(func(f Field) bool {
+		return !f.IsHidden && !f.IsSensitive()
+	}, true)
 }
 
 // CreateFields returns the fields accepted in a create (request) DTO: primary,
 // readonly, feature and sensitive fields are excluded. Hidden fields are kept —
 // they are client-settable, just never returned in responses.
-func (e IREntity) CreateFields() []IRField {
-	out := make([]IRField, 0, len(e.Fields))
-	for _, f := range e.Fields {
-		if f.IsPrimary || f.IsReadonly || f.IsFeatureField() || f.IsSensitive() {
-			continue
-		}
-		out = append(out, f)
-	}
-	return out
+func (e Entity) CreateFields() []Field {
+	return e.projectFields(func(f Field) bool {
+		return !f.IsPrimary && !f.IsReadonly && !f.IsFeatureField() && !f.IsSensitive()
+	}, false)
 }
 
 // UpdateFields returns the fields accepted in a full update (request) DTO. It
 // matches CreateFields but additionally exposes the optimistic-lock concurrency
 // token (version), which the client echoes on update for safe concurrency.
-func (e IREntity) UpdateFields() []IRField {
-	out := make([]IRField, 0, len(e.Fields))
-	for _, f := range e.Fields {
+func (e Entity) UpdateFields() []Field {
+	return e.projectFields(func(f Field) bool {
 		if f.IsPrimary || f.IsReadonly || f.IsSensitive() {
-			continue
+			return false
 		}
-		if f.IsFeatureField() && !f.IsConcurrencyToken() {
-			continue
-		}
-		out = append(out, f)
-	}
-	return out
+		return !f.IsFeatureField() || f.IsConcurrencyToken()
+	}, false)
 }
 
 // PatchFields returns the fields accepted in a merge-patch (PATCH) request body:
@@ -89,12 +97,8 @@ func (e IREntity) UpdateFields() []IRField {
 // which the client echoes on patch for safe concurrency. Arrays, enums, JSON
 // blobs and collections are intentionally absent, mirroring the server's
 // ApplyPatch eligibility.
-func (e IREntity) PatchFields() []IRField {
-	out := make([]IRField, 0, len(e.Fields))
-	for _, f := range e.Fields {
-		if f.IsPatchable() || f.IsConcurrencyToken() {
-			out = append(out, f)
-		}
-	}
-	return out
+func (e Entity) PatchFields() []Field {
+	return e.projectFields(func(f Field) bool {
+		return f.IsPatchable() || f.IsConcurrencyToken()
+	}, false)
 }
