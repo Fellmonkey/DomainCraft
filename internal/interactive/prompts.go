@@ -6,6 +6,58 @@ import (
 	"github.com/DomainCraft/DomainCraft/internal/bridge"
 )
 
+// runListNav is the single input loop for the numbered menus. Single-select
+// prompts pass a nil onToggle: digits 1-9 move the cursor and Enter confirms.
+// Multi-select passes onToggle: digits and Space toggle an item, Enter confirms.
+func runListNav(count int, draw func(cursor int) []string, onToggle func(int)) (int, error) {
+	f := &field{}
+	cursor := 0
+	redraw := func() { f.draw(draw(cursor)) }
+	redraw()
+
+	err := rawMode(func() error {
+		for {
+			k, err := readKey()
+			if err != nil {
+				return err
+			}
+			switch k.kind {
+			case keyUp:
+				if cursor > 0 {
+					cursor--
+					redraw()
+				}
+			case keyDown:
+				if cursor < count-1 {
+					cursor++
+					redraw()
+				}
+			case keySpace:
+				if onToggle != nil {
+					onToggle(cursor)
+					redraw()
+				}
+			case keyEnter:
+				return nil
+			case keyEsc:
+				return errAborted
+			case keyRune:
+				if k.r >= '1' && k.r <= '9' {
+					if n := int(k.r - '1'); n < count {
+						if onToggle != nil {
+							onToggle(n)
+						} else {
+							cursor = n
+						}
+						redraw()
+					}
+				}
+			}
+		}
+	})
+	return cursor, err
+}
+
 // SelectBridge shows a bridge selection menu. ↑/↓ or 1-9 moves, Enter picks,
 // Esc aborts.
 func SelectBridge(registry *bridge.Registry) (*bridge.RegistryEntry, error) {
@@ -21,8 +73,7 @@ func SelectBridge(registry *bridge.Registry) (*bridge.RegistryEntry, error) {
 		return nil, fmt.Errorf("no bridges available")
 	}
 
-	cursor := 0
-	build := func() []string {
+	build := func(cursor int) []string {
 		lines := []string{lineField(ansiBold + "Select a bridge (target language/framework for code generation)")}
 		for i, e := range entries {
 			s := fmt.Sprintf("  %2d) %s (%s) — %s", i+1, e.Name, e.Language, e.Description)
@@ -36,45 +87,11 @@ func SelectBridge(registry *bridge.Registry) (*bridge.RegistryEntry, error) {
 		return lines
 	}
 
-	f := &field{}
-	f.draw(build())
-	var selected *bridge.RegistryEntry
-	err := rawMode(func() error {
-		for {
-			k, err := readKey()
-			if err != nil {
-				return err
-			}
-			switch k.kind {
-			case keyUp:
-				if cursor > 0 {
-					cursor--
-					f.draw(build())
-				}
-			case keyDown:
-				if cursor < len(entries)-1 {
-					cursor++
-					f.draw(build())
-				}
-			case keyEnter:
-				selected = &entries[cursor]
-				return nil
-			case keyEsc:
-				return errAborted
-			case keyRune:
-				if k.r >= '1' && k.r <= '9' {
-					if n := int(k.r - '1'); n < len(entries) && n != cursor {
-						cursor = n
-						f.draw(build())
-					}
-				}
-			}
-		}
-	})
+	cursor, err := runListNav(len(entries), build, nil)
 	if err != nil {
 		return nil, err
 	}
-	return selected, nil
+	return &entries[cursor], nil
 }
 
 // Option is one choice in SelectOption.
@@ -92,8 +109,7 @@ func SelectOption(title, description string, options []Option) (int, error) {
 		return 0, fmt.Errorf("no options available")
 	}
 
-	cursor := 0
-	build := func() []string {
+	build := func(cursor int) []string {
 		lines := []string{lineField(ansiBold + title)}
 		if description != "" {
 			lines = append(lines, lineField("  "+description))
@@ -113,39 +129,7 @@ func SelectOption(title, description string, options []Option) (int, error) {
 		return lines
 	}
 
-	f := &field{}
-	f.draw(build())
-	err := rawMode(func() error {
-		for {
-			k, err := readKey()
-			if err != nil {
-				return err
-			}
-			switch k.kind {
-			case keyUp:
-				if cursor > 0 {
-					cursor--
-					f.draw(build())
-				}
-			case keyDown:
-				if cursor < len(options)-1 {
-					cursor++
-					f.draw(build())
-				}
-			case keyEnter:
-				return nil
-			case keyEsc:
-				return errAborted
-			case keyRune:
-				if k.r >= '1' && k.r <= '9' {
-					if n := int(k.r - '1'); n < len(options) && n != cursor {
-						cursor = n
-						f.draw(build())
-					}
-				}
-			}
-		}
-	})
+	cursor, err := runListNav(len(options), build, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -262,9 +246,7 @@ func multiSelect(title, description string, files []FileChoice) ([]string, error
 	for i := range files {
 		selected[i] = true
 	}
-	cursor := 0
-
-	build := func() []string {
+	build := func(cursor int) []string {
 		lines := []string{lineField(ansiBold + title)}
 		if description != "" {
 			lines = append(lines, lineField("  "+description))
@@ -289,43 +271,8 @@ func multiSelect(title, description string, files []FileChoice) ([]string, error
 		return lines
 	}
 
-	f := &field{}
-	f.draw(build())
-	err := rawMode(func() error {
-		for {
-			k, err := readKey()
-			if err != nil {
-				return err
-			}
-			switch k.kind {
-			case keyUp:
-				if cursor > 0 {
-					cursor--
-					f.draw(build())
-				}
-			case keyDown:
-				if cursor < len(files)-1 {
-					cursor++
-					f.draw(build())
-				}
-			case keySpace:
-				selected[cursor] = !selected[cursor]
-				f.draw(build())
-			case keyEnter:
-				return nil
-			case keyEsc:
-				return errAborted
-			case keyRune:
-				if k.r >= '1' && k.r <= '9' {
-					if n := int(k.r - '1'); n < len(files) {
-						selected[n] = !selected[n]
-						f.draw(build())
-					}
-				}
-			}
-		}
-	})
-	if err != nil {
+	toggle := func(i int) { selected[i] = !selected[i] }
+	if _, err := runListNav(len(files), build, toggle); err != nil {
 		return nil, err
 	}
 	result := make([]string, 0, len(files))

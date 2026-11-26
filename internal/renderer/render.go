@@ -342,110 +342,141 @@ func (r *Renderer) stageTemplates(s *renderSession) error {
 				}
 
 				for _, targetTpl := range targetTemplates {
-					renderedTarget, err := executeTemplateString(targetTpl, context)
-					if err != nil {
-						return s.fail(fmt.Errorf("render target path: %w", err))
+					in := stageTargetInput{
+						spec:       spec,
+						context:    context,
+						body:       parsedTemplate,
+						target:     targetTpl,
+						entityName: entityName,
 					}
-
-					absTarget, err := safeOutputPathCached(s.outputDir, renderedTarget, s.verified)
-					if err != nil {
-						return s.fail(err)
+					if err := r.stageOneTarget(s, in); err != nil {
+						return err
 					}
-
-					relPath := filepath.ToSlash(renderedTarget)
-					record := RenderedFile{
-						Path:    relPath,
-						Entity:  entityName,
-						Custom:  spec.IsCustom(),
-						Written: true,
-					}
-
-					// Scaffold semantics: overwrite: false files are created only once.
-					// The developer owns them afterwards, so they survive regeneration.
-					if spec.IsCustom() {
-						if s.customTargets[absTarget] {
-							record.Written = false
-							s.manifest = append(s.manifest, record)
-							continue
-						}
-						if _, statErr := os.Stat(absTarget); statErr == nil {
-							record.Written = false
-							s.manifest = append(s.manifest, record)
-							continue
-						}
-						s.customTargets[absTarget] = true
-					}
-
-					if err := os.MkdirAll(filepath.Dir(absTarget), 0o755); err != nil { //nolint:gosec // generated project dirs must stay world-readable
-						return s.fail(fmt.Errorf("create output dir: %w", err))
-					}
-					// MkdirAll may have created the missing components above; re-check
-					// with a fully fresh walk (no cached directories) so a symlink
-					// planted in the meantime is still rejected.
-					if _, err := safeOutputPath(s.outputDir, renderedTarget); err != nil {
-						return s.fail(err)
-					}
-					// Capture the verified parent directory now. Commit opens an
-					// os.Root from this path and compares the directory identity,
-					// so a swap before commit is detected instead of followed.
-					parentDir := filepath.Dir(absTarget)
-					parentInfo, ok := s.parentInfos[parentDir]
-					if !ok {
-						parentInfo, err = os.Lstat(parentDir)
-						if err != nil {
-							return s.fail(fmt.Errorf("inspect output directory for %s: %w", renderedTarget, err))
-						}
-						s.parentInfos[parentDir] = parentInfo
-					}
-
-					mode := os.FileMode(0o644) // os.Create's default under the usual umask
-					if info, statErr := os.Lstat(absTarget); statErr == nil {
-						if info.Mode()&os.ModeSymlink != 0 {
-							return s.fail(fmt.Errorf("template target path escapes output directory through a symlink: %s", renderedTarget))
-						}
-						mode = info.Mode().Perm()
-						// The previous bytes are not read here: the commit phase moves
-						// the whole file aside and moves it back on rollback.
-					} else if !errors.Is(statErr, os.ErrNotExist) {
-						return s.fail(fmt.Errorf("inspect output file %s: %w", renderedTarget, statErr))
-					}
-
-					// Render into a temp file in the target's own directory so the
-					// final rename stays on the same filesystem. The prior file is
-					// never truncated, even if Execute or Close fails.
-					tmp, err := os.CreateTemp(filepath.Dir(absTarget), ".domaincraft-render-*")
-					if err != nil {
-						return s.fail(fmt.Errorf("create temp output file: %w", err))
-					}
-					tmpPath := tmp.Name()
-					// CreateTemp uses 0600; generated files stay readable as before.
-					if err := tmp.Chmod(mode); err != nil {
-						return s.fail(failWithTempCleanup(fmt.Errorf("set mode on temp output %s: %w", tmpPath, err), tmp, tmpPath))
-					}
-					if err := parsedTemplate.Execute(tmp, context); err != nil {
-						return s.fail(failWithTempCleanup(fmt.Errorf("execute template: %w", err), tmp, tmpPath))
-					}
-					if err := tmp.Close(); err != nil {
-						if rerr := os.Remove(tmpPath); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
-							return s.fail(errors.Join(fmt.Errorf("close temp output %s: %w", tmpPath, err), rerr))
-						}
-						return s.fail(fmt.Errorf("close temp output %s: %w", tmpPath, err))
-					}
-					s.staged = append(s.staged, stagedWrite{
-						temp:       tmpPath,
-						target:     absTarget,
-						parentDir:  parentDir,
-						parentInfo: parentInfo,
-						leaf:       filepath.Base(absTarget),
-						tempLeaf:   filepath.Base(tmpPath),
-						custom:     record.Custom,
-						record:     record,
-					})
-					s.manifest = append(s.manifest, record)
 				}
 			}
 		}
 	}
+	return nil
+}
+
+// stageTargetInput groups the per-target values of one staging step. Keeping
+// them in a struct leaves stageOneTarget with two parameters while the target
+// loop stays a plain selection loop.
+type stageTargetInput struct {
+	spec       TemplateSpec
+	context    RenderContext
+	body       *template.Template
+	target     *template.Template
+	entityName string
+}
+
+// stageOneTarget resolves one rendered target path, applies the scaffold and
+// symlink policies, and stages the rendered bytes. The order of the checks is
+// load-bearing: it is preserved verbatim from the original staging loop.
+func (r *Renderer) stageOneTarget(s *renderSession, in stageTargetInput) error {
+	context, spec := in.context, in.spec
+	entityName := in.entityName
+
+	renderedTarget, err := executeTemplateString(in.target, context)
+	if err != nil {
+		return s.fail(fmt.Errorf("render target path: %w", err))
+	}
+
+	absTarget, err := safeOutputPathCached(s.outputDir, renderedTarget, s.verified)
+	if err != nil {
+		return s.fail(err)
+	}
+
+	relPath := filepath.ToSlash(renderedTarget)
+	record := RenderedFile{
+		Path:    relPath,
+		Entity:  entityName,
+		Custom:  spec.IsCustom(),
+		Written: true,
+	}
+
+	// Scaffold semantics: overwrite: false files are created only once.
+	// The developer owns them afterwards, so they survive regeneration.
+	if spec.IsCustom() {
+		if s.customTargets[absTarget] {
+			record.Written = false
+			s.manifest = append(s.manifest, record)
+			return nil
+		}
+		if _, statErr := os.Stat(absTarget); statErr == nil {
+			record.Written = false
+			s.manifest = append(s.manifest, record)
+			return nil
+		}
+		s.customTargets[absTarget] = true
+	}
+
+	if err := os.MkdirAll(filepath.Dir(absTarget), 0o755); err != nil { //nolint:gosec // generated project dirs must stay world-readable
+		return s.fail(fmt.Errorf("create output dir: %w", err))
+	}
+	// MkdirAll may have created the missing components above; re-check
+	// with a fully fresh walk (no cached directories) so a symlink
+	// planted in the meantime is still rejected.
+	if _, err := safeOutputPath(s.outputDir, renderedTarget); err != nil {
+		return s.fail(err)
+	}
+	// Capture the verified parent directory now. Commit opens an
+	// os.Root from this path and compares the directory identity,
+	// so a swap before commit is detected instead of followed.
+	parentDir := filepath.Dir(absTarget)
+	parentInfo, ok := s.parentInfos[parentDir]
+	if !ok {
+		parentInfo, err = os.Lstat(parentDir)
+		if err != nil {
+			return s.fail(fmt.Errorf("inspect output directory for %s: %w", renderedTarget, err))
+		}
+		s.parentInfos[parentDir] = parentInfo
+	}
+
+	mode := os.FileMode(0o644) // os.Create's default under the usual umask
+	if info, statErr := os.Lstat(absTarget); statErr == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return s.fail(fmt.Errorf("template target path escapes output directory through a symlink: %s", renderedTarget))
+		}
+		mode = info.Mode().Perm()
+		// The previous bytes are not read here: the commit phase moves
+		// the whole file aside and moves it back on rollback.
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return s.fail(fmt.Errorf("inspect output file %s: %w", renderedTarget, statErr))
+	}
+
+	// Render into a temp file in the target's own directory so the
+	// final rename stays on the same filesystem. The prior file is
+	// never truncated, even if Execute or Close fails.
+	tmp, err := os.CreateTemp(filepath.Dir(absTarget), ".domaincraft-render-*")
+	if err != nil {
+		return s.fail(fmt.Errorf("create temp output file: %w", err))
+	}
+	tmpPath := tmp.Name()
+	// CreateTemp uses 0600; generated files stay readable as before.
+	if err := tmp.Chmod(mode); err != nil {
+		return s.fail(failWithTempCleanup(fmt.Errorf("set mode on temp output %s: %w", tmpPath, err), tmp, tmpPath))
+	}
+	if err := in.body.Execute(tmp, context); err != nil {
+		return s.fail(failWithTempCleanup(fmt.Errorf("execute template: %w", err), tmp, tmpPath))
+	}
+	if err := tmp.Close(); err != nil {
+		if rerr := os.Remove(tmpPath); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+			return s.fail(errors.Join(fmt.Errorf("close temp output %s: %w", tmpPath, err), rerr))
+		}
+		return s.fail(fmt.Errorf("close temp output %s: %w", tmpPath, err))
+	}
+	s.staged = append(s.staged, stagedWrite{
+		temp:       tmpPath,
+		target:     absTarget,
+		parentDir:  parentDir,
+		parentInfo: parentInfo,
+		leaf:       filepath.Base(absTarget),
+		tempLeaf:   filepath.Base(tmpPath),
+		custom:     record.Custom,
+		record:     record,
+	})
+	s.manifest = append(s.manifest, record)
 	return nil
 }
 
