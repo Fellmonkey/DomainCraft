@@ -1,0 +1,79 @@
+name: bench
+
+# Timing benchmarks are reported, not gated: a CI runner is too noisy for a
+# fixed time budget. Both sides run on the SAME runner, so benchstat can tell
+# whether a change is real without a committed baseline from someone's laptop.
+# Behavior is gated separately by the golden tests inside `go test ./...`.
+on:
+  pull_request:
+    paths:
+      - 'internal/**/*.go'
+      - 'Makefile'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/bench.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.4'
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Resolve base commit
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
+            echo "${{ github.event.pull_request.base.sha }}" > "$RUNNER_TEMP/base.sha"
+          else
+            git rev-parse HEAD~1 > "$RUNNER_TEMP/base.sha"
+          fi
+          cat "$RUNNER_TEMP/base.sha"
+
+      - name: Benchmark base
+        shell: bash
+        run: |
+          git worktree add "$RUNNER_TEMP/base" "$(cat "$RUNNER_TEMP/base.sha")"
+          cd "$RUNNER_TEMP/base"
+          go test -run '^$' -bench 'RenderWarm|SafeOutputPathWarm|SortEntities|BuildHubRelations' \
+            -benchmem -benchtime=1x -count=5 \
+            ./internal/renderer ./internal/ir ./internal/snapshot > "$RUNNER_TEMP/base.txt"
+
+      - name: Benchmark PR
+        shell: bash
+        run: |
+          go test -run '^$' -bench 'RenderWarm|SafeOutputPathWarm|SortEntities|BuildHubRelations' \
+            -benchmem -benchtime=1x -count=5 \
+            ./internal/renderer ./internal/ir ./internal/snapshot > "$RUNNER_TEMP/pr.txt"
+
+      - name: Compare with benchstat
+        shell: bash
+        run: |
+          go run golang.org/x/perf/cmd/benchstat@v0.0.0-20261117185222-4febdb082b2c \
+            "$RUNNER_TEMP/base.txt" "$RUNNER_TEMP/pr.txt" | tee "$RUNNER_TEMP/benchstat.txt"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchstat
+          path: ${{ runner.temp }}/benchstat.txt
+          if-no-files-found: warn

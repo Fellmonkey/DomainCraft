@@ -29,7 +29,7 @@ export GOCACHE := $(GO_CACHE_DIR)
 # GOTMPDIR is deliberately not set: pointing it inside the repo makes
 # t.TempDir() land under a monorepo root and breaks path-sensitive tests.
 
-.PHONY: help build install run test test-affected contract-test contract-golden-update test-verbose test-coverage lint vulncheck vet fmt clean install-deps check-tidy dev-watch dev-test-watch cli-validate cli-generate cli-bridges regenerate-spec generate-gui-types copy-spec-skills build-wasm build-wasm-gui
+.PHONY: help build install run test test-affected contract-test contract-golden-update bench bench-full bench-golden-update test-verbose test-coverage lint vulncheck vet fmt clean install-deps check-tidy dev-watch dev-test-watch cli-validate cli-generate cli-bridges regenerate-spec generate-gui-types copy-spec-skills build-wasm build-wasm-gui
 
 help:
 	@echo "DomainCraft CLI - Available Commands"
@@ -49,6 +49,9 @@ help:
 	@echo "  make test-affected   - Run tests for packages touched by uncommitted changes"
 	@echo "  make contract-test   - Run contract tests (golden output + determinism)"
 	@echo "  make contract-golden-update - Regenerate golden manifests after an intentional output change"
+	@echo "  make bench           - Run the fast benchmarks (one pass each)"
+	@echo "  make bench-full      - Include BenchmarkComputeDiff (~157 s)"
+	@echo "  make bench-golden-update - Rewrite benchmark behavior goldens"
 	@echo "  make test-verbose    - Run tests with verbose output"
 	@echo "  make test-coverage   - Run tests and generate coverage report"
 	@echo "  make lint            - Run golangci-lint via go run (same gate as CI)"
@@ -156,6 +159,25 @@ contract-test:
 # Regenerate the golden manifests after an intentional output change.
 contract-golden-update:
 	@go test ./internal/contract/ -run TestGoldenLeafBridges -update
+
+# Benchmarks have two layers:
+#   - behavior goldens run in `make test` on small fixtures, so CI gates them;
+#   - timing runs here. No baseline is committed: a number from one CPU says
+#     nothing about another. bench.yml runs the same command on base and PR in
+#     one runner and compares with benchstat.
+BENCH_PACKAGES ?= ./internal/renderer ./internal/ir ./internal/snapshot
+BENCH_PATTERN ?= RenderWarm|SafeOutputPathWarm|SortEntities|BuildHubRelations
+BENCH_CMD = go test -run "^$$" -bench "$(BENCH_PATTERN)" -benchmem -benchtime=1x -count=1 $(BENCH_PACKAGES)
+
+bench:
+	@$(BENCH_CMD)
+
+# Includes BenchmarkComputeDiff: ~157 s for one full pass.
+bench-full:
+	@go test -run "^$$" -bench . -benchmem -benchtime=1x -count=1 $(BENCH_PACKAGES)
+
+bench-golden-update:
+	@go test $(BENCH_PACKAGES) -update
 
 test-verbose:
 	@echo "Running tests (verbose)..."

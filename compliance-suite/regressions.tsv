@@ -69,3 +69,10 @@ internal/bridge/bridge_hardening_test.go::TestParseGitHubRefAllowsSlashInPin	#5	
 internal/packages/packages_hardening_test.go::TestVersionStoreReportsStorageErrors	#5	every ReadJSON error was masked as a cache miss and the file was overwritten
 cmd/domaincraft/commands_infra_test.go::TestBuildStampsOnlyExactTags	#review	local builds stamped the nearest tag onto an untagged commit
 internal/fsutil/fsutil_hardening_test.go::TestLocalPathWithinRejectsEscape	#review	path-containment helper had no direct escape test
+internal/validator/validator_test.go::TestValidationDiagnosticsAreDeterministic	#review	validation diagnostics changed line order between runs
+cmd/domaincraft/commands_contract_test.go::TestBridgeMetadataRejectsNegativeContractVersion	#review	lock-file reader accepted a negative contract_version the renderer rejects
+internal/bridge/bridge_hardening_test.go::TestCacheSourceMatchesRepairsCorruptMeta	#review	unreadable cache metadata discarded a usable bridge checkout
+internal/bridge/bridge_hardening_test.go::TestGitHeadResultDistinguishesFailure	#review	a failed git probe was indistinguishable from an empty HEAD
+internal/bridge/bridge_hardening_test.go::TestCheckForUpdateRejectsStaleCommitWhenGitFails	#review	missing git produced a false update notice
+internal/bridge/update_pin_test.go::TestFinishUpdateFetchesMissingPinnedRef	#review	shallow clone left a pinned bridge on the default branch
+internal/bridge/update_pin_test.go::TestFinishUpdateDropsPinWhenRefCannotBeFetched	#review	metadata kept a pin the checkout no longer held

@@ -1,0 +1,6 @@
+no-custom/10	deleted=0	renamed=0	typechanges=10	fieldrenames=10	namespace=false	sha256=5d5eafdff0a489fa535a783f75baed53d9286815da3e7a13e4db58a4d7426a24
+no-custom/50	deleted=0	renamed=0	typechanges=50	fieldrenames=50	namespace=false	sha256=aa283d3f7f823f338c892a8bb2df7272a45c0cc52537fcda1dbc25d1f0b1c125
+manifest/10	deleted=0	renamed=0	typechanges=10	fieldrenames=10	namespace=false	sha256=5d5eafdff0a489fa535a783f75baed53d9286815da3e7a13e4db58a4d7426a24
+manifest/50	deleted=0	renamed=0	typechanges=50	fieldrenames=50	namespace=false	sha256=aa283d3f7f823f338c892a8bb2df7272a45c0cc52537fcda1dbc25d1f0b1c125
+on-disk/10	deleted=0	renamed=0	typechanges=10	fieldrenames=10	namespace=false	sha256=b99a4450cde87aadd902f263c44151cf96225f1168530d71bf70fda36ad02597
+on-disk/50	deleted=0	renamed=0	typechanges=50	fieldrenames=50	namespace=false	sha256=38ec253a2412cb99a51933f3bd5be5ae2d8354feb3061ee1b4de471b32d80cca
