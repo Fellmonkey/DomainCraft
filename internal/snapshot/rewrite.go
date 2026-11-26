@@ -22,19 +22,12 @@ import (
 	"github.com/DomainCraft/DomainCraft/pkg/textutil"
 )
 
-// rewriteCasings replaces old identifiers with new in a single pass. Variants
-// are tried longest-first (so `Products` is consumed as a whole before its
-// singular head `Product` gets a chance), then alphabetically for determinism.
-// After a match, scanning resumes after the ORIGINAL token, so replacement text
-// is never rescanned: renaming Product -> ProductItem cannot turn `Products`
-// into `ProductItemItems`.
-func rewriteCasings(content []byte, variants map[string]string) []byte {
-	return replaceLongest(content, variants, tokenOK)
-}
-
 // replaceLongest scans content once, decoding it as runes so non-ASCII
 // identifiers are handled correctly. At each position the longest matching
-// variant that passes ok is applied; unmatched runes are copied verbatim.
+// variant that passes ok is applied (ties break alphabetically for determinism)
+// and unmatched runes are copied verbatim. Scanning resumes after the ORIGINAL
+// token, so replacement text is never rescanned: Product -> ProductItem cannot
+// turn `Products` into `ProductItemItems`.
 func replaceLongest(content []byte, variants map[string]string, ok func([]rune, int, int) bool) []byte {
 	if len(variants) == 0 {
 		return content
@@ -154,36 +147,23 @@ func casingVariants(oldName, newName string, withPlural bool) map[string]string 
 	return variants
 }
 
-// entityCasings builds the casing-variant table for an entity rename.
-func entityCasings(oldName, newName string) map[string]string {
-	return casingVariants(textutil.PascalCase(oldName), textutil.PascalCase(newName), true)
-}
-
-// fieldCasings builds the casing-variant table for a field rename.
-func fieldCasings(oldField, newField string) map[string]string {
-	return casingVariants(textutil.PascalCase(oldField), textutil.PascalCase(newField), false)
-}
-
-// namespaceCasings builds the casing-variant table for a root-namespace rename.
-func namespaceCasings(oldNs, newNs string) map[string]string {
-	return casingVariants(oldNs, newNs, false)
-}
-
 // RewriteEntityContent rewrites identifier references to an old entity name back
 // to the new one (Pascal / camel / UPPER / plural forms).
 func RewriteEntityContent(content []byte, oldName, newName string) []byte {
-	return rewriteCasings(content, entityCasings(oldName, newName))
+	variants := casingVariants(textutil.PascalCase(oldName), textutil.PascalCase(newName), true)
+	return replaceLongest(content, variants, tokenOK)
 }
 
 // RewriteFieldContent rewrites identifier references to an old field back to the
 // new one (Pascal / camel / UPPER forms).
 func RewriteFieldContent(content []byte, oldField, newField string) []byte {
-	return rewriteCasings(content, fieldCasings(oldField, newField))
+	variants := casingVariants(textutil.PascalCase(oldField), textutil.PascalCase(newField), false)
+	return replaceLongest(content, variants, tokenOK)
 }
 
 // RewriteNamespaceContent rewrites the old root-namespace identifier to the new one.
 func RewriteNamespaceContent(content []byte, oldNs, newNs string) []byte {
-	return rewriteCasings(content, namespaceCasings(oldNs, newNs))
+	return replaceLongest(content, casingVariants(oldNs, newNs, false), tokenOK)
 }
 
 // EntityTransform returns a transform rewriting an old entity identifier to its

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"slices"
 
+	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 	"github.com/DomainCraft/DomainCraft/pkg/textutil"
 )
 
@@ -30,19 +31,26 @@ const (
 	OpEndsWith   FilterOp = "endsWith"
 )
 
+// allFilterOps is the canonical operator vocabulary. Every caller gets a clone
+// so a bridge cannot mutate the core's contract at runtime.
+var allFilterOps = []FilterOp{OpEq, OpNe, OpGt, OpGte, OpLt, OpLte, OpIn, OpContains, OpStartsWith, OpEndsWith}
+
+// jsonTextFilterOps is the text-semantics subset allowed on any JSON leaf:
+// equality/set/string predicates compare the extracted value as text.
+var jsonTextFilterOps = []FilterOp{OpEq, OpNe, OpIn, OpContains, OpStartsWith, OpEndsWith}
+
 // AllFilterOperators returns the complete, canonical filter-operator vocabulary
 // in a deterministic order. The set is fixed by the core (spec/query.md) so
 // every bridge serializes the same operator names. A bridge iterates this to
 // emit its runtime operator enum (member names via `pascalcase`) instead of
 // hand-writing a parallel vocabulary that can drift out of sync with the core.
 func (Project) AllFilterOperators() []FilterOp {
-	return []FilterOp{OpEq, OpNe, OpGt, OpGte, OpLt, OpLte, OpIn, OpContains, OpStartsWith, OpEndsWith}
+	return slices.Clone(allFilterOps)
 }
 
-// jsonTextOperators is the text-semantics operator set allowed on any JSON
-// leaf: equality/set/string predicates compare the extracted value as text.
+// jsonTextOperators is the text-semantics operator set allowed on any JSON leaf.
 func jsonTextOperators() []FilterOp {
-	return []FilterOp{OpEq, OpNe, OpIn, OpContains, OpStartsWith, OpEndsWith}
+	return slices.Clone(jsonTextFilterOps)
 }
 
 // jsonFilterOperators is the operator set for a JSON path leaf. The value type
@@ -51,8 +59,8 @@ func jsonTextOperators() []FilterOp {
 // extracted value) and are only valid on a `jsonb` column — `json` stores an
 // opaque, untyped document, so only text-semantics operators are allowed there.
 func jsonFilterOperators(dbType string) []FilterOp {
-	if dbType == "jsonb" {
-		return []FilterOp{OpEq, OpNe, OpGt, OpGte, OpLt, OpLte, OpIn, OpContains, OpStartsWith, OpEndsWith}
+	if dbType == specmeta.FieldTypeJSONB {
+		return slices.Clone(allFilterOps)
 	}
 	return jsonTextOperators()
 }

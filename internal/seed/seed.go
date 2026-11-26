@@ -44,7 +44,7 @@ func Generate(project *ir.Project, opts Options) *ir.SeedDataset {
 	// point at real, already-generated parent rows (project.Entities is already
 	// topologically sorted by the IR builder).
 	generated := map[string][]any{}
-	counter := opts.Seed
+	g := &genContext{project: project, generated: generated, counter: opts.Seed}
 
 	for i := range project.Entities {
 		entity := &project.Entities[i]
@@ -60,7 +60,7 @@ func Generate(project *ir.Project, opts Options) *ir.SeedDataset {
 				if field.IsSensitive() || field.IsFeatureField() {
 					continue
 				}
-				v := valueFor(field, project, generated, &counter, n)
+				v := valueFor(g, field, n)
 				rec.Fields = append(rec.Fields, ir.SeedValue{
 					Field:      field.Name,
 					DBType:     field.DatabaseType,
@@ -134,9 +134,17 @@ func primaryKey(entity *ir.Entity) *ir.Field {
 	return nil
 }
 
+// genContext is the state shared by one mock-seed generation run: the project
+// contract, the PKs generated so far (for FK references) and the UUID counter.
+type genContext struct {
+	project   *ir.Project
+	generated map[string][]any
+	counter   int
+}
+
 // valueFor produces one field value for generated mock seed, honoring type,
 // validations, defaults and relations.
-func valueFor(field ir.Field, project *ir.Project, generated map[string][]any, counter *int, record int) any {
+func valueFor(g *genContext, field ir.Field, record int) any {
 	// Default value wins when the model declares one (and it's not a function).
 	if field.DefaultValue != "" && !field.DefaultIsFunc {
 		// The lexer stores `default:[a, b]` as a raw string. Parse it with the
@@ -157,10 +165,10 @@ func valueFor(field ir.Field, project *ir.Project, generated map[string][]any, c
 	}
 
 	if field.IsRelation {
-		return relationValue(field, generated, record)
+		return relationValue(g, field, record)
 	}
 
-	return scalarValue(field, project, counter, record)
+	return scalarValue(g, field, record)
 }
 
 // relationValue returns a reference to an existing parent row. For a [many]
@@ -169,11 +177,11 @@ func valueFor(field ir.Field, project *ir.Project, generated map[string][]any, c
 // can back a one-to-one relation without colliding with a sibling row. When no
 // parent was generated yet (self-reference or a dependency cycle) it falls
 // back to nil.
-func relationValue(field ir.Field, generated map[string][]any, record int) any {
+func relationValue(g *genContext, field ir.Field, record int) any {
 	if field.IsMany {
 		return nil
 	}
-	pks, ok := generated[field.RelationTarget]
+	pks, ok := g.generated[field.RelationTarget]
 	if !ok || len(pks) == 0 {
 		return nil
 	}
@@ -184,20 +192,20 @@ func relationValue(field ir.Field, generated map[string][]any, record int) any {
 }
 
 // scalarValue produces a scalar value from the field's type and constraints.
-func scalarValue(field ir.Field, project *ir.Project, counter *int, record int) any {
+func scalarValue(g *genContext, field ir.Field, record int) any {
 	dbType := field.DatabaseType
 
 	if field.IsArray() {
 		inner := specmeta.ParseArrayInner(dbType)
-		elem := innerValue(inner, field, project, counter, record)
+		elem := innerValue(g, inner, field, record)
 		return []any{elem}
 	}
 
 	// FieldKind is the single classification shared with the validator and IR.
 	switch specmeta.FieldKind(strings.ToLower(dbType)) {
 	case "uuid":
-		*counter = *counter + 1
-		return fmt.Sprintf("00000000-0000-0000-0000-%012d", *counter)
+		g.counter++
+		return fmt.Sprintf("00000000-0000-0000-0000-%012d", g.counter)
 	case "text":
 		return stringValue(field, record)
 	case "int", "bigint":
@@ -214,7 +222,7 @@ func scalarValue(field ir.Field, project *ir.Project, counter *int, record int) 
 		return "{}"
 	default:
 		// Enum (or unknown) — use the first declared value when available.
-		if values, ok := project.Enums[dbType]; ok && len(values) > 0 {
+		if values, ok := g.project.Enums[dbType]; ok && len(values) > 0 {
 			return values[0]
 		}
 		return ""
@@ -222,12 +230,12 @@ func scalarValue(field ir.Field, project *ir.Project, counter *int, record int) 
 }
 
 // innerValue produces a scalar for an array element type.
-func innerValue(dbType string, field ir.Field, project *ir.Project, counter *int, record int) any {
+func innerValue(g *genContext, dbType string, field ir.Field, record int) any {
 	inner := ir.Field{Name: field.Name, DatabaseType: dbType}
 	if specmeta.IsPrimitive(strings.ToLower(dbType)) {
-		return scalarValue(inner, project, counter, record)
+		return scalarValue(g, inner, record)
 	}
-	if values, ok := project.Enums[dbType]; ok && len(values) > 0 {
+	if values, ok := g.project.Enums[dbType]; ok && len(values) > 0 {
 		return values[0]
 	}
 	return ""

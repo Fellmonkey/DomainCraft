@@ -404,7 +404,7 @@ func referencesNamespace(s, namespace string) bool {
 	if namespace == "" {
 		return false
 	}
-	rewritten := rewriteCasings([]byte(s), namespaceCasings(namespace, "\x00"))
+	rewritten := replaceLongest([]byte(s), casingVariants(namespace, "\x00", false), tokenOK)
 	return !bytes.Equal(rewritten, []byte(s))
 }
 

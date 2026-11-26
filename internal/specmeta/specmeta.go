@@ -26,6 +26,13 @@ const (
 	FieldTypeUUID     = "uuid"
 	FieldTypeJSON     = "json"
 	FieldTypeJSONB    = "jsonb"
+
+	AuthTypeJWT       = "jwt"
+	AuthTypeNone      = "none"
+	OnDeleteCascade   = "cascade"
+	OnDeleteSetNull   = "set_null"
+	OnDeleteRestrict  = "restrict"
+	OnDeleteNoAction  = "no_action"
 )
 
 // FeatureFieldDef describes a field auto-injected by a feature macro.
@@ -45,7 +52,7 @@ var Databases = []string{"postgresql", "mysql", "sqlite", "mssql", "mongodb", "a
 var APIStyles = []string{"rest", "graphql", "grpc"}
 
 // AuthTypes lists the supported authentication types.
-var AuthTypes = []string{"jwt", "none"}
+var AuthTypes = []string{AuthTypeJWT, AuthTypeNone}
 
 // Features lists the entity features the core injects fields for.
 var Features = []string{"audit", "audit_log", "soft_delete", "optimistic_lock", "event_sourced", "cacheable"}
@@ -89,7 +96,7 @@ var FeatureFieldDefs = map[string]FeatureFieldDef{
 }
 
 // OnDeleteValues lists the valid on_delete modifier values.
-var OnDeleteValues = []string{"cascade", "set_null", "restrict", "no_action"}
+var OnDeleteValues = []string{OnDeleteCascade, OnDeleteSetNull, OnDeleteRestrict, OnDeleteNoAction}
 
 // PrimitiveFieldTypes lists the scalar field types.
 var PrimitiveFieldTypes = []string{

@@ -167,11 +167,6 @@ func formatSpec(format string, args ...any) string {
 	return fmt.Sprintf(format, args...)
 }
 
-// warner is the narrow logging surface the bridge funcs need.
-type warner interface {
-	Warn(format string, args ...any)
-}
-
 // dedupWarn emits each identical warning once per Render. A missing spec is
 // discovered once per field otherwise, burying the useful diagnostics under
 // dozens of identical lines.
@@ -195,7 +190,7 @@ func (w *dedupWarn) Warn(format string, args ...any) {
 
 // warnMissingSpec reports a spec the bridge must declare in type_mappings.yaml.
 // Logger.Warn is nil-safe, so silent mode needs no extra guard.
-func warnMissingSpec(w warner, kind, key string) {
+func warnMissingSpec(w *dedupWarn, kind, key string) {
 	w.Warn("type_mappings.yaml has no %s for %q; emitting an empty expression", kind, key)
 }
 
@@ -219,7 +214,7 @@ func buildBridgeFuncs(m *typeMappings, log *logger.Logger) map[string]any {
 
 // registerTypeFuncs registers languageType and isValueType. It returns the
 // languageType closure so the literal registrars reuse the very same mapping.
-func registerTypeFuncs(funcs map[string]any, m *typeMappings, w warner) func(string, bool) string {
+func registerTypeFuncs(funcs map[string]any, m *typeMappings, w *dedupWarn) func(string, bool) string {
 	// wrapNullable applies the bridge-specific nullable format to a type name.
 	wrapNullable := func(typeName string) string {
 		return typeName + m.NullableFormat
@@ -288,7 +283,7 @@ func registerTypeFuncs(funcs map[string]any, m *typeMappings, w warner) func(str
 
 // registerLiteralFuncs registers the literal/array expression funcs. languageType
 // is the closure returned by registerTypeFuncs; literal specs are bridge-owned.
-func registerLiteralFuncs(funcs map[string]any, m *typeMappings, w warner, languageType func(string, bool) string) {
+func registerLiteralFuncs(funcs map[string]any, m *typeMappings, w *dedupWarn, languageType func(string, bool) string) {
 	// literalValue renders a scalar value of an IR database type as a bridge
 	// literal/parse expression. value is a native Go value (string, int64,
 	// float64, bool) or the raw string from a domain.yaml default.
@@ -378,7 +373,7 @@ func registerLiteralFuncs(funcs map[string]any, m *typeMappings, w warner, langu
 // registerValueFuncs registers the remaining bridge-specific value/config
 // helpers. columnSize and inputType are conditional: they exist only when the
 // bridge declared the corresponding mapping (no core-side fallback is added).
-func registerValueFuncs(funcs map[string]any, m *typeMappings, w warner) {
+func registerValueFuncs(funcs map[string]any, m *typeMappings, w *dedupWarn) {
 	funcs["deleteBehaviorName"] = func(value string) string {
 		key := strings.ToLower(strings.TrimSpace(value))
 		if v, ok := m.Behaviors[key]; ok {

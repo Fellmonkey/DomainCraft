@@ -27,6 +27,9 @@ type Endpoint struct {
 	Paginated bool
 	// Concurrency is true when a 409 conflict is possible (optimistic locking).
 	Concurrency bool
+	// Anonymous is true for project-level endpoints that need no credentials
+	// (auth login/register/setup). Entity endpoints always carry an Auth plan.
+	Anonymous bool
 }
 
 // AuthPolicy returns the authorization policy name for the endpoint's operation
@@ -106,21 +109,11 @@ func (e Entity) Endpoints() []Endpoint {
 	return eps
 }
 
-// EndpointDecl is a project-level endpoint in the contract (e.g. auth
-// endpoints). It shares the endpoint shape but lives at the project level.
-type EndpointDecl struct {
-	Method        string
-	Path          string
-	Operation     string
-	HasBody       bool
-	SuccessStatus int
-	ErrorStatuses []int
-	Anonymous     bool
-}
-
 // AuthEndpoints returns the project-level auth endpoint contract (login /
-// register / me / setup) when authentication is enabled.
-func (p *Project) AuthEndpoints() []EndpointDecl {
+// register / me / setup) when authentication is enabled. It shares the same
+// Endpoint shape as entity routes; auth endpoints carry no permission plan and
+// mark their anonymous routes with Anonymous.
+func (p *Project) AuthEndpoints() []Endpoint {
 	if !p.HasAuth() {
 		return nil
 	}
@@ -130,30 +123,30 @@ func (p *Project) AuthEndpoints() []EndpointDecl {
 	}
 	base := "api/" + entity
 
-	var decls []EndpointDecl
+	var decls []Endpoint
 	if p.Auth.Endpoints.HasLogin {
-		decls = append(decls, EndpointDecl{
+		decls = append(decls, Endpoint{
 			Method: "POST", Path: base + "/login", Operation: "login",
 			HasBody: true, SuccessStatus: 200,
 			ErrorStatuses: []int{400, 401, 429}, Anonymous: true,
 		})
 	}
 	if p.Auth.Endpoints.HasRegister {
-		decls = append(decls, EndpointDecl{
+		decls = append(decls, Endpoint{
 			Method: "POST", Path: base + "/register", Operation: "register",
 			HasBody: true, SuccessStatus: 201,
 			ErrorStatuses: []int{400, 409, 429}, Anonymous: true,
 		})
 	}
 	if p.Auth.Endpoints.HasMe {
-		decls = append(decls, EndpointDecl{
+		decls = append(decls, Endpoint{
 			Method: "GET", Path: base + "/me", Operation: "me",
 			HasBody: false, SuccessStatus: 200,
 			ErrorStatuses: []int{401, 404, 429},
 		})
 	}
 	if p.Auth.Endpoints.HasSetup {
-		decls = append(decls, EndpointDecl{
+		decls = append(decls, Endpoint{
 			Method: "POST", Path: base + "/setup", Operation: "setup",
 			HasBody: true, SuccessStatus: 201,
 			ErrorStatuses: []int{400, 409, 429}, Anonymous: true,

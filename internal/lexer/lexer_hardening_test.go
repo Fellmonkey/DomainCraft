@@ -16,7 +16,7 @@ func FuzzParseFieldString(f *testing.F) {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, input string) {
-		field, err := New(input).Parse()
+		field, err := Parse(input)
 		if err == nil && field == nil {
 			t.Fatalf("Parse(%q) returned neither a field nor an error", input)
 		}
@@ -36,7 +36,7 @@ func TestUnterminatedModifierList(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := New(c.input).Parse()
+			_, err := Parse(c.input)
 			if c.wantErr {
 				if err == nil || !strings.Contains(err.Error(), "unterminated modifier list") {
 					t.Fatalf("%q error = %v, want unterminated modifier list", c.input, err)

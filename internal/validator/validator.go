@@ -182,7 +182,7 @@ func (v *Validator) validateProject() []ValidationError {
 
 	// Deploy
 	if p.Deploy != nil {
-		if p.Deploy.Port != 0 && (p.Deploy.Port < 1 || p.Deploy.Port > 65535) {
+		if p.Deploy.Port < 0 || p.Deploy.Port > 65535 {
 			errs = append(errs, invalidf("<schema>", "",
 				"deploy.port must be between 1 and 65535, got %d", p.Deploy.Port))
 		}
@@ -367,7 +367,7 @@ func (v *Validator) validateAuth() []ValidationError {
 		}
 	}
 
-	if auth.Type == "jwt" && len(auth.Roles) == 0 {
+	if auth.Type == specmeta.AuthTypeJWT && len(auth.Roles) == 0 {
 		errs = append(errs, invalidf("<schema>", "",
 			"auth.roles must declare at least one role when auth.type is \"jwt\""))
 	}
@@ -685,54 +685,52 @@ func validateFieldName(entityName, fieldName string, field *parser.ParsedField) 
 // validateRelationField checks the cross-entity and semantic rules the lexer
 // cannot perform.
 func (v *Validator) validateRelationField(entityName, fieldName string, field *parser.ParsedField) []ValidationError {
-	var errs []ValidationError
-
-	// Relation-specific checks.
 	// Note: on_delete value, set_null+optional, many+on_delete, and many+relation
 	// constraints are already enforced by the lexer. Only cross-entity and semantic
 	// checks that the lexer cannot perform belong here.
-	if field.IsRelation() {
-		if field.TargetEntity == "" {
-			errs = append(errs, invalid(entityName, fieldName,
-				"relation field must specify a target entity"))
-		}
-		if _, ok := v.schema.Entities[field.TargetEntity]; !ok && field.TargetEntity != "" {
-			errs = append(errs, invalidf(entityName, fieldName,
-				"relation target '%s' does not exist", field.TargetEntity))
-		}
-		if field.IsMany && field.IsUnique {
-			errs = append(errs, invalid(entityName, fieldName,
-				"unique is contradictory on a many-to-many relation"))
-		}
-		// on_delete is meaningless on many-to-many relations (join table has no FK to delete).
-		if field.IsMany && field.OnDelete != "" {
-			errs = append(errs, warn(entityName, fieldName,
-				"on_delete is meaningless on a many-to-many relation; remove it or use a many-to-one relation instead"))
-		}
-		// A [many] relation whose target also declares a single FK back to this
-		// entity is reconciled into ONE one-to-many (the FK lives on the target,
-		// the collection on this entity) — not a many-to-many join.
-		if field.IsMany {
-			if target, ok := v.schema.Entities[field.TargetEntity]; ok {
-				if back := v.singleFKBack(target, entityName); back != nil {
-					errs = append(errs, warnf(entityName, fieldName,
-						"[many] relation is reconciled with FK '%s' on %s into a one-to-many relationship (collection on %s); remove "+
-							"one side if you meant a many-to-many join", back.Name, field.TargetEntity, entityName))
-				}
-			}
-		}
-		// Self-referential required cascade is dangerous.
-		if field.TargetEntity == entityName && !field.IsOptional && field.OnDelete == "cascade" {
-			errs = append(errs, warn(entityName, fieldName,
-				"self-referential required cascade delete may cause recursive deletion"))
-		}
-		// Required relation without on_delete — warn.
-		if !field.IsOptional && !field.IsMany && field.OnDelete == "" {
-			errs = append(errs, warn(entityName, fieldName,
-				"required relation has no on_delete specified; default behavior may not match expectations"))
-		}
+	if !field.IsRelation() {
+		return nil
 	}
 
+	var errs []ValidationError
+	if field.TargetEntity == "" {
+		errs = append(errs, invalid(entityName, fieldName,
+			"relation field must specify a target entity"))
+	}
+	if field.TargetEntity != "" {
+		target, ok := v.schema.Entities[field.TargetEntity]
+		if !ok {
+			errs = append(errs, invalidf(entityName, fieldName,
+				"relation target '%s' does not exist", field.TargetEntity))
+		} else if field.IsMany {
+			// A [many] relation whose target also declares a single FK back to
+			// this entity is reconciled into ONE one-to-many, not a join table.
+			if back := v.singleFKBack(target, entityName); back != nil {
+				errs = append(errs, warnf(entityName, fieldName,
+					"[many] relation is reconciled with FK '%s' on %s into a one-to-many relationship (collection on %s); remove "+
+						"one side if you meant a many-to-many join", back.Name, field.TargetEntity, entityName))
+			}
+		}
+	}
+	if field.IsMany && field.IsUnique {
+		errs = append(errs, invalid(entityName, fieldName,
+			"unique is contradictory on a many-to-many relation"))
+	}
+	// on_delete is meaningless on many-to-many relations (join table has no FK to delete).
+	if field.IsMany && field.OnDelete != "" {
+		errs = append(errs, warn(entityName, fieldName,
+			"on_delete is meaningless on a many-to-many relation; remove it or use a many-to-one relation instead"))
+	}
+	// Self-referential required cascade is dangerous.
+	if field.TargetEntity == entityName && !field.IsOptional && field.OnDelete == specmeta.OnDeleteCascade {
+		errs = append(errs, warn(entityName, fieldName,
+			"self-referential required cascade delete may cause recursive deletion"))
+	}
+	// Required relation without on_delete — warn.
+	if !field.IsOptional && !field.IsMany && field.OnDelete == "" {
+		errs = append(errs, warn(entityName, fieldName,
+			"required relation has no on_delete specified; default behavior may not match expectations"))
+	}
 	return errs
 }
 
@@ -839,7 +837,7 @@ func validateFieldValidations(entityName, fieldName string, field *parser.Parsed
 	}
 
 	// Check for contradictory range validations.
-	errs = append(errs, validateContradictoryRanges(entityName, fieldName, field, isNumeric, isString)...)
+	errs = append(errs, validateContradictoryRanges(entityName, fieldName, field.Validations, isNumeric, isString)...)
 
 	return errs
 }
@@ -943,12 +941,12 @@ func validateFuncDefault(entityName, fieldName, ftype, funcName string) []Valida
 }
 
 // validateContradictoryRanges checks for impossible validation ranges (e.g. min > max, gte > lt).
-func validateContradictoryRanges(entityName, fieldName string, field *parser.ParsedField,
+func validateContradictoryRanges(entityName, fieldName string, validations map[string]string,
 	isNumeric, isString bool) []ValidationError {
 	var errs []ValidationError
 
 	getFloat := func(key string) (float64, bool) {
-		val, ok := field.Validations[key]
+		val, ok := validations[key]
 		if !ok || val == "" {
 			return 0, false
 		}

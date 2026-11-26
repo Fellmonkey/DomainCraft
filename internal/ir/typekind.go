@@ -23,7 +23,7 @@ func (f Field) EnumTypeName() string {
 // EnumTypeName/ArrayElementType).
 
 // IsUUID reports whether the field holds a UUID.
-func (f Field) IsUUID() bool { return f.DatabaseType == "uuid" }
+func (f Field) IsUUID() bool { return f.DatabaseType == specmeta.FieldTypeUUID }
 
 // IsUuid reports whether the field holds a UUID.
 //
@@ -44,17 +44,17 @@ func (f Field) IsFloat() bool { return specmeta.IsFloatType(f.DatabaseType) }
 func (f Field) IsNumeric() bool { return specmeta.IsNumeric(f.DatabaseType) }
 
 // IsBoolean reports whether the field holds a boolean.
-func (f Field) IsBoolean() bool { return f.DatabaseType == "boolean" }
+func (f Field) IsBoolean() bool { return f.DatabaseType == specmeta.FieldTypeBoolean }
 
 // IsDate reports whether the field holds a date (no time component).
-func (f Field) IsDate() bool { return f.DatabaseType == "date" }
+func (f Field) IsDate() bool { return f.DatabaseType == specmeta.FieldTypeDate }
 
 // IsDateTime reports whether the field holds a datetime.
-func (f Field) IsDateTime() bool { return f.DatabaseType == "datetime" }
+func (f Field) IsDateTime() bool { return f.DatabaseType == specmeta.FieldTypeDatetime }
 
 // IsJSON reports whether the field holds a JSON document (json or jsonb).
 func (f Field) IsJSON() bool {
-	return f.DatabaseType == "json" || f.DatabaseType == "jsonb"
+	return f.DatabaseType == specmeta.FieldTypeJSON || f.DatabaseType == specmeta.FieldTypeJSONB
 }
 
 // IsJson reports whether the field holds a JSON document.
@@ -66,7 +66,7 @@ func (f Field) IsJson() bool { return f.IsJSON() }
 // IsJSONB reports whether the field holds a jsonb document specifically
 // (as opposed to a plain json column). Bridges use this to choose between
 // ordered (numeric) and text-only JSON path operators.
-func (f Field) IsJSONB() bool { return f.DatabaseType == "jsonb" }
+func (f Field) IsJSONB() bool { return f.DatabaseType == specmeta.FieldTypeJSONB }
 
 // IsJsonB reports whether the field holds a jsonb document.
 //
@@ -76,19 +76,19 @@ func (f Field) IsJsonB() bool { return f.IsJSONB() }
 
 // IsString reports whether the field holds a bounded string column
 // (as opposed to an unbounded text column, which also satisfies IsText).
-func (f Field) IsString() bool { return f.DatabaseType == "string" }
+func (f Field) IsString() bool { return f.DatabaseType == specmeta.FieldTypeString }
 
 // IsTextOnly reports whether the field holds an unbounded text column
 // (as opposed to a bounded string column, which also satisfies IsText).
-func (f Field) IsTextOnly() bool { return f.DatabaseType == "text" }
+func (f Field) IsTextOnly() bool { return f.DatabaseType == specmeta.FieldTypeText }
 
 // IsBigInt reports whether the field holds a 64-bit integer (bigint),
 // distinct from the 32-bit int.
-func (f Field) IsBigInt() bool { return f.DatabaseType == "bigint" }
+func (f Field) IsBigInt() bool { return f.DatabaseType == specmeta.FieldTypeBigint }
 
 // IsDecimal reports whether the field holds an arbitrary-precision decimal,
 // distinct from the binary float.
-func (f Field) IsDecimal() bool { return f.DatabaseType == "decimal" }
+func (f Field) IsDecimal() bool { return f.DatabaseType == specmeta.FieldTypeDecimal }
 
 // IsPatchable reports whether the field participates in a merge-patch (PATCH)
 // request body: scalar fields that are not server-managed, plus single

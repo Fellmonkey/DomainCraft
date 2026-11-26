@@ -40,18 +40,9 @@ type FieldDefinition struct {
 	DefaultIsFunc bool // true if default:now()
 }
 
-// Lexer parses field definition strings into FieldDefinition
-type Lexer struct {
-	input string
-}
-
-// New creates a new Lexer.
-func New(input string) *Lexer {
-	return &Lexer{input: strings.TrimSpace(input)}
-}
-
 // Parse parses a full field definition: "string [required, max:255]"
-func (l *Lexer) Parse() (*FieldDefinition, error) {
+func Parse(input string) (*FieldDefinition, error) {
+	input = strings.TrimSpace(input)
 	fd := &FieldDefinition{
 		Validations: make(map[string]string),
 	}
@@ -59,15 +50,15 @@ func (l *Lexer) Parse() (*FieldDefinition, error) {
 	// Split into type and modifiers: "string [required, max:255]". Split at the
 	// first "[" only; the rest (modifiers, which may themselves contain brackets,
 	// e.g. default values like "[a, b, c]") is handled by parseModifiers.
-	parts := strings.SplitN(l.input, "[", 2)
+	parts := strings.SplitN(input, "[", 2)
 
 	typePart := strings.TrimSpace(parts[0])
 	if typePart == "" {
-		return nil, fmt.Errorf("empty field type: %s", l.input)
+		return nil, fmt.Errorf("empty field type: %s", input)
 	}
 
 	// Parse the type
-	if err := l.parseType(typePart, fd); err != nil {
+	if err := parseType(typePart, fd); err != nil {
 		return nil, err
 	}
 
@@ -75,10 +66,10 @@ func (l *Lexer) Parse() (*FieldDefinition, error) {
 	if len(parts) > 1 {
 		modifierStr := strings.TrimSpace(parts[1])
 		if !strings.HasSuffix(modifierStr, "]") {
-			return nil, fmt.Errorf("unterminated modifier list in %q: expected ']'", l.input)
+			return nil, fmt.Errorf("unterminated modifier list in %q: expected ']'", input)
 		}
 		modifierStr = strings.TrimSuffix(modifierStr, "]")
-		if err := l.parseModifiers(modifierStr, fd); err != nil {
+		if err := parseModifiers(modifierStr, fd); err != nil {
 			return nil, err
 		}
 	}
@@ -92,7 +83,7 @@ func (l *Lexer) Parse() (*FieldDefinition, error) {
 }
 
 // parseType parses the type portion (e.g. "string", "relation(User)", "array(int)", "enum(Status)")
-func (l *Lexer) parseType(typeStr string, fd *FieldDefinition) error {
+func parseType(typeStr string, fd *FieldDefinition) error {
 	typeStr = strings.TrimSpace(typeStr)
 
 	// Check for relation(EntityName). A missing closing paren is an error, not
@@ -149,7 +140,7 @@ func (l *Lexer) parseType(typeStr string, fd *FieldDefinition) error {
 }
 
 // parseModifiers parses modifiers inside square brackets
-func (l *Lexer) parseModifiers(modStr string, fd *FieldDefinition) error {
+func parseModifiers(modStr string, fd *FieldDefinition) error {
 	modifiers := splitModifiers(modStr)
 
 	for _, mod := range modifiers {
@@ -314,8 +305,7 @@ func (fd *FieldDefinition) Validate() error {
 	return nil
 }
 
-// ParseFieldString is a convenience function for parsing a field string
+// ParseFieldString is a backwards-compatible alias for Parse.
 func ParseFieldString(fieldString string) (*FieldDefinition, error) {
-	lexer := New(fieldString)
-	return lexer.Parse()
+	return Parse(fieldString)
 }
