@@ -80,7 +80,7 @@ func FieldErrorResult(message string) string {
 // parseAndValidateYAML is shared by goValidate and goGenerate: the CLI never
 // renders a schema that the validator rejected, and the browser must not either.
 func parseAndValidateYAML(yaml string) (*parser.ParsedSchema, []validator.ValidationError, error) {
-	schema, err := parser.ParseYAML([]byte(yaml))
+	schema, err := parser.ParseYAMLString(yaml)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -122,13 +122,13 @@ func ParseFieldDefinition(def, name string) string {
 	if fd.Validations == nil {
 		fd.Validations = make(map[string]string)
 	}
-	return marshal(fd)
+	return marshalFieldDefinition(fd)
 }
 
 // ParseDomainYAML is the production path for goParseDomain.
 func ParseDomainYAML(yaml string) string {
 	return domainCache.get(yaml, func() string {
-		raw, err := parser.ParseRawSchema([]byte(yaml))
+		raw, err := parser.ParseRawSchemaString(yaml)
 		if err != nil {
 			return marshal(map[string]string{"error": err.Error()})
 		}
@@ -325,9 +325,10 @@ func findEmbeddedBridge(ref string) (string, error) {
 }
 
 func marshal(v any) string {
-	data, err := json.Marshal(v)
-	if err != nil {
-		data, _ = json.Marshal(map[string]string{"error": "marshal failed: " + err.Error()})
+	var b strings.Builder
+	if err := json.NewEncoder(&b).Encode(v); err != nil {
+		data, _ := json.Marshal(map[string]string{"error": "marshal failed: " + err.Error()})
+		return string(data)
 	}
-	return string(data)
+	return strings.TrimSuffix(b.String(), "\n")
 }

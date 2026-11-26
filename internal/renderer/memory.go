@@ -187,9 +187,11 @@ func (r *Renderer) RenderMemory(project *ir.Project, pkgs map[string]string) ([]
 						customTargets[rel] = true
 					}
 					var buf strings.Builder
+					buf.Grow(int(compiled.sizeHint.Load()))
 					if err := compiled.body.Execute(&buf, context); err != nil {
 						return nil, fmt.Errorf("execute template %s: %w", spec.Source, err)
 					}
+					compiled.sizeHint.Store(int64(buf.Len()))
 					files[rel] = buf.String()
 				}
 			}

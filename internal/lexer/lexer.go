@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 )
@@ -228,6 +229,29 @@ func splitModifiers(s string) []string {
 	return specmeta.SplitRespectingQuotes(s)
 }
 
+// lastRegex caches the result of the most recent regexp.Compile call. Studio
+// re-parses the same field definition on every keystroke, and compiling even a
+// short pattern allocates hundreds of bytes and dominates goParseField when a
+// regex modifier is present. One entry is enough for that pattern and keeps
+// the cache bounded regardless of user input.
+var lastRegex = struct {
+	sync.Mutex
+	pattern string
+	re      *regexp.Regexp
+	err     error
+}{}
+
+func compileRegex(pattern string) (*regexp.Regexp, error) {
+	lastRegex.Lock()
+	defer lastRegex.Unlock()
+	if lastRegex.pattern == pattern {
+		return lastRegex.re, lastRegex.err
+	}
+	re, err := regexp.Compile(pattern)
+	lastRegex.pattern, lastRegex.re, lastRegex.err = pattern, re, err
+	return re, err
+}
+
 // Validate checks the logical consistency of a FieldDefinition
 func (fd *FieldDefinition) Validate() error {
 	// Cannot be both primary and optional
@@ -257,7 +281,7 @@ func (fd *FieldDefinition) Validate() error {
 
 	// Validate regex if present
 	if regex, ok := fd.Validations["regex"]; ok {
-		if _, err := regexp.Compile(regex); err != nil {
+		if _, err := compileRegex(regex); err != nil {
 			return fmt.Errorf("invalid regex %q: %w", regex, err)
 		}
 	}

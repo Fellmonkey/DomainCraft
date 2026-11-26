@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -47,11 +46,16 @@ func BenchmarkValidate(b *testing.B) {
 	}
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
-			yaml := tc.yaml(b)
+			// A trailing YAML comment gives the single-entry result cache two
+			// distinct keys without producing an invalid document. Appending a
+			// digit directly to the YAML made every iteration hit the parse
+			// error path and hid the validator entirely.
+			base := tc.yaml(b)
+			variants := [2]string{base + "\n# v0\n", base + "\n# v1\n"}
 			b.ReportAllocs()
 			i := 0
 			for b.Loop() {
-				_ = ValidateYAML(yaml + strconv.Itoa(i%2))
+				_ = ValidateYAML(variants[i%2])
 				i++
 			}
 		})
@@ -69,11 +73,12 @@ func BenchmarkParseDomain(b *testing.B) {
 		{name: "entities=2000", yaml: func(*testing.B) string { return benchmarkYAML(2000) }},
 	} {
 		b.Run(tc.name, func(b *testing.B) {
-			yaml := tc.yaml(b)
+			base := tc.yaml(b)
+			variants := [2]string{base + "\n# v0\n", base + "\n# v1\n"}
 			b.ReportAllocs()
 			i := 0
 			for b.Loop() {
-				_ = ParseDomainYAML(yaml + strconv.Itoa(i%2))
+				_ = ParseDomainYAML(variants[i%2])
 				i++
 			}
 		})

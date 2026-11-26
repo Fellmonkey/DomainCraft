@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"text/template"
 
 	"github.com/DomainCraft/DomainCraft/internal/fsutil"
@@ -267,6 +268,10 @@ func (s *renderSession) fail(err error) error {
 type compiledSpec struct {
 	body    *template.Template
 	targets []*template.Template
+	// sizeHint is the output length of the most recent render with this spec.
+	// Growing the destination builder once avoids repeated geometric growth on
+	// the hot path; it never affects the rendered bytes.
+	sizeHint atomic.Int64
 }
 
 func (r *Renderer) compileSpec(src sourceConfig, spec TemplateSpec, funcMap template.FuncMap, helpers *template.Template) (*compiledSpec, error) {

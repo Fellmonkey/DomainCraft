@@ -104,3 +104,4 @@ internal/renderer/memory_test.go::TestRenderMemoryRejectsEscapingTarget	#review	
 cmd/wasm-validator/api_test.go::TestGenerateYAML	#review	goGenerate had no native contract test for generated files
 cmd/wasm-validator/api_test.go::TestGenerateYAMLRejectsInvalidModel	#review	goGenerate rendered files for a schema rejected by goValidate
 internal/bridgecontract/version_test.go::TestParseContractVersion	#review	contract gate extraction changed absent, zero or negative contract_version handling
+cmd/wasm-validator/fieldjson_test.go::TestMarshalFieldDefinitionMatchesEncodingJSON	#review	hand-written goParseField JSON writer emitted `{}` instead of `null` for nil Validations

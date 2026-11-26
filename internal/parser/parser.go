@@ -12,6 +12,11 @@ import (
 	"github.com/DomainCraft/DomainCraft/pkg/textutil"
 )
 
+// sortedFeatureFieldNames is the deterministic injection order for feature
+// fields. It depends only on the static spec, so compute it once instead of
+// sorting the spec map for every entity.
+var sortedFeatureFieldNames = slices.Sorted(maps.Keys(specmeta.FeatureFieldDefs))
+
 // Parser is the main parser for converting RawSchema to ParsedSchema
 type Parser struct {
 	raw *RawSchema
@@ -133,7 +138,6 @@ func (p *Parser) parseEntity(name string, raw RawEntity) (*ParsedEntity, error) 
 		Name:       name,
 		OldName:    raw.OldName,
 		NamePlural: textutil.Pluralize(name),
-		Features:   make(map[string]bool),
 		Fields:     make(map[string]*ParsedField),
 		FieldOrder: make([]string, 0),
 		Indexes:    make([]*ParsedIndex, 0),
@@ -141,6 +145,7 @@ func (p *Parser) parseEntity(name string, raw RawEntity) (*ParsedEntity, error) 
 
 	// Parse features (behavior macros). Duplicates are rejected here: the
 	// Features map cannot carry them, so a later check could never fire.
+	// Most entities declare no features, so allocate the map on first use.
 	for _, feature := range raw.Features {
 		feature = strings.TrimSpace(feature)
 		if !specmeta.IsFeature(feature) {
@@ -148,6 +153,9 @@ func (p *Parser) parseEntity(name string, raw RawEntity) (*ParsedEntity, error) 
 		}
 		if entity.Features[feature] {
 			return nil, fmt.Errorf("duplicate feature: %s", feature)
+		}
+		if entity.Features == nil {
+			entity.Features = make(map[string]bool, len(raw.Features))
 		}
 		entity.Features[feature] = true
 	}
@@ -250,9 +258,8 @@ func ParseField(name string, fieldDef string) (*ParsedField, error) {
 // addFeatureFields adds automatic fields based on entity features.
 // Uses specmeta.FeatureFieldDefs as the single source of truth.
 func (p *Parser) addFeatureFields(entity *ParsedEntity) {
-	// Iterate in sorted order for deterministic field generation.
-	names := slices.Sorted(maps.Keys(specmeta.FeatureFieldDefs))
-	for _, fieldName := range names {
+	// sortedFeatureFieldNames is already in deterministic order.
+	for _, fieldName := range sortedFeatureFieldNames {
 		def := specmeta.FeatureFieldDefs[fieldName]
 		if !entity.Features[def.Feature] {
 			continue
@@ -291,7 +298,16 @@ func generateIndexName(entityName string, fields []string, idx int) string {
 
 // ParseYAML is a convenience function for full parsing from YAML bytes
 func ParseYAML(data []byte) (*ParsedSchema, error) {
-	raw, err := ParseRawSchema(data)
+	return parseYAML(ParseRawSchema(data))
+}
+
+// ParseYAMLString is the string counterpart of ParseYAML: it avoids copying
+// the whole document into a []byte when the caller already holds a string.
+func ParseYAMLString(data string) (*ParsedSchema, error) {
+	return parseYAML(ParseRawSchemaString(data))
+}
+
+func parseYAML(raw *RawSchema, err error) (*ParsedSchema, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error parsing YAML: %w", err)
 	}
