@@ -3,7 +3,6 @@ package bridge
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"github.com/DomainCraft/DomainCraft/internal/appdir"
+	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 )
 
 // S7: a user-supplied pin must be a git ref, not a git option or a revision
@@ -127,10 +127,6 @@ func TestGitScrubbedEnvAllowlist(t *testing.T) {
 // S12: cache paths are attacker-controlled. A planted symlink must stop the
 // embedded materialization before any file is written through it.
 func TestTryMaterializeEmbeddedRefusesSymlinks(t *testing.T) {
-	if err := os.Symlink("target", filepath.Join(t.TempDir(), "symlink-probe")); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
-
 	entry := Default().ByID("csharp-core")
 	if entry == nil {
 		t.Fatal("csharp-core not in registry")
@@ -147,7 +143,7 @@ func TestTryMaterializeEmbeddedRefusesSymlinks(t *testing.T) {
 					t.Fatal(err)
 				}
 				if err := os.Symlink(outside, dst); err != nil {
-					t.Fatal(err)
+					t.Skipf("symlinks unavailable: %v", err)
 				}
 			},
 		},
@@ -159,7 +155,7 @@ func TestTryMaterializeEmbeddedRefusesSymlinks(t *testing.T) {
 					t.Fatal(err)
 				}
 				if err := os.Symlink(outside, filepath.Join(dst, "templates")); err != nil {
-					t.Fatal(err)
+					t.Skipf("symlinks unavailable: %v", err)
 				}
 			},
 		},
@@ -190,8 +186,14 @@ func TestTryMaterializeEmbeddedRefusesSymlinks(t *testing.T) {
 	}
 
 	// A target outside the cache directory is rejected too.
-	if err := refuseSymlinks(t.TempDir(), filepath.Join(t.TempDir(), "elsewhere")); err == nil {
-		t.Error("refuseSymlinks accepted a target outside the base directory")
+	base := t.TempDir()
+	target := filepath.Join(t.TempDir(), "elsewhere")
+	_, err := fsutil.AbsPathWithin(base, target)
+	if err == nil {
+		err = fsutil.RefuseSymlinks(base, target)
+	}
+	if err == nil {
+		t.Error("path check accepted a target outside the base directory")
 	}
 }
 
@@ -206,35 +208,13 @@ func TestApplyUpdateFailsWhenFetchedManifestIsUnreadable(t *testing.T) {
 	appdir.SetBaseForTesting(root)
 	defer appdir.SetBaseForTesting("")
 
-	remote := filepath.Join(root, "remote.git")
-	testGit(t, root, "init", "--bare", "-b", "main", "remote.git")
-	testGit(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
-
-	src := filepath.Join(root, "src")
-	if err := os.MkdirAll(src, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	makeBridgeRepo(t, src, "main")
-	testGit(t, src, "remote", "add", "origin", remote)
-	testGit(t, src, "push", "-q", "-u", "origin", "main")
+	remote, src := newRemoteWithBridge(t, root, "main", "")
 
 	entry := cacheEntry("no-manifest", "owner/no-manifest")
 	cacheDir := CachePath(entry)
 	testGit(t, root, "clone", "-q", remote, cacheDir)
 	if err := WriteMeta(entry, newMetaFromCache(entry)); err != nil {
 		t.Fatal(err)
-	}
-
-	original := httpGetBodyFn
-	defer func() { httpGetBodyFn = original }()
-	httpGetBodyFn = func(url string) ([]byte, error) {
-		switch {
-		case strings.Contains(url, "/commits/main"):
-			return []byte(`{"sha":"` + testGit(t, remote, "rev-parse", "HEAD") + `"}`), nil
-		case strings.Contains(url, "/repos/"):
-			return []byte(`{"default_branch":"main"}`), nil
-		}
-		return nil, os.ErrNotExist
 	}
 
 	// The new upstream commit removes bridge.yaml, so `git show` on the
@@ -246,6 +226,7 @@ func TestApplyUpdateFailsWhenFetchedManifestIsUnreadable(t *testing.T) {
 	testGit(t, src, "commit", "-q", "-m", "remove manifest")
 	testGit(t, src, "push", "-q", "origin", "main")
 
+	stubGitHubAPI(t, testGit(t, remote, "rev-parse", "HEAD"), "")
 	update, err := CheckForUpdate(entry, 0)
 	if err != nil || update == nil {
 		t.Fatalf("CheckForUpdate = %+v, %v; want an update", update, err)
@@ -373,17 +354,14 @@ func TestValidateFetchBranch(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// ApplyUpdate validates the fetch branch with validatePinRef and
-			// wraps its error with this wording; check the same wrapper.
+			// ApplyUpdate feeds the branch through validatePinRef; test the
+			// grammar directly instead of re-wrapping the error in the test.
 			err := validatePinRef(tt.branch)
-			if err != nil {
-				err = fmt.Errorf("invalid fetch branch %q: %w", tt.branch, err)
-			}
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("validateFetchBranch(%q) = %v, wantErr %v", tt.branch, err, tt.wantErr)
+				t.Fatalf("validatePinRef(%q) = %v, wantErr %v", tt.branch, err, tt.wantErr)
 			}
-			if tt.wantErr && !strings.Contains(err.Error(), "invalid fetch branch") {
-				t.Errorf("error = %q, want it to name the invalid fetch branch", err)
+			if tt.wantErr && !strings.Contains(err.Error(), "invalid pinned ref") {
+				t.Errorf("error = %q, want it to name the invalid ref", err)
 			}
 		})
 	}
@@ -437,17 +415,7 @@ func TestApplyUpdateJoinsFastPathFailureWithCloneFailure(t *testing.T) {
 	appdir.SetBaseForTesting(root)
 	defer appdir.SetBaseForTesting("")
 
-	remote := filepath.Join(root, "remote.git")
-	testGit(t, root, "init", "--bare", "-b", "main", "remote.git")
-	testGit(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
-
-	src := filepath.Join(root, "src")
-	if err := os.MkdirAll(src, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	makeBridgeRepo(t, src, "main")
-	testGit(t, src, "remote", "add", "origin", remote)
-	testGit(t, src, "push", "-q", "-u", "origin", "main")
+	remote, _ := newRemoteWithBridge(t, root, "main", "")
 
 	entry := cacheEntry("joined-errors", "owner/joined-errors")
 	cacheDir := CachePath(entry)
@@ -562,19 +530,7 @@ func TestStatusCheckDoesNotMutateCacheMeta(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	orig := httpGetBodyFn
-	t.Cleanup(func() { httpGetBodyFn = orig })
-	httpGetBodyFn = func(url string) ([]byte, error) {
-		switch {
-		case containsAny(url, "/commits/"):
-			return []byte(`{"sha":"abcdef1234567890"}`), nil
-		case containsAny(url, "/bridge.yaml"):
-			return []byte("name: b\ncontract_version: 1\n"), nil
-		case containsAny(url, "/repos/"):
-			return []byte(`{"default_branch":"main"}`), nil
-		}
-		return nil, os.ErrNotExist
-	}
+	stubGitHubAPI(t, "abcdef1234567890", "name: b\ncontract_version: 1\n")
 
 	st := entry.Status(true)
 	if !st.RemoteReachable || !st.Outdated {

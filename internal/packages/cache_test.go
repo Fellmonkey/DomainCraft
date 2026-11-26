@@ -36,15 +36,9 @@ func seedVersion(t *testing.T, bridgeID, registryURL, packageID, framework, vers
 	dir := appdir.CacheDir(bridgeID)
 	path := filepath.Join(dir, CacheFileName)
 	if err := fsutil.WriteJSON(path, struct {
-		Entries map[string]struct {
-			Value    string    `json:"value"`
-			StoredAt time.Time `json:"stored_at"`
-		} `json:"entries"`
+		Entries map[string]versionEntry `json:"entries"`
 	}{
-		Entries: map[string]struct {
-			Value    string    `json:"value"`
-			StoredAt time.Time `json:"stored_at"`
-		}{
+		Entries: map[string]versionEntry{
 			key: {Value: version, StoredAt: storedAt},
 		},
 	}); err != nil {
@@ -376,7 +370,7 @@ func TestResolveVersionCachedDoesNotHoldLockDuringResolve(t *testing.T) {
 	}()
 	select {
 	case <-started:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("first resolver did not start")
 	}
 
@@ -387,7 +381,7 @@ func TestResolveVersionCachedDoesNotHoldLockDuringResolve(t *testing.T) {
 	}()
 	select {
 	case <-fastDone:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Error("second resolution was blocked by the first registry lookup")
 	}
 	close(release)

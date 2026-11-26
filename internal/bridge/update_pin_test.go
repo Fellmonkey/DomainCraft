@@ -22,18 +22,12 @@ func shallowPinnedCache(t *testing.T, pin string) (RegistryEntry, string) {
 	appdir.SetBaseForTesting(root)
 	t.Cleanup(func() { appdir.SetBaseForTesting("") })
 
-	remote := filepath.Join(root, "remote.git")
-	testGit(t, root, "init", "--bare", "-b", "main", "remote.git")
-	testGit(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
-
-	src := filepath.Join(root, "src")
-	if err := os.MkdirAll(src, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	makeBridgeRepo(t, src, "main")
+	remote, src := newRemoteWithBridge(t, root, "main", "")
 	testGit(t, src, "tag", "v1.0.0")
+	// file:// makes the later shallow fetch use the real transport instead of
+	// a local-path clone, which ignores --depth.
 	remoteURL := "file:///" + filepath.ToSlash(remote)
-	testGit(t, src, "remote", "add", "origin", remoteURL)
+	testGit(t, src, "remote", "set-url", "origin", remoteURL)
 	testGit(t, src, "push", "-q", "-u", "origin", "main")
 	testGit(t, src, "push", "-q", "origin", "v1.0.0")
 

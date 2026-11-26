@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	domaincraft "github.com/DomainCraft/DomainCraft"
+	"github.com/DomainCraft/DomainCraft/internal/appdir"
 	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 )
 
@@ -37,7 +38,12 @@ func TryMaterializeEmbedded(entry RegistryEntry, opts *EnsureOptions) (bool, err
 	dst := CachePath(entry)
 	// The cache may be attacker-controlled (a planted symlink would redirect
 	// writes outside it), so check the whole path before creating anything.
-	if err := refuseSymlinks(CacheDir(), dst); err != nil {
+	cacheRoot := appdir.UnionDir("bridges")
+	_, err := fsutil.AbsPathWithin(cacheRoot, dst)
+	if err == nil {
+		err = fsutil.RefuseSymlinks(cacheRoot, dst)
+	}
+	if err != nil {
 		return false, fmt.Errorf("materialize embedded bridge %q: %w", entry.ID, err)
 	}
 	if err := os.MkdirAll(dst, 0o755); err != nil { //nolint:gosec // bridge cache dirs must stay readable across CLI runs
@@ -73,7 +79,11 @@ func writeFSDir(fsys fs.FS, root, dst string) error {
 		rel := strings.TrimPrefix(path, root)
 		rel = strings.TrimPrefix(rel, "/")
 		target := filepath.Join(dst, filepath.FromSlash(rel))
-		if err := refuseSymlinks(dst, target); err != nil {
+		_, err = fsutil.AbsPathWithin(dst, target)
+		if err == nil {
+			err = fsutil.RefuseSymlinks(dst, target)
+		}
+		if err != nil {
 			return err
 		}
 		name := filepath.FromSlash(rel)
@@ -89,14 +99,4 @@ func writeFSDir(fsys fs.FS, root, dst string) error {
 		}
 		return fsutil.AtomicWriteRoot(dir, name, data)
 	})
-}
-
-// refuseSymlinks lstats base and each existing component of target below it.
-// A symlink at any level would let os.WriteFile/MkdirAll escape the cache, so
-// the materialization refuses it before touching the filesystem.
-func refuseSymlinks(base, target string) error {
-	if _, err := fsutil.AbsPathWithin(base, target); err != nil {
-		return err
-	}
-	return fsutil.RefuseSymlinks(base, target)
 }

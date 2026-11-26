@@ -22,6 +22,30 @@ func TestVersionStoreReportsStorageErrors(t *testing.T) {
 	}
 }
 
+// An unreadable cache must not silently degrade to a cacheless resolve: the
+// resolved version is still usable, but the caller gets the cause to warn on.
+func TestCachedResolveReportsUnreadableCache(t *testing.T) {
+	root := t.TempDir()
+	appdir.SetBaseForTesting(root)
+	defer appdir.SetBaseForTesting("")
+	dir := appdir.CacheDir("broken-cache-resolve")
+	if err := os.MkdirAll(filepath.Join(dir, CacheFileName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldResolve := resolveVersionForFrameworkFn
+	resolveVersionForFrameworkFn = func(_, _, _ string) (string, error) { return "9.9.9", nil }
+	defer func() { resolveVersionForFrameworkFn = oldResolve }()
+
+	version, err := ResolveVersionCachedForFramework("broken-cache-resolve", "https://reg.example/{id}", "demo.pkg", "net10.0")
+	if version != "9.9.9" {
+		t.Errorf("version = %q, want 9.9.9", version)
+	}
+	if err == nil {
+		t.Fatal("unreadable cache produced no diagnostic")
+	}
+}
+
 func TestNumericPrefixHandlesBuildMetadataAndOverflow(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {

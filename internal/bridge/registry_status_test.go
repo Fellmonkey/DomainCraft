@@ -1,7 +1,6 @@
 package bridge
 
 import (
-	"os"
 	"testing"
 
 	"github.com/DomainCraft/DomainCraft/internal/appdir"
@@ -43,25 +42,8 @@ func TestStatusRemoteOnlyWhenRequested(t *testing.T) {
 	appdir.SetBaseForTesting(t.TempDir())
 	t.Cleanup(func() { appdir.SetBaseForTesting("") })
 
-	orig := httpGetBodyFn
-	defer func() { httpGetBodyFn = orig }()
-
-	httpGetBodyFn = func(url string) ([]byte, error) {
-		if !containsAny(url, "/repos/", "/commits/", "/bridge.yaml") {
-			return nil, os.ErrNotExist
-		}
-		// Simulate an upstream with a newer commit but the same contract v1.
-		if containsAny(url, "/commits/") {
-			return []byte(`{"sha":"abcdef1234567890"}`), nil
-		}
-		if containsAny(url, "/bridge.yaml") {
-			return []byte("name: b\ncontract_version: 1\n"), nil
-		}
-		if containsAny(url, "/repos/") {
-			return []byte(`{"default_branch":"main"}`), nil
-		}
-		return nil, os.ErrNotExist
-	}
+	// Simulate an upstream with a newer commit but the same contract v1.
+	stubGitHubAPI(t, "abcdef1234567890", "name: b\ncontract_version: 1\n")
 
 	entry := *Default().ByID("csharp-core")
 	if ok, err := TryMaterializeEmbedded(entry, nil); err != nil || !ok {
@@ -81,15 +63,4 @@ func TestStatusRemoteOnlyWhenRequested(t *testing.T) {
 	if !st.Outdated {
 		t.Errorf("a supported newer version should be flagged as outdated")
 	}
-}
-
-func containsAny(s string, subs ...string) bool {
-	for _, sub := range subs {
-		for i := 0; i+len(sub) <= len(s); i++ {
-			if s[i:i+len(sub)] == sub {
-				return true
-			}
-		}
-	}
-	return false
 }

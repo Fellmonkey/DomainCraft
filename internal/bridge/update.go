@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -19,7 +18,7 @@ import (
 )
 
 // httpClient is shared by remote version probes.
-var httpClient = &http.Client{Timeout: 10 * time.Second}
+var httpClient = netutil.NewBoundedClient(10*time.Second, nil)
 
 // gitCommandTimeout bounds every git child so a library host without a
 // cancellable command context cannot hang on a stalled remote.
@@ -229,7 +228,12 @@ func ApplyUpdate(entry RegistryEntry, u *Update) (string, error) {
 
 	// A pinned checkout has an explicit ref. Remember it so a direct ApplyUpdate
 	// never leaves the cache on the default branch.
-	meta, _ := ReadMeta(entry)
+	// A corrupt metadata file must not silently drop a pin and move the cache
+	// to the default branch. Fail closed before touching the checkout.
+	meta, err := ReadMeta(entry)
+	if err != nil {
+		return "", fmt.Errorf("read metadata for bridge %q: %w", entry.ID, err)
+	}
 	pin := ""
 	if meta != nil {
 		pin = meta.Pin
@@ -376,39 +380,54 @@ func githubAPIHead(entry RegistryEntry) (branch, commit string, err error) {
 	if err != nil {
 		return "", "", err
 	}
-	var repo struct {
-		DefaultBranch string `json:"default_branch"`
-	}
-	if err := json.Unmarshal(repoBody, &repo); err != nil {
+	branch, err = decodeJSONString(repoBody, "default_branch")
+	if err != nil {
 		return "", "", err
 	}
-	if repo.DefaultBranch == "" {
+	if branch == "" {
 		return "", "", fmt.Errorf("github API: no default branch for %s", entry.GitHub)
 	}
 	// The API response is remote data: validate it before it becomes a URL path
 	// or, later, the branch passed to git fetch.
-	if err := validatePinRef(repo.DefaultBranch); err != nil {
+	if err := validatePinRef(branch); err != nil {
 		return "", "", fmt.Errorf("github API: %w", err)
 	}
 
-	commitBody, err := httpGetBodyFn(fmt.Sprintf("https://api.github.com/repos/%s/commits/%s", entry.GitHub, repo.DefaultBranch))
+	commitBody, err := httpGetBodyFn(fmt.Sprintf("https://api.github.com/repos/%s/commits/%s", entry.GitHub, branch))
 	if err != nil {
 		return "", "", err
 	}
-	var c struct {
-		SHA string `json:"sha"`
-	}
-	if err := json.Unmarshal(commitBody, &c); err != nil {
+	commit, err = decodeJSONString(commitBody, "sha")
+	if err != nil {
 		return "", "", err
 	}
-	if c.SHA == "" {
-		return "", "", fmt.Errorf("github API: no head commit for %s/%s", entry.GitHub, repo.DefaultBranch)
+	if commit == "" {
+		return "", "", fmt.Errorf("github API: no head commit for %s/%s", entry.GitHub, branch)
 	}
-	return repo.DefaultBranch, c.SHA, nil
+	return branch, commit, nil
+}
+
+// decodeJSONString reads one string field from a remote JSON object. Both
+// GitHub API responses use the same shape; keeping the decode in one place
+// makes their error handling consistent.
+func decodeJSONString(body []byte, key string) (string, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return "", err
+	}
+	value, ok := raw[key]
+	if !ok {
+		return "", nil
+	}
+	var s string
+	if err := json.Unmarshal(value, &s); err != nil {
+		return "", fmt.Errorf("github API: field %q: %w", key, err)
+	}
+	return s, nil
 }
 
 // maxProbeBodyBytes caps remote probe responses (bridge.yaml, GitHub JSON).
-const maxProbeBodyBytes = 1 << 20
+const maxProbeBodyBytes = netutil.DefaultMaxBodyBytes
 
 // validateProbeRedirect is the redirect rule for bridge/update HTTP probes.
 // netutil installs it as CheckRedirect, so it runs before each follow-up
@@ -423,7 +442,7 @@ func validateProbeRedirect(u *url.URL) error {
 	}
 	host := strings.ToLower(u.Hostname())
 	switch host {
-	case "github.com", "api.github.com", "raw.githubusercontent.com":
+	case githubHost, "api." + githubHost, "raw.githubusercontent.com":
 		return nil
 	default:
 		return fmt.Errorf("host %q is not allowed", host)
@@ -464,12 +483,12 @@ func runGit(dir string, args ...string) (string, error) {
 // family of GIT_CONFIG_*/GIT_SSH_COMMAND/proxy variables that can redirect a
 // cache operation onto another repository or another transport; none of them
 // are needed to fetch a bridge. Only process basics survive.
-var gitEnvironmentNames = map[string]bool{
-	"HOME": true, "USERPROFILE": true, "HOMEDRIVE": true, "HOMEPATH": true,
-	"PATH": true, "PATHEXT": true, "SYSTEMROOT": true, "COMSPEC": true,
-	"TEMP": true, "TMP": true, "TMPDIR": true, "APPDATA": true,
-	"LOCALAPPDATA": true, "PROGRAMDATA": true, "LANG": true, "LC_ALL": true,
-	"LANGUAGE": true, "TZ": true, "SSL_CERT_FILE": true, "SSL_CERT_DIR": true,
+var gitEnvironmentNames = map[string]struct{}{
+	"HOME": {}, "USERPROFILE": {}, "HOMEDRIVE": {}, "HOMEPATH": {},
+	"PATH": {}, "PATHEXT": {}, "SYSTEMROOT": {}, "COMSPEC": {},
+	"TEMP": {}, "TMP": {}, "TMPDIR": {}, "APPDATA": {},
+	"LOCALAPPDATA": {}, "PROGRAMDATA": {}, "LANG": {}, "LC_ALL": {},
+	"LANGUAGE": {}, "TZ": {}, "SSL_CERT_FILE": {}, "SSL_CERT_DIR": {},
 }
 
 // gitScrubbedEnv returns a minimal environment for git children. It keeps the
@@ -479,7 +498,7 @@ func gitScrubbedEnv() []string {
 	var env []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
-		if gitEnvironmentNames[strings.ToUpper(name)] {
+		if _, ok := gitEnvironmentNames[strings.ToUpper(name)]; ok {
 			env = append(env, kv)
 		}
 	}

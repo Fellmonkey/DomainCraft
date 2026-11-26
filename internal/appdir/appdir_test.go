@@ -9,9 +9,9 @@ import (
 
 func setBaseForTest(t *testing.T, dir string) {
 	t.Helper()
-	old := currentBaseOverride()
+	old := baseOverride.Load()
 	SetBaseForTesting(dir)
-	t.Cleanup(func() { SetBaseForTesting(old) })
+	t.Cleanup(func() { baseOverride.Store(old) })
 }
 
 // TestBaseFallback pins the home-directory fallback. Every cache path derives

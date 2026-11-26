@@ -25,12 +25,18 @@ func AbsPathWithin(base, target string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve target %q: %w", target, err)
 	}
+	return relWithin(absBase, absTarget, target)
+}
+
+// relWithin is the containment check for callers that already hold absolute
+// paths. Keeping it separate avoids a second filepath.Abs on the same base.
+func relWithin(absBase, absTarget, displayTarget string) (string, error) {
 	rel, err := filepath.Rel(absBase, absTarget)
 	if err != nil {
-		return "", fmt.Errorf("resolve path %q: %w", target, err)
+		return "", fmt.Errorf("resolve path %q: %w", displayTarget, err)
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path %q escapes %q", target, base)
+		return "", fmt.Errorf("path %q escapes %q", displayTarget, absBase)
 	}
 	return rel, nil
 }
@@ -49,7 +55,7 @@ func LocalPathWithin(base, rel string) (string, string, error) {
 		return "", "", fmt.Errorf("resolve base %q: %w", base, err)
 	}
 	absTarget := filepath.Join(absBase, local)
-	relative, err := AbsPathWithin(absBase, absTarget)
+	relative, err := relWithin(absBase, absTarget, absTarget)
 	if err != nil {
 		return "", "", err
 	}
@@ -130,18 +136,79 @@ func RefuseSymlinksCached(base, target string, verified map[string]bool) error {
 	return nil
 }
 
-// AtomicWrite writes data to path via a temp file in the same directory
-// followed by a rename, so a crash mid-write never leaves a truncated or
-// corrupt file behind. The parent directory is created if missing. An existing
-// target keeps its permissions; a genuinely new file gets CreateTemp's 0600.
-func AtomicWrite(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // generated project and cache dirs must stay world-readable
+// atomicOps is the filesystem surface shared by AtomicWrite and
+// AtomicWriteRoot. osAtomicOps routes through os.*, rootAtomicOps through one
+// *os.Root, so the staging algorithm below exists only once.
+type atomicOps interface {
+	mkdir(dir string) error
+	lstat(name string) (os.FileInfo, error)
+	createTemp(dir, name string) (*os.File, string, error)
+	rename(from, to string) error
+	remove(name string) error
+	// abort closes a file after a staging failure and shapes the returned
+	// error. os.* joins the close error, *os.Root drops it; keeping the policy
+	// in the backend preserves both callers' error contracts.
+	abort(f *os.File, err error) error
+}
+
+type osAtomicOps struct{}
+
+func (osAtomicOps) mkdir(dir string) error {
+	return os.MkdirAll(dir, 0o755) //nolint:gosec // generated project and cache dirs must stay world-readable
+}
+
+func (osAtomicOps) lstat(name string) (os.FileInfo, error) { return os.Lstat(name) }
+
+func (osAtomicOps) createTemp(dir, name string) (*os.File, string, error) {
+	f, err := os.CreateTemp(dir, filepath.Base(name)+".tmp-*")
+	if err != nil {
+		return nil, "", err
+	}
+	return f, f.Name(), nil
+}
+
+func (osAtomicOps) rename(from, to string) error { return os.Rename(from, to) }
+
+func (osAtomicOps) remove(name string) error { return os.Remove(name) }
+
+func (osAtomicOps) abort(f *os.File, err error) error { return errors.Join(err, f.Close()) }
+
+type rootAtomicOps struct{ root *os.Root }
+
+func (o rootAtomicOps) mkdir(dir string) error { return o.root.MkdirAll(dir, 0o755) }
+
+func (o rootAtomicOps) lstat(name string) (os.FileInfo, error) { return o.root.Lstat(name) }
+
+func (o rootAtomicOps) createTemp(_, name string) (*os.File, string, error) {
+	tmp := name + ".tmp-" + rand.Text()
+	f, err := o.root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return nil, "", err
+	}
+	return f, tmp, nil
+}
+
+func (o rootAtomicOps) rename(from, to string) error { return o.root.Rename(from, to) }
+
+func (o rootAtomicOps) remove(name string) error { return o.root.Remove(name) }
+
+func (rootAtomicOps) abort(f *os.File, err error) error {
+	_ = f.Close()
+	return err
+}
+
+// atomicWrite stages data in a temp file in the target's directory, copies the
+// target's mode onto it, then renames it into place. Every filesystem call goes
+// through ops, so the same algorithm can be confined to an *os.Root. A crash
+// before the rename leaves an orphaned temp file, never a truncated target.
+func atomicWrite(ops atomicOps, name string, data []byte) error {
+	dir := filepath.Dir(name)
+	if err := ops.mkdir(dir); err != nil {
 		return err
 	}
 
-	mode := os.FileMode(0o600) // CreateTemp's default for new files
-	if info, err := os.Lstat(path); err == nil {
+	mode := os.FileMode(0o600) // CreateTemp/OpenFile's default for new files
+	if info, err := ops.lstat(name); err == nil {
 		if info.Mode()&os.ModeSymlink == 0 {
 			mode = info.Mode().Perm()
 		}
@@ -149,25 +216,32 @@ func AtomicWrite(path string, data []byte) error {
 		return err
 	}
 
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	f, tmpName, err := ops.createTemp(dir, name)
 	if err != nil {
 		return err
 	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }() // no-op once the rename succeeds
+	defer func() { _ = ops.remove(tmpName) }() // no-op once the rename succeeds
 
-	// CreateTemp uses 0600; apply the target's mode before committing the
-	// rename, the same way the renderer stages generated files.
-	if err := tmp.Chmod(mode); err != nil {
-		return errors.Join(err, tmp.Close())
+	// The temp file starts at 0600; apply the target's mode before committing
+	// the rename, the same way the renderer stages generated files.
+	if err := f.Chmod(mode); err != nil {
+		return ops.abort(f, err)
 	}
-	if _, err := tmp.Write(data); err != nil {
-		return errors.Join(err, tmp.Close())
+	if _, err := f.Write(data); err != nil {
+		return ops.abort(f, err)
 	}
-	if err := tmp.Close(); err != nil {
+	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	return ops.rename(tmpName, name)
+}
+
+// AtomicWrite writes data to path via a temp file in the same directory
+// followed by a rename, so a crash mid-write never leaves a truncated or
+// corrupt file behind. The parent directory is created if missing. An existing
+// target keeps its permissions; a genuinely new file gets CreateTemp's 0600.
+func AtomicWrite(path string, data []byte) error {
+	return atomicWrite(osAtomicOps{}, path, data)
 }
 
 // AtomicWriteRoot writes data to name relative to root via a temp file and a
@@ -175,39 +249,7 @@ func AtomicWrite(path string, data []byte) error {
 // AtomicWrite, every operation is confined to root: a symlink planted between
 // validation and commit can redirect neither the temp file nor the rename.
 func AtomicWriteRoot(root *os.Root, name string, data []byte) error {
-	dir := filepath.Dir(name)
-	if err := root.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-
-	mode := os.FileMode(0o600)
-	if info, err := root.Lstat(name); err == nil {
-		if info.Mode()&os.ModeSymlink == 0 {
-			mode = info.Mode().Perm()
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-
-	tmp := name + ".tmp-" + rand.Text()
-	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = root.Remove(tmp) }() // no-op once the rename succeeds
-
-	if err := f.Chmod(mode); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return root.Rename(tmp, name)
+	return atomicWrite(rootAtomicOps{root: root}, name, data)
 }
 
 // WriteJSON marshals v as indented JSON and writes it to path atomically.
@@ -221,7 +263,7 @@ func WriteJSON(path string, v any) error {
 func WriteJSONWithNewline(path string, v any, newline bool) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal JSON for %q: %w", path, err)
 	}
 	if newline {
 		data = append(data, '\n')

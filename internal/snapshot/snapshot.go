@@ -42,6 +42,13 @@ const (
 type EntityState struct {
 	OldName string            `json:"old_name,omitempty"`
 	Fields  map[string]string `json:"fields"` // field name -> IR database type
+	// Columns carries the canonical DB column name for every field. It is the
+	// snapshot's copy of ir.Field.ColumnName(), so a later diff never re-derives
+	// column names from logical field names: a relation field's column is the
+	// FK column (category -> category_id), not the field name. Absent in
+	// snapshots written before this field existed; callers fall back to the
+	// old snake_case rule in that case.
+	Columns map[string]string `json:"columns,omitempty"` // field name -> DB column name
 	// FieldOldNames records the field-level `old_name` rename hints (previous
 	// field name) declared in the CURRENT model, so the next diff can recognize
 	// a safe column rename instead of a destructive drop + add.
@@ -108,14 +115,16 @@ func New(bridge string, project *ir.Project, files []renderer.RenderedFile) *Sna
 	entities := make(map[string]EntityState, len(project.Entities))
 	for _, e := range project.Entities {
 		fields := make(map[string]string, len(e.Fields))
+		columns := make(map[string]string, len(e.Fields))
 		fieldOldNames := make(map[string]string)
 		for _, f := range e.Fields {
 			fields[f.Name] = f.DatabaseType
+			columns[f.Name] = f.ColumnName()
 			if f.OldName != "" {
 				fieldOldNames[f.Name] = f.OldName
 			}
 		}
-		entities[e.Name] = EntityState{OldName: e.OldName, Fields: fields, FieldOldNames: fieldOldNames}
+		entities[e.Name] = EntityState{OldName: e.OldName, Fields: fields, Columns: columns, FieldOldNames: fieldOldNames}
 	}
 	return &Snapshot{
 		FormatVersion:    FormatVersion,
@@ -194,36 +203,83 @@ type Diff struct {
 	NamespaceRename *NamespaceMismatch
 }
 
+// hasEntityChanges is the single definition of "the model changed", shared by
+// IsEmpty and HasSchemaChanges so adding a new change kind cannot update one
+// and forget the other.
+func (d *Diff) hasEntityChanges() bool {
+	return len(d.Deleted) > 0 || len(d.Renamed) > 0 || len(d.FieldRenames) > 0 || len(d.TypeChanges) > 0
+}
+
 // IsEmpty reports whether the diff contains nothing actionable.
 func (d *Diff) IsEmpty() bool {
-	hasNoChanges := len(d.Deleted) == 0 && len(d.Renamed) == 0 && len(d.TypeChanges) == 0 && len(d.FieldRenames) == 0
-	return hasNoChanges && d.NamespaceRename == nil
+	return !d.hasEntityChanges() && d.NamespaceRename == nil
 }
 
 // HasSchemaChanges reports whether the diff contains changes that must reach the
 // database (deleted/renamed entities, field renames or type changes). Used to
 // decide whether `domaincraft generate --prune` should run the bridge's migration
 // commands automatically.
-func (d *Diff) HasSchemaChanges() bool {
-	return len(d.Deleted) > 0 || len(d.Renamed) > 0 || len(d.FieldRenames) > 0 || len(d.TypeChanges) > 0
+func (d *Diff) HasSchemaChanges() bool { return d.hasEntityChanges() }
+
+// entityIndex is the shared old/new name resolution for the diff passes and
+// the migration plan. A rename hint (old_name) maps an old entity to its new
+// name; byName holds the current entities.
+type entityIndex struct {
+	byName    map[string]ir.Entity
+	byOldName map[string]string // old name -> new name
+}
+
+func newEntityIndex(project *ir.Project) entityIndex {
+	idx := entityIndex{
+		byName:    make(map[string]ir.Entity, len(project.Entities)),
+		byOldName: make(map[string]string),
+	}
+	for _, e := range project.Entities {
+		idx.byName[e.Name] = e
+		if e.OldName != "" {
+			idx.byOldName[e.OldName] = e.Name
+		}
+	}
+	return idx
+}
+
+// resolve returns the current entity and name corresponding to an old entity
+// name, honouring a rename hint.
+func (idx entityIndex) resolve(oldName string) (ir.Entity, string, bool) {
+	newName := oldName
+	if mapped, ok := idx.byOldName[oldName]; ok {
+		newName = mapped
+	}
+	e, ok := idx.byName[newName]
+	return e, newName, ok
+}
+
+// fieldsByName is the single field->database-type projection used by the
+// diff and the migration plan.
+func fieldsByName(e *ir.Entity) map[string]string {
+	fields := make(map[string]string, len(e.Fields))
+	for _, f := range e.Fields {
+		fields[f.Name] = f.DatabaseType
+	}
+	return fields
 }
 
 // ComputeDiff compares an old snapshot against the current IR project.
 // File lists are filtered to those that still exist on disk under outputDir.
-func ComputeDiff(old *Snapshot, project *ir.Project, outputDir string) *Diff {
+func ComputeDiff(old *Snapshot, project *ir.Project, outputDir string, warn ...func(string, ...any)) *Diff {
+	warnf := func(format string, args ...any) {
+		for _, w := range warn {
+			if w != nil {
+				w(format, args...)
+			}
+		}
+	}
 	diff := &Diff{}
 	if old == nil || project == nil {
 		return diff
 	}
 
-	newEntities := make(map[string]ir.Entity, len(project.Entities))
-	renamedByOld := make(map[string]string) // old name -> new name
-	for _, e := range project.Entities {
-		newEntities[e.Name] = e
-		if e.OldName != "" {
-			renamedByOld[e.OldName] = e.Name
-		}
-	}
+	idx := newEntityIndex(project)
 
 	// Group old entity-scoped files by entity name. The custom-file path lists
 	// are derived here once, so neither change pass has to rescan the manifest.
@@ -239,7 +295,7 @@ func ComputeDiff(old *Snapshot, project *ir.Project, outputDir string) *Diff {
 	existingRefsByEntity := make(map[string][]FileRef, len(filesByEntity))
 	existingCustomByEntity := make(map[string][]string, len(filesByEntity))
 	for entityName, files := range filesByEntity {
-		refs := existingFileRefs(outputDir, files)
+		refs := existingFileRefs(outputDir, files, warnf)
 		existingRefsByEntity[entityName] = refs
 		custom := make([]string, 0, len(refs))
 		for _, ref := range refs {
@@ -250,50 +306,65 @@ func ComputeDiff(old *Snapshot, project *ir.Project, outputDir string) *Diff {
 		existingCustomByEntity[entityName] = custom
 	}
 
-	// Renamed entities (declared via old_name).
-	for oldName, newName := range renamedByOld {
+	diff.computeEntityMoves(old, idx, existingRefsByEntity)
+	diff.computeTypeChanges(old, idx, existingCustomByEntity)
+
+	// Field renames (via the field-level `old_name` modifier). Detected when the
+	// current field declares a previous name that exists in the old snapshot and
+	// the current field name did not exist there (a true rename, not a shadow).
+	// A safe RenameColumn preserves the data — a Drop+Add would destroy it.
+	diff.computeFieldRenames(old, idx, existingCustomByEntity)
+
+	// Project rename: custom (overwrite: false) files carry the old root namespace
+	// because they are scaffolded once. Detect them by scanning their content so the
+	// developer gets an actionable list instead of a compile error later.
+	currentNamespace := textutil.PascalCase(project.Name)
+	if old.ProjectNamespace != "" && old.ProjectNamespace != currentNamespace {
+		diff.NamespaceRename = detectNamespaceMismatch(outputDir, old, old.ProjectNamespace, currentNamespace, warnf)
+	}
+
+	return diff
+}
+
+// computeEntityMoves collects renamed and deleted entities from one rename-aware
+// index, instead of resolving old names in two independent passes.
+func (d *Diff) computeEntityMoves(old *Snapshot, idx entityIndex, refs map[string][]FileRef) {
+	for oldName, newName := range idx.byOldName {
 		if _, ok := old.Entities[oldName]; !ok {
 			continue
 		}
-		files := existingRefsByEntity[oldName]
-		diff.Renamed = append(diff.Renamed, Rename{OldName: oldName, NewName: newName, Files: files})
+		d.Renamed = append(d.Renamed, Rename{OldName: oldName, NewName: newName, Files: refs[oldName]})
 	}
-	slices.SortFunc(diff.Renamed, func(a, b Rename) int { return cmp.Compare(a.OldName, b.OldName) })
+	slices.SortFunc(d.Renamed, func(a, b Rename) int { return cmp.Compare(a.OldName, b.OldName) })
 
-	// Deleted entities (in the snapshot, not in the current model, not renamed).
 	for oldName := range old.Entities {
-		if _, ok := newEntities[oldName]; ok {
+		if _, ok := idx.byName[oldName]; ok {
 			continue
 		}
-		if _, renamed := renamedByOld[oldName]; renamed {
+		if _, renamed := idx.byOldName[oldName]; renamed {
 			continue
 		}
-		files := existingRefsByEntity[oldName]
-		diff.Deleted = append(diff.Deleted, DeletedEntity{Name: oldName, Files: files})
+		d.Deleted = append(d.Deleted, DeletedEntity{Name: oldName, Files: refs[oldName]})
 	}
-	slices.SortFunc(diff.Deleted, func(a, b DeletedEntity) int { return cmp.Compare(a.Name, b.Name) })
+	slices.SortFunc(d.Deleted, func(a, b DeletedEntity) int { return cmp.Compare(a.Name, b.Name) })
+}
 
-	// Field type changes for entities that still exist (possibly under a new name).
+// computeTypeChanges reports fields whose database type changed in entities
+// that still exist (possibly under a new name).
+func (d *Diff) computeTypeChanges(old *Snapshot, idx entityIndex, custom map[string][]string) {
 	for oldName, oldState := range old.Entities {
-		newName := oldName
-		if mapped, ok := renamedByOld[oldName]; ok {
-			newName = mapped
-		}
-		newEntity, ok := newEntities[newName]
+		newEntity, newName, ok := idx.resolve(oldName)
 		if !ok {
 			continue
 		}
-		newFields := make(map[string]string, len(newEntity.Fields))
-		for _, f := range newEntity.Fields {
-			newFields[f.Name] = f.DatabaseType
-		}
-		customFiles := existingCustomByEntity[oldName]
+		newFields := fieldsByName(&newEntity)
+		customFiles := custom[oldName]
 		for fieldName, oldType := range oldState.Fields {
 			newType, ok := newFields[fieldName]
 			if !ok || oldType == newType {
 				continue
 			}
-			diff.TypeChanges = append(diff.TypeChanges, TypeChange{
+			d.TypeChanges = append(d.TypeChanges, TypeChange{
 				Entity:      newName,
 				Field:       fieldName,
 				OldType:     oldType,
@@ -302,27 +373,23 @@ func ComputeDiff(old *Snapshot, project *ir.Project, outputDir string) *Diff {
 			})
 		}
 	}
-	slices.SortFunc(diff.TypeChanges, func(a, b TypeChange) int {
+	slices.SortFunc(d.TypeChanges, func(a, b TypeChange) int {
 		if c := cmp.Compare(a.Entity, b.Entity); c != 0 {
 			return c
 		}
 		return cmp.Compare(a.Field, b.Field)
 	})
+}
 
-	// Field renames (via the field-level `old_name` modifier). Detected when the
-	// current field declares a previous name that exists in the old snapshot and
-	// the current field name did not exist there (a true rename, not a shadow).
-	// A safe RenameColumn preserves the data — a Drop+Add would destroy it.
+// computeFieldRenames reports field-level old_name hints that describe a safe
+// rename rather than a drop+add.
+func (d *Diff) computeFieldRenames(old *Snapshot, idx entityIndex, custom map[string][]string) {
 	for oldName, oldState := range old.Entities {
-		newName := oldName
-		if mapped, ok := renamedByOld[oldName]; ok {
-			newName = mapped
-		}
-		newEntity, ok := newEntities[newName]
+		newEntity, newName, ok := idx.resolve(oldName)
 		if !ok {
 			continue
 		}
-		customFiles := existingCustomByEntity[oldName]
+		customFiles := custom[oldName]
 		for _, f := range newEntity.Fields {
 			if f.OldName == "" {
 				continue
@@ -331,62 +398,53 @@ func ComputeDiff(old *Snapshot, project *ir.Project, outputDir string) *Diff {
 			if !wasPresent {
 				continue
 			}
-			// Ambiguous: the new field name already existed in the previous model,
-			// so this is not a clean rename (two different columns would be involved).
+			// Ambiguous: the new name already existed before — not a clean rename.
 			if _, already := oldState.Fields[f.Name]; already {
 				continue
 			}
-			diff.FieldRenames = append(diff.FieldRenames, FieldRename{
-				Entity:      newName,
-				OldField:    f.OldName,
-				NewField:    f.Name,
-				OldColumn:   f.OldColumnName(),
-				NewColumn:   f.DatabaseColumnName,
-				OldType:     oldFieldType,
-				NewType:     f.DatabaseType,
+			oldColumn := oldState.Columns[f.OldName]
+			if oldColumn == "" {
+				oldColumn = f.OldColumnName()
+			}
+			d.FieldRenames = append(d.FieldRenames, FieldRename{
+				Entity: newName, OldField: f.OldName, NewField: f.Name,
+				OldColumn: oldColumn, NewColumn: f.ColumnName(),
+				OldType: oldFieldType, NewType: f.DatabaseType,
 				CustomFiles: customFiles,
-				// The source of this rename was itself a rename in the previous
-				// snapshot — the developer renamed again before applying it.
-				Chained: oldState.FieldOldNames[f.OldName] != "",
+				Chained:     oldState.FieldOldNames[f.OldName] != "",
 			})
 		}
 	}
-	slices.SortFunc(diff.FieldRenames, func(a, b FieldRename) int {
+	slices.SortFunc(d.FieldRenames, func(a, b FieldRename) int {
 		if c := cmp.Compare(a.Entity, b.Entity); c != 0 {
 			return c
 		}
 		return cmp.Compare(a.OldField, b.OldField)
 	})
-
-	// Project rename: custom (overwrite: false) files carry the old root namespace
-	// because they are scaffolded once. Detect them by scanning their content so the
-	// developer gets an actionable list instead of a compile error later.
-	currentNamespace := textutil.PascalCase(project.Name)
-	if old.ProjectNamespace != "" && old.ProjectNamespace != currentNamespace {
-		diff.NamespaceRename = detectNamespaceMismatch(outputDir, old, old.ProjectNamespace, currentNamespace)
-	}
-
-	return diff
 }
 
 // detectNamespaceMismatch finds custom files from the old snapshot (still present
 // on disk) whose content references the old root namespace.
-func detectNamespaceMismatch(outputDir string, old *Snapshot, oldNamespace, newNamespace string) *NamespaceMismatch {
+func detectNamespaceMismatch(outputDir string, old *Snapshot, oldNamespace, newNamespace string, warn func(string, ...any)) *NamespaceMismatch {
 	var affected []string
-	for _, f := range old.Files {
-		if !f.Custom {
+	// The same on-disk filter as every other diff pass: one Stat per file,
+	// unsafe paths and disappeared files reported through the shared warning.
+	for _, ref := range existingFileRefs(outputDir, old.Files, warn) {
+		if !ref.Custom {
 			continue
 		}
-		abs, err := safeRelPath(outputDir, f.Path)
+		abs, err := safeRelPath(outputDir, ref.Path)
 		if err != nil {
+			warn("skipping custom file %q while checking the namespace: %v", ref.Path, err)
 			continue
 		}
 		data, err := os.ReadFile(abs) //nolint:gosec // abs passed safeRelPath validation
 		if err != nil {
+			warn("cannot read custom file %q while checking the namespace: %v", ref.Path, err)
 			continue
 		}
 		if referencesNamespace(string(data), oldNamespace) {
-			affected = append(affected, f.Path)
+			affected = append(affected, ref.Path)
 		}
 	}
 	if len(affected) == 0 {
@@ -404,8 +462,14 @@ func referencesNamespace(s, namespace string) bool {
 	if namespace == "" {
 		return false
 	}
-	rewritten := replaceLongest([]byte(s), casingVariants(namespace, "\x00", false), tokenOK)
-	return !bytes.Equal(rewritten, []byte(s))
+	found := false
+	// The same identifier-aware scanner as the rewrites, but with an early
+	// stop: no sentinel replacement and no full copy of the file content.
+	replaceLongest([]byte(s), casingVariants(namespace, namespace+"__", false), tokenOK, func([]byte) bool {
+		found = true
+		return true
+	})
+	return found
 }
 
 // NamespaceRenameReport returns a human-readable report for the project-namespace
@@ -430,14 +494,17 @@ func (d *Diff) NamespaceRenameReport() string {
 // every caller that turns snapshot-supplied paths into on-disk facts. Items
 // whose path escapes outputDir or is missing are dropped; the rest stay in
 // deterministic path order.
-func existingItems[T any](outputDir string, items []T, relPath func(T) string) []T {
+func existingItems[T any](outputDir string, items []T, relPath func(T) string, warn func(string, ...any)) []T {
 	var result []T
 	for _, item := range items {
-		abs, err := safeRelPath(outputDir, relPath(item))
+		path := relPath(item)
+		abs, err := safeRelPath(outputDir, path)
 		if err != nil {
+			warn("skipping manifest file %q during migration diff: %v", path, err)
 			continue
 		}
 		if _, err := os.Stat(abs); err != nil {
+			warn("manifest file %q is no longer on disk: %v", path, err)
 			continue
 		}
 		result = append(result, item)
@@ -448,8 +515,8 @@ func existingItems[T any](outputDir string, items []T, relPath func(T) string) [
 
 // existingFileRefs filters old entity-scoped files to those that still exist
 // on disk, preserving whether each is a custom (overwrite: false) file.
-func existingFileRefs(outputDir string, files []renderer.RenderedFile) []FileRef {
-	existing := existingItems(outputDir, files, func(f renderer.RenderedFile) string { return f.Path })
+func existingFileRefs(outputDir string, files []renderer.RenderedFile, warn func(string, ...any)) []FileRef {
+	existing := existingItems(outputDir, files, func(f renderer.RenderedFile) string { return f.Path }, warn)
 	refs := make([]FileRef, 0, len(existing))
 	for _, f := range existing {
 		refs = append(refs, FileRef{Path: f.Path, Custom: f.Custom})
@@ -470,15 +537,17 @@ func RenameRelPath(relPath, oldName, newName string) string {
 
 // DeleteFile removes an entity-scoped file (path relative to outputDir).
 func DeleteFile(outputDir, relPath string) error {
-	root, rel, err := openRootFor(outputDir, relPath)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = root.Close() }()
-	if err := root.Remove(rel); err != nil {
-		return fmt.Errorf("remove %s: %w", relPath, err)
-	}
-	return nil
+	return withRoot(outputDir, relPath, func(root *os.Root, rel string) error {
+		if err := root.Remove(rel); err != nil {
+			// The diff only includes files that existed at scan time; another
+			// run may have removed one since. Treat that as the end state.
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return fmt.Errorf("remove %s: %w", relPath, err)
+		}
+		return nil
+	})
 }
 
 // RenameEntityFile renames an entity-scoped file after the entity rename
@@ -490,28 +559,31 @@ func RenameEntityFile(outputDir, relPath, oldName, newName string) (newRel strin
 	if newRel == relPath {
 		return newRel, false, nil
 	}
-	srcRoot, srcRel, err := openRootFor(outputDir, relPath)
-	if err != nil {
-		return newRel, false, err
-	}
-	defer func() { _ = srcRoot.Close() }()
-	dstRoot, dstRel, err := openRootFor(outputDir, newRel)
-	if err != nil {
-		return newRel, false, err
-	}
-	defer func() { _ = dstRoot.Close() }()
-	if _, err := dstRoot.Lstat(dstRel); err == nil {
-		return newRel, false, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return newRel, false, fmt.Errorf("check destination %s: %w", newRel, err)
-	}
-	if err := dstRoot.MkdirAll(filepath.Dir(dstRel), 0o755); err != nil {
-		return newRel, false, fmt.Errorf("create parent dir for %s: %w", newRel, err)
-	}
-	if err := srcRoot.Rename(srcRel, dstRel); err != nil {
-		return newRel, false, fmt.Errorf("rename %s to %s: %w", relPath, newRel, err)
-	}
-	return newRel, true, nil
+	err = withRoot(outputDir, relPath, func(srcRoot *os.Root, srcRel string) error {
+		return withRoot(outputDir, newRel, func(dstRoot *os.Root, dstRel string) error {
+			if _, err := dstRoot.Lstat(dstRel); err == nil {
+				return nil
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("check destination %s: %w", newRel, err)
+			}
+			if err := dstRoot.MkdirAll(filepath.Dir(dstRel), 0o755); err != nil {
+				return fmt.Errorf("create parent dir for %s: %w", newRel, err)
+			}
+			// Re-check immediately before the rename: a file created between
+			// the first check and here would otherwise be overwritten.
+			if _, err := dstRoot.Lstat(dstRel); err == nil {
+				return nil
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("check destination %s: %w", newRel, err)
+			}
+			if err := srcRoot.Rename(srcRel, dstRel); err != nil {
+				return fmt.Errorf("rename %s to %s: %w", relPath, newRel, err)
+			}
+			renamed = true
+			return nil
+		})
+	})
+	return newRel, renamed, err
 }
 
 // removeFileFn is a seam for testing the failure path of ReplaceScaffoldedFile.
@@ -524,31 +596,33 @@ var removeFileFn = func(root *os.Root, name string) error { return root.Remove(n
 // A failed source removal is reported: the destination is already correct and
 // the developer can remove the leftover manually.
 func ReplaceScaffoldedFile(outputDir, sourceRel, destRel string, transforms ...func([]byte) []byte) error {
-	srcRoot, srcRel, err := openRootFor(outputDir, sourceRel)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = srcRoot.Close() }()
-	dstRoot, dstRel, err := openRootFor(outputDir, destRel)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = dstRoot.Close() }()
-	data, err := srcRoot.ReadFile(srcRel)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", sourceRel, err)
-	}
-	out := data
-	for _, transform := range transforms {
-		out = transform(out)
-	}
-	if err := fsutil.AtomicWriteRoot(dstRoot, dstRel, out); err != nil {
-		return fmt.Errorf("write %s: %w", destRel, err)
-	}
-	if err := removeFileFn(srcRoot, srcRel); err != nil {
-		return fmt.Errorf("remove replaced %s: %w", sourceRel, err)
-	}
-	return nil
+	return withRoot(outputDir, sourceRel, func(srcRoot *os.Root, srcRel string) error {
+		return withRoot(outputDir, destRel, func(dstRoot *os.Root, dstRel string) error {
+			data, err := srcRoot.ReadFile(srcRel)
+			if err != nil {
+				return fmt.Errorf("read %s: %w", sourceRel, err)
+			}
+			out := data
+			for _, transform := range transforms {
+				out = transform(out)
+			}
+			existing, readErr := dstRoot.ReadFile(dstRel)
+			switch {
+			case readErr == nil && bytes.Equal(existing, out):
+				// Already up to date: avoid a temp file and mtime reset.
+			case readErr != nil && !errors.Is(readErr, os.ErrNotExist):
+				return fmt.Errorf("read %s: %w", destRel, readErr)
+			default:
+				if err := fsutil.AtomicWriteRoot(dstRoot, dstRel, out); err != nil {
+					return fmt.Errorf("write %s: %w", destRel, err)
+				}
+			}
+			if err := removeFileFn(srcRoot, srcRel); err != nil {
+				return fmt.Errorf("remove replaced %s: %w", sourceRel, err)
+			}
+			return nil
+		})
+	})
 }
 
 // FieldRenameReport returns a human-readable report for the field renames in

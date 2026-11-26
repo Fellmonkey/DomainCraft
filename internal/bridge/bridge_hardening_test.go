@@ -15,32 +15,28 @@ import (
 func TestParseGitHubRefAllowsSlashInPin(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
-		name     string
-		input    string
-		repo     string
-		ref      string
-		wantRepo bool
-		wantErr  bool
+		name    string
+		input   string
+		repo    string
+		ref     string
+		wantErr bool
 	}{
-		{name: "branch with slash", input: "owner/repo@feature/branch", repo: "owner/repo", ref: "feature/branch", wantRepo: true},
-		{name: "plain shorthand", input: "owner/repo", repo: "owner/repo", wantRepo: true},
+		{name: "branch with slash", input: "owner/repo@feature/branch", repo: "owner/repo", ref: "feature/branch"},
+		{name: "plain shorthand", input: "owner/repo", repo: "owner/repo"},
 		{name: "repo with extra segment", input: "owner/repo/extra", wantErr: true},
 		{name: "option-like pin", input: "owner/repo@--upload-pack=sh", wantErr: true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			repo, ref, ok, err := parseGitHubRef(c.input)
+			repo, ref, err := parseGitHubRef(c.input)
 			if c.wantErr {
 				if err == nil {
 					t.Fatalf("parseGitHubRef(%q) unexpectedly succeeded", c.input)
 				}
 				return
 			}
-			if err != nil || !ok || repo != c.repo || ref != c.ref {
-				t.Fatalf("parseGitHubRef(%q) = (%q, %q, %t, %v)", c.input, repo, ref, ok, err)
-			}
-			if !c.wantRepo {
-				t.Fatalf("parseGitHubRef(%q) unexpectedly matched a GitHub ref", c.input)
+			if err != nil || repo != c.repo || ref != c.ref {
+				t.Fatalf("parseGitHubRef(%q) = (%q, %q, %v)", c.input, repo, ref, err)
 			}
 		})
 	}
@@ -180,17 +176,7 @@ func TestCheckForUpdateRejectsStaleCommitWhenGitFails(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	orig := httpGetBodyFn
-	defer func() { httpGetBodyFn = orig }()
-	httpGetBodyFn = func(url string) ([]byte, error) {
-		switch {
-		case strings.Contains(url, "/commits/main"):
-			return []byte(`{"sha":"new-remote-commit"}`), nil
-		case strings.Contains(url, "/repos/"):
-			return []byte(`{"default_branch":"main"}`), nil
-		}
-		return nil, os.ErrNotExist
-	}
+	stubGitHubAPI(t, "new-remote-commit", "")
 
 	upd, err := CheckForUpdate(entry, 0)
 	if err != nil || upd != nil {
@@ -231,17 +217,7 @@ func TestCheckForUpdateSyncsHeadBeforeComparing(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	orig := httpGetBodyFn
-	defer func() { httpGetBodyFn = orig }()
-	httpGetBodyFn = func(url string) ([]byte, error) {
-		switch {
-		case strings.Contains(url, "/commits/main"):
-			return []byte(`{"sha":"` + head + `"}`), nil
-		case strings.Contains(url, "/repos/"):
-			return []byte(`{"default_branch":"main"}`), nil
-		}
-		return nil, os.ErrNotExist
-	}
+	stubGitHubAPI(t, head, "")
 
 	upd, err := CheckForUpdate(entry, 0)
 	if err != nil || upd != nil {
@@ -339,7 +315,7 @@ func TestCloneBridgeRefusesSymlinkedCachePath(t *testing.T) {
 
 	entry := cacheEntry("symlink-cache", "owner/symlink-cache")
 	cacheDir := CachePath(entry)
-	if err := os.MkdirAll(CacheDir(), 0o755); err != nil {
+	if err := os.MkdirAll(appdir.UnionDir("bridges"), 0o755); err != nil {
 		t.Fatalf("mkdir cache root: %v", err)
 	}
 	outside := filepath.Join(t.TempDir(), "outside")

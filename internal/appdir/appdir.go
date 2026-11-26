@@ -26,21 +26,14 @@ func SetBaseForTesting(dir string) {
 	baseOverride.Store(&dir)
 }
 
-func currentBaseOverride() string {
-	if override := baseOverride.Load(); override != nil {
-		return *override
-	}
-	return ""
-}
-
 // Base returns the per-user DomainCraft directory, typically ~/.domaincraft.
 // Returns .domaincraft relative to the current directory when the home
 // directory is unavailable. The directory is NOT created; callers that write
 // under it are responsible for creating the subdirectories they need.
 // Path resolution cannot fail, so callers get a plain string.
 func Base() string {
-	if override := currentBaseOverride(); override != "" {
-		return override
+	if override := baseOverride.Load(); override != nil && *override != "" {
+		return *override
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {

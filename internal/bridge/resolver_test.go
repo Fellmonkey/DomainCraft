@@ -34,14 +34,7 @@ func TestResolver_LocalPath(t *testing.T) {
 	}
 
 	// Bare directory name resolvable from the CWD (backwards compatible).
-	orig, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(orig) //nolint:errcheck // test-only cleanup
+	t.Chdir(root)
 	got, err := r.Resolve("my-bridge")
 	if err != nil {
 		t.Fatalf("Resolve(my-bridge): %v", err)

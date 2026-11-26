@@ -28,11 +28,6 @@ type versionEntry struct {
 	StoredAt time.Time `json:"stored_at"`
 }
 
-// cacheKey derives a stable key for a (registry, package) pair.
-func cacheKey(registryURL, packageID string) string {
-	return registryURL + "\x00" + packageID
-}
-
 // resolveVersionForFrameworkFn is the TFM-aware lookup used by renderers. It is
 // a seam so the version-filtering logic can be tested offline.
 var resolveVersionForFrameworkFn = ResolveVersionForFramework
@@ -98,8 +93,15 @@ func resolveVersionCached(bridgeID, key string, resolve func() (string, error)) 
 	entries, err := versionStore(bridgeID)
 	if err != nil {
 		cacheMu.Unlock()
-		// Cache directory unusable — resolve uncached rather than fail.
-		return resolve()
+		// Cache directory unusable — resolve uncached rather than fail, but
+		// report the cause so the caller can warn instead of silently using a
+		// cacheless result. Renderer treats a non-fatal error exactly like a
+		// cache write failure: warn once and keep the resolved version.
+		version, resolveErr := resolve()
+		if resolveErr != nil {
+			return "", resolveErr
+		}
+		return version, fmt.Errorf("read package version cache for %q: %w", bridgeID, err)
 	}
 	if e, ok := entries[key]; ok && e.Value != "" && time.Since(e.StoredAt) <= DefaultCacheTTL {
 		cacheMu.Unlock()
@@ -141,7 +143,7 @@ func resolveVersionCached(bridgeID, key string, resolve func() (string, error)) 
 // framework is part of the key: the same bridge regenerated for net10.0 and
 // net11.0 must never reuse an incompatible version.
 func frameworkCacheKey(registryURL, packageID, targetFramework string) string {
-	return cacheKey(registryURL, packageID) + "\x00" + targetFramework
+	return registryURL + "\x00" + packageID + "\x00" + targetFramework
 }
 
 // ResolveVersionCachedForFramework resolves the latest stable version of a

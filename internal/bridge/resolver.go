@@ -13,18 +13,13 @@ import (
 // commands can map it to a usage exit code instead of a runtime failure.
 var ErrInvalidRef = errors.New("invalid bridge reference")
 
-type invalidRefError struct{ err error }
-
-func (e invalidRefError) Error() string { return e.err.Error() }
-func (e invalidRefError) Unwrap() error { return e.err }
-
-func (e invalidRefError) Is(target error) bool { return target == ErrInvalidRef }
-
+// asInvalidRef tags an error so the CLI can classify it as usage (exit 2).
+// Multiple %w verbs keep both the marker and the original cause in the chain.
 func asInvalidRef(err error) error {
 	if err == nil {
 		return nil
 	}
-	return invalidRefError{err: err}
+	return fmt.Errorf("%w: %w", ErrInvalidRef, err)
 }
 
 // Resolver maps a bridge identifier to a local filesystem path.
@@ -52,88 +47,118 @@ func (r *Resolver) WithEnsureOptions(opts *EnsureOptions) *Resolver {
 
 // Resolve maps a bridge identifier to a local path containing bridge.yaml.
 // Returns ("", nil) when input is empty — caller must handle interactive selection.
+// Resolution order is local path → registry ID → GitHub shorthand; a handled
+// step returns done=true, otherwise the next step is tried.
 func (r *Resolver) Resolve(input string) (string, error) {
 	if input == "" {
 		return "", nil
 	}
+	if path, done, err := r.resolveLocal(input); done {
+		return path, err
+	}
+	if path, done, err := r.resolveRegistry(input); done {
+		return path, err
+	}
+	if path, done, err := r.resolveGitHub(input); done {
+		return path, err
+	}
+	return "", asInvalidRef(fmt.Errorf("bridge %q not found: not a local path, registry ID, or owner/repo", input))
+}
 
-	// 1. Local path — use directly. Bare names that exist in the CWD count too.
+// resolveLocal handles a local path, including bare names that exist in the
+// CWD. An existing directory without bridge.yaml and a missing path-like input
+// are hard errors; other missing paths fall through to remote resolution.
+func (r *Resolver) resolveLocal(input string) (string, bool, error) {
 	dir, _, err := LocalBridgePaths(input)
 	if err == nil {
-		return dir, nil
+		return dir, true, nil
 	}
 	if _, ok := errors.AsType[*missingBridgeConfigError](err); ok {
 		// The path exists but is not a bridge. That is a hard error, never a
 		// registry ID or GitHub shorthand.
-		return "", asInvalidRef(err)
+		return "", true, asInvalidRef(err)
 	}
 
 	// Path-like inputs ("../x", "./x", "/x", "~/x", "C:\\x") that do not
 	// exist are an error, never a GitHub shorthand: a missing "../bridge"
 	// must not turn into a clone of github.com/../bridge.git.
 	if looksLikePath(input) {
-		abs, _ := filepath.Abs(input)
-		return "", asInvalidRef(fmt.Errorf("bridge %q not found: no such local path (tried %q); for GitHub use owner/repo", input, abs))
+		// Abs is only used for the diagnostic; the original input remains the
+		// authoritative value if it cannot be resolved.
+		abs, absErr := filepath.Abs(input)
+		if absErr != nil {
+			abs = input
+		}
+		return "", true, asInvalidRef(fmt.Errorf("bridge %q not found: no such local path (tried %q); for GitHub use owner/repo", input, abs))
 	}
+	return "", false, nil
+}
 
-	// 2. Registry ID — check cache, clone if needed.
-	if entry := r.registry.ByID(input); entry != nil {
-		return EnsureBridge(*entry, r.ensure)
+// resolveRegistry handles registry IDs by checking the cache and cloning if
+// needed.
+func (r *Resolver) resolveRegistry(input string) (string, bool, error) {
+	entry := r.registry.ByID(input)
+	if entry == nil {
+		return "", false, nil
 	}
+	path, err := EnsureBridge(*entry, r.ensure)
+	return path, true, err
+}
 
-	// 3. GitHub shorthand "owner/repo" — clone directly. An owner of "." or
-	// ".." would be a path fragment, not a GitHub user (looksLikePath already
-	// rejects dot-led inputs; this keeps step 3 correct on its own too).
-	repo, ref, isOwnerRepo, err := parseGitHubRef(input)
+// resolveGitHub handles the "owner/repo" shorthand. An owner of "." or ".."
+// would be a path fragment, not a GitHub user (resolveLocal already rejects
+// dot-led inputs; the check in parseGitHubRef keeps this step correct on its
+// own too).
+func (r *Resolver) resolveGitHub(input string) (string, bool, error) {
+	repo, ref, err := parseGitHubRef(input)
 	if err != nil {
-		return "", asInvalidRef(err)
+		return "", true, asInvalidRef(err)
 	}
-	if isOwnerRepo {
-		entry := RegistryEntry{
-			// Owner-scoped: the bare repository name would collide in the
-			// cache with another owner's repo of the same name.
-			ID:     cacheIDForGitHub(repo),
-			GitHub: repo,
-		}
-		path, err := EnsureBridge(entry, r.ensure)
-		if err != nil {
-			return "", err
-		}
-		if ref != "" {
-			if err := checkoutPinnedRef(path, ref); err != nil {
-				return "", err
-			}
-			// Persist the pin: a later cache refresh must not silently move a
-			// pinned bridge onto the default branch.
-			if err := recordPin(entry, ref); err != nil {
-				return "", err
-			}
-		}
-		return path, nil
+	if repo == "" {
+		return "", false, nil
 	}
-
-	return "", asInvalidRef(fmt.Errorf("bridge %q not found: not a local path, registry ID, or owner/repo", input))
+	entry := RegistryEntry{
+		// Owner-scoped: the bare repository name would collide in the
+		// cache with another owner's repo of the same name.
+		ID:     cacheIDForGitHub(repo),
+		GitHub: repo,
+	}
+	path, err := EnsureBridge(entry, r.ensure)
+	if err != nil {
+		return "", true, err
+	}
+	if ref != "" {
+		if err := checkoutPinnedRef(path, ref); err != nil {
+			return "", true, err
+		}
+		// Persist the pin: a later cache refresh must not silently move a
+		// pinned bridge onto the default branch.
+		if err := recordPin(entry, ref); err != nil {
+			return "", true, err
+		}
+	}
+	return path, true, nil
 }
 
 // parseGitHubRef splits an `owner/repo@ref` shorthand and validates both parts.
 // The pin is split first: a ref may legally contain "/", while a repository
 // name may not.
-func parseGitHubRef(input string) (repo, ref string, isOwnerRepo bool, err error) {
+func parseGitHubRef(input string) (repo, ref string, err error) {
 	repo, ref = splitPinRef(input)
 	parts := strings.SplitN(repo, "/", 2)
-	isOwnerRepo = len(parts) == 2 && parts[0] != "" && parts[1] != "" && parts[0] != "." && parts[0] != ".."
-	if !isOwnerRepo {
-		return "", "", false, nil
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" || parts[0] == "." || parts[0] == ".." {
+		// An empty repo is the single "not an owner/repo" signal for callers.
+		return "", "", nil
 	}
 	if strings.ContainsAny(parts[1], "/\\") || parts[1] == "." || parts[1] == ".." {
-		return "", "", false, fmt.Errorf("bridge %q not found: invalid repository name", input)
+		return "", "", fmt.Errorf("bridge %q not found: invalid repository name", input)
 	}
 	if ref != "" {
 		if err := validatePinRef(ref); err != nil {
-			return "", "", false, err
+			return "", "", err
 		}
 	}
-	return repo, ref, true, nil
+	return repo, ref, nil
 }
 
 // missingBridgeConfigError marks an existing directory that has no bridge.yaml.

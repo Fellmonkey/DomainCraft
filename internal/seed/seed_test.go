@@ -375,6 +375,8 @@ func TestGenerateHonorsStringValidations(t *testing.T) {
 	}
 }
 
+// Integral floats (1.0) survive coercion to int64; fractional floats are
+// truncated (7.9 -> 7), and the validator rejects them before seed generation.
 func TestNormalizeCoerceEdgeCases(t *testing.T) {
 	t.Parallel()
 	project := &ir.Project{
@@ -385,6 +387,7 @@ func TestNormalizeCoerceEdgeCases(t *testing.T) {
 				Fields: []ir.Field{
 					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
 					{Name: "count", DatabaseType: "int"},
+					{Name: "whole", DatabaseType: "int"},
 					{Name: "big", DatabaseType: "bigint"},
 					{Name: "ratio", DatabaseType: "float"},
 					{Name: "enabled", DatabaseType: "boolean"},
@@ -397,6 +400,7 @@ func TestNormalizeCoerceEdgeCases(t *testing.T) {
 					{
 						"id":       "550e8400-e29b-41d4-a716-446655440000",
 						"count":    "not-a-number",
+						"whole":    float64(1.0),
 						"big":      float64(7.9),
 						"ratio":    "also-not-a-number",
 						"enabled":  "not-a-bool",
@@ -418,8 +422,11 @@ func TestNormalizeCoerceEdgeCases(t *testing.T) {
 	if vals["count"] != int64(0) {
 		t.Errorf("unparseable int = %#v, want the zero value int64(0)", vals["count"])
 	}
+	if vals["whole"] != int64(1) {
+		t.Errorf("integral float = %#v, want int64(1)", vals["whole"])
+	}
 	if vals["big"] != int64(7) {
-		t.Errorf("float for bigint = %#v, want truncated int64(7)", vals["big"])
+		t.Errorf("fractional float for bigint = %#v, want truncated int64(7)", vals["big"])
 	}
 	if vals["ratio"] != float64(0) {
 		t.Errorf("unparseable float = %#v, want the zero value float64(0)", vals["ratio"])
@@ -439,6 +446,30 @@ func TestNormalizeCoerceEdgeCases(t *testing.T) {
 	}
 	if vals["status"] != "draft" {
 		t.Errorf("enum scalar = %#v, want the declared wire value draft", vals["status"])
+	}
+}
+
+func TestNormalizeOutOfRangeIntegralSeedDoesNotWrap(t *testing.T) {
+	t.Parallel()
+	project := &ir.Project{Entities: []ir.Entity{{
+		Name:   "Edges",
+		Fields: []ir.Field{{Name: "big", DatabaseType: "bigint"}},
+		Seed:   []map[string]any{{"big": float64(1e30)}},
+	}}}
+	ds := Normalize(project)
+	got := ds.Entities[0].Records[0].Fields[0].Value
+	if got != int64(0) {
+		t.Errorf("out-of-range float seed = %#v, want int64(0) instead of a wrapped value", got)
+	}
+}
+
+func TestStepExclusiveInt64DoesNotWrapAtBounds(t *testing.T) {
+	t.Parallel()
+	if got := stepExclusiveInt64(math.MaxInt64, 1); got != math.MaxInt64 {
+		t.Errorf("step above MaxInt64 = %d, want MaxInt64", got)
+	}
+	if got := stepExclusiveInt64(math.MinInt64, -1); got != math.MinInt64 {
+		t.Errorf("step below MinInt64 = %d, want MinInt64", got)
 	}
 }
 
@@ -598,36 +629,5 @@ func TestGenerateUsesDeclaredDefaultOverMock(t *testing.T) {
 	}
 	if vals["attempts"] != int64(3) {
 		t.Errorf("attempts = %#v, want int64(3)", vals["attempts"])
-	}
-}
-
-// TestNormalizeIntegralFloatSeed documents that a float with an integral
-// value survives seed coercion; fractional values are rejected upstream by
-// the validator before they reach this code.
-func TestNormalizeIntegralFloatSeed(t *testing.T) {
-	t.Parallel()
-	project := &ir.Project{
-		Entities: []ir.Entity{
-			{
-				Name: "Docs",
-				Fields: []ir.Field{
-					{Name: "id", DatabaseType: "uuid", IsPrimary: true},
-					{Name: "count", DatabaseType: "int"},
-				},
-				Seed: []map[string]any{{
-					"id":    "550e8400-e29b-41d4-a716-446655440000",
-					"count": float64(1.0),
-				}},
-			},
-		},
-	}
-
-	ds := Normalize(project)
-	vals := map[string]any{}
-	for _, sv := range ds.Entities[0].Records[0].Fields {
-		vals[sv.Field] = sv.Value
-	}
-	if vals["count"] != int64(1) {
-		t.Errorf("count = %#v, want int64(1)", vals["count"])
 	}
 }

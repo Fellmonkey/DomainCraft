@@ -16,13 +16,6 @@ import (
 
 var updateGolden = flag.Bool("update", false, "regenerate benchmark golden files")
 
-func checkBenchGolden(t *testing.T, name, got string) {
-	t.Helper()
-	testutil.CheckGolden(t, name, got, *updateGolden)
-}
-
-func benchHash(lines []string) string { return testutil.HashLines(lines) }
-
 // benchmarkDiffData builds an old snapshot with five manifest files per entity
 // and a current project where every entity has both a type change and a field
 // rename hint, so ComputeDiff visits customEntityFiles on both passes.
@@ -143,7 +136,7 @@ func diffDigest(t *testing.T, diff *Diff) string {
 		lines = append(lines, fmt.Sprintf("namespace\t%s->%s\tfiles=[%s]", n.OldNamespace, n.NewNamespace, customFiles(n.Files)))
 	}
 	slices.Sort(lines)
-	return benchHash(lines)
+	return testutil.HashLines(lines)
 }
 
 // TestBenchmarkComputeDiffGolden pins the diff result for every benchmark
@@ -164,5 +157,5 @@ func TestBenchmarkComputeDiffGolden(t *testing.T) {
 				mode.name, size, len(diff.Deleted), len(diff.Renamed), len(diff.TypeChanges), len(diff.FieldRenames), diff.NamespaceRename != nil, diffDigest(t, diff)))
 		}
 	}
-	checkBenchGolden(t, "compute-diff.golden.txt", strings.Join(lines, "\n"))
+	testutil.CheckGolden(t, "compute-diff.golden.txt", strings.Join(lines, "\n"), *updateGolden)
 }

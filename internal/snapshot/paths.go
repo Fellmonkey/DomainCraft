@@ -36,14 +36,33 @@ func safeRelPath(outputDir, relPath string) (string, error) {
 // to that directory plus the OS-form path relative to it. Mutating operations
 // must use the returned root so a component replaced by a symlink after the
 // lexical and symlink checks cannot redirect the write or delete.
-func openRootFor(outputDir, relPath string) (*os.Root, string, error) {
-	abs, err := safeRelPath(outputDir, relPath)
+// withRoot runs fn with one output-confined root and always closes it, even
+// when fn fails. Two-root mutations nest calls in source -> destination order,
+// so the close order stays the reverse of the open order.
+func withRoot(outputDir, relPath string, fn func(*os.Root, string) error) error {
+	root, rel, err := openRootFor(outputDir, relPath)
 	if err != nil {
-		return nil, "", err
+		return err
 	}
+	defer func() { _ = root.Close() }()
+	return fn(root, rel)
+}
+
+func openRootFor(outputDir, relPath string) (*os.Root, string, error) {
+	// LocalPathWithin covers lexical containment; OpenRootFor performs the
+	// symlink check and pins the verified base. Calling safeRelPath here would
+	// run the symlink walk twice on every mutation.
 	absOutput, err := filepath.Abs(outputDir)
 	if err != nil {
 		return nil, "", fmt.Errorf("resolve output dir %q: %w", outputDir, err)
 	}
-	return fsutil.OpenRootFor(absOutput, abs)
+	abs, _, err := fsutil.LocalPathWithin(absOutput, relPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("unsafe snapshot path %q: %w", relPath, err)
+	}
+	root, rel, err := fsutil.OpenRootFor(absOutput, abs)
+	if err != nil {
+		return nil, "", fmt.Errorf("unsafe snapshot path %q: %w", relPath, err)
+	}
+	return root, rel, nil
 }

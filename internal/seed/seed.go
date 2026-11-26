@@ -60,14 +60,7 @@ func Generate(project *ir.Project, opts Options) *ir.SeedDataset {
 				if field.IsSensitive() || field.IsFeatureField() {
 					continue
 				}
-				v := valueFor(g, field, n)
-				rec.Fields = append(rec.Fields, ir.SeedValue{
-					Field:      field.Name,
-					DBType:     field.DatabaseType,
-					IsRelation: field.IsRelation,
-					IsMany:     field.IsMany,
-					Value:      v,
-				})
+				rec.Fields = append(rec.Fields, seedValue(field, valueFor(g, field, n)))
 			}
 			em.Records = append(em.Records, rec)
 
@@ -83,6 +76,18 @@ func Generate(project *ir.Project, opts Options) *ir.SeedDataset {
 		ds.Entities = append(ds.Entities, em)
 	}
 	return ds
+}
+
+// seedValue is the single constructor for a typed seed field, shared by the
+// generated and the developer-provided seed paths.
+func seedValue(field ir.Field, value any) ir.SeedValue {
+	return ir.SeedValue{
+		Field:      field.Name,
+		DBType:     field.DatabaseType,
+		IsRelation: field.IsRelation,
+		IsMany:     field.IsMany,
+		Value:      value,
+	}
 }
 
 // Normalize converts the developer's explicit `seed:` rows (raw maps) into the
@@ -109,13 +114,7 @@ func Normalize(project *ir.Project) *ir.SeedDataset {
 				if !ok {
 					continue
 				}
-				rec.Fields = append(rec.Fields, ir.SeedValue{
-					Field:      field.Name,
-					DBType:     field.DatabaseType,
-					IsRelation: field.IsRelation,
-					IsMany:     field.IsMany,
-					Value:      coerceValue(val, field.DatabaseType),
-				})
+				rec.Fields = append(rec.Fields, seedValue(field, coerceValue(val, field.DatabaseType)))
 			}
 			em.Records = append(em.Records, rec)
 		}
@@ -147,18 +146,9 @@ type genContext struct {
 func valueFor(g *genContext, field ir.Field, record int) any {
 	// Default value wins when the model declares one (and it's not a function).
 	if field.DefaultValue != "" && !field.DefaultIsFunc {
-		// The lexer stores `default:[a, b]` as a raw string. Parse it with the
-		// same specmeta helper the validator uses, then coerce each element
-		// with the array's inner type instead of treating the whole literal as
-		// one scalar (which coerceValue would turn into an empty slice).
-		if specmeta.IsArrayType(field.DatabaseType) &&
-			strings.HasPrefix(field.DefaultValue, "[") && strings.HasSuffix(field.DefaultValue, "]") {
-			inner := specmeta.ParseArrayInner(field.DatabaseType)
-			elements := specmeta.SplitArrayDefault(field.DefaultValue)
-			out := make([]any, 0, len(elements))
-			for _, element := range elements {
-				out = append(out, coerceValue(element, inner))
-			}
+		// The lexer stores `default:[a, b]` as a raw string; the same parser
+		// is used by coerceValue for developer-provided seed values.
+		if out, ok := coerceArrayDefault(field.DefaultValue, field.DatabaseType); ok {
 			return out
 		}
 		return coerceValue(field.DefaultValue, field.DatabaseType)
@@ -281,30 +271,29 @@ func stringValue(field ir.Field, record int) string {
 	return v
 }
 
-// stepExclusive moves one representable unit away from an exclusive bound.
-// Only int64 and float64 reach this helper: clampNumericBounds is instantiated
-// by intValue (int64) and floatValue (float64) alone. An int64 at MaxInt64 or
-// MinInt64 has no next value, so adding/subtracting one would wrap to the
-// opposite end; keep the bound instead. Float64 has no integer wraparound.
-func stepExclusive[T ~int64 | ~float64](v T, delta int) T {
-	switch n := any(v).(type) {
-	case int64:
-		if delta > 0 {
-			if n == math.MaxInt64 {
-				return v
-			}
-			return T(n + 1)
-		}
-		if n == math.MinInt64 {
+// stepExclusiveInt64 moves one representable unit away from an exclusive
+// integer bound. At MaxInt64/MinInt64 there is no next value, so adding or
+// subtracting one would wrap to the opposite end; keep the bound instead.
+func stepExclusiveInt64(v int64, delta int) int64 {
+	if delta > 0 {
+		if v == math.MaxInt64 {
 			return v
 		}
-		return T(n - 1)
-	default: // float64
-		if delta > 0 {
-			return v + T(1)
-		}
-		return v - T(1)
+		return v + 1
 	}
+	if v == math.MinInt64 {
+		return v
+	}
+	return v - 1
+}
+
+// stepExclusiveFloat64 moves one unit away from an exclusive float bound.
+// Float64 has no integer wraparound.
+func stepExclusiveFloat64(v float64, delta int) float64 {
+	if delta > 0 {
+		return v + 1
+	}
+	return v - 1
 }
 
 // clampNumericBounds applies the normalized min_value/max_value rules to a
@@ -312,7 +301,7 @@ func stepExclusive[T ~int64 | ~float64](v T, delta int) T {
 // inclusive bound lands on it. Rules are applied in their normalized order,
 // each one clamping the current value. Int and float paths share this loop so
 // their bound semantics cannot drift apart.
-func clampNumericBounds[T ~int64 | ~float64](v T, rules []ir.ValidationRule, parse func(string) (T, error)) T {
+func clampNumericBounds[T ~int64 | ~float64](v T, rules []ir.ValidationRule, parse func(string) (T, error), step func(T, int) T) T {
 	for _, r := range rules {
 		n, err := parse(r.Value)
 		if err != nil {
@@ -320,11 +309,11 @@ func clampNumericBounds[T ~int64 | ~float64](v T, rules []ir.ValidationRule, par
 		}
 		switch {
 		case r.Kind == "min_value" && r.Exclusive && v <= n:
-			v = stepExclusive(n, 1)
+			v = step(n, 1)
 		case r.Kind == "min_value" && v < n:
 			v = n
 		case r.Kind == "max_value" && r.Exclusive && v >= n:
-			v = stepExclusive(n, -1)
+			v = step(n, -1)
 		case r.Kind == "max_value" && v > n:
 			v = n
 		}
@@ -336,14 +325,29 @@ func clampNumericBounds[T ~int64 | ~float64](v T, rules []ir.ValidationRule, par
 // exclusive) from the normalized ValidationRules contract.
 func intValue(field ir.Field, record int) int64 {
 	parse := func(s string) (int64, error) { return strconv.ParseInt(s, 10, 64) }
-	return clampNumericBounds(int64(record+1), field.ValidationRules(), parse)
+	return clampNumericBounds(int64(record+1), field.ValidationRules(), parse, stepExclusiveInt64)
 }
 
 // floatValue returns a float honoring the numeric min/max bounds (inclusive or
 // exclusive) from the normalized ValidationRules contract.
 func floatValue(field ir.Field, record int) float64 {
 	parse := func(s string) (float64, error) { return strconv.ParseFloat(s, 64) }
-	return clampNumericBounds(float64(record+1)+0.5, field.ValidationRules(), parse)
+	return clampNumericBounds(float64(record+1)+0.5, field.ValidationRules(), parse, stepExclusiveFloat64)
+}
+
+// coerceArrayDefault parses a bracketed array default the same way for
+// generated mock data and for developer-provided seed values.
+func coerceArrayDefault(raw, dbType string) ([]any, bool) {
+	if !specmeta.IsArrayType(dbType) || !strings.HasPrefix(raw, "[") || !strings.HasSuffix(raw, "]") {
+		return nil, false
+	}
+	inner := specmeta.ParseArrayInner(dbType)
+	elements := specmeta.SplitArrayDefault(raw)
+	out := make([]any, 0, len(elements))
+	for _, element := range elements {
+		out = append(out, coerceValue(element, inner))
+	}
+	return out, true
 }
 
 // coerceValue converts a declared seed/default value (from YAML: string, number,
@@ -360,6 +364,11 @@ func coerceValue(value any, dbType string) any {
 			}
 			return out
 		}
+		if raw, ok := value.(string); ok {
+			if out, parsed := coerceArrayDefault(raw, dbType); parsed {
+				return out
+			}
+		}
 		return []any{}
 	}
 
@@ -371,7 +380,14 @@ func coerceValue(value any, dbType string) any {
 		case int64:
 			return v
 		case float64:
-			return int64(v)
+			// Truncation of a fraction is the established contract; wrapping an
+			// out-of-range float is not. Normalize accepts hand-built IR too, so
+			// guard the conversion against producing a value nobody declared.
+			const twoPow63 = 9223372036854775808.0
+			if v >= -twoPow63 && v < twoPow63 {
+				return int64(v)
+			}
+			return int64(0)
 		case string:
 			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 				return n
@@ -402,9 +418,7 @@ func coerceValue(value any, dbType string) any {
 			}
 		}
 		return false
-	case "text", "date", "datetime", "uuid":
-		return fmt.Sprintf("%v", value)
-	case "json":
+	case specmeta.FieldKindJSON:
 		return value // keep maps/slices/strings as-is for the bridge's JSON serializer
 	default:
 		// Enum value name (or unknown) — keep as a string.

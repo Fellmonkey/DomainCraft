@@ -2,6 +2,7 @@ package snapshot
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,61 @@ import (
 
 	"github.com/DomainCraft/DomainCraft/internal/renderer"
 )
+
+func TestDeleteFileIsIdempotent(t *testing.T) {
+	if err := DeleteFile(t.TempDir(), "already-gone.cs"); err != nil {
+		t.Fatalf("DeleteFile on a missing file = %v, want nil", err)
+	}
+}
+
+func TestRenameEntityFileLeavesExistingDestination(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "ProductService.cs")
+	dst := filepath.Join(dir, "ItemService.cs")
+	if err := os.WriteFile(src, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, renamed, err := RenameEntityFile(dir, "ProductService.cs", "Product", "Item")
+	if err != nil || renamed {
+		t.Fatalf("RenameEntityFile = %v, %v; want no rename", renamed, err)
+	}
+	data, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "keep" {
+		t.Errorf("destination overwritten: %q", data)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Errorf("source removed despite existing destination: %v", err)
+	}
+}
+
+func TestRenameEntityFileWithUnchangedNameIsNoop(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ItemService.cs")
+	if err := os.WriteFile(path, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	newRel, renamed, err := RenameEntityFile(dir, "ItemService.cs", "Item", "Item")
+	if err != nil || renamed || newRel != "ItemService.cs" {
+		t.Fatalf("RenameEntityFile = %q, %v, %v; want unchanged no-op", newRel, renamed, err)
+	}
+}
+
+func TestComputeDiffReportsSkippedManifestPaths(t *testing.T) {
+	old := &Snapshot{Files: []renderer.RenderedFile{{Path: "../escape.cs", Entity: "User", Custom: true}}}
+	var warnings []string
+	ComputeDiff(old, testProject("User"), t.TempDir(), func(format string, args ...any) {
+		warnings = append(warnings, fmt.Sprintf(format, args...))
+	})
+	if len(warnings) == 0 {
+		t.Fatal("unsafe manifest path was dropped without a warning")
+	}
+}
 
 // R4: Save must leave a complete, parseable snapshot even when replacing an
 // existing one (atomic write, no leftover temp files).

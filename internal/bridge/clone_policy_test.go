@@ -11,25 +11,6 @@ import (
 	"github.com/DomainCraft/DomainCraft/internal/appdir"
 )
 
-// fakeUpdateHTTP reports a remote head that differs from the cached commit and,
-// optionally, a bridge.yaml with an unsupported contract version.
-func fakeUpdateHTTP(t *testing.T, remoteYAML string) {
-	t.Helper()
-	original := httpGetBodyFn
-	t.Cleanup(func() { httpGetBodyFn = original })
-	httpGetBodyFn = func(url string) ([]byte, error) {
-		switch {
-		case strings.Contains(url, "/commits/main"):
-			return []byte(`{"sha":"remote-head"}`), nil
-		case strings.Contains(url, "/repos/"):
-			return []byte(`{"default_branch":"main"}`), nil
-		case strings.Contains(url, "bridge.yaml"):
-			return []byte(remoteYAML), nil
-		}
-		return nil, os.ErrNotExist
-	}
-}
-
 // TestMaybeUpdatePolicies covers the decision gate that was previously
 // untested: disabled checks, no policy, decline, prompt error and the
 // pre-prompt contract gate.
@@ -43,16 +24,19 @@ func TestMaybeUpdatePolicies(t *testing.T) {
 		wantWarn    string
 		wantConfirm bool
 		wantErr     bool
+		wantNoHTTP  bool
 	}{
 		{
 			name:       "disabled interval skips the remote",
 			interval:   -1,
 			remoteYAML: "name: test\ncontract_version: 1\n",
+			wantNoHTTP: true,
 		},
 		{
 			name:       "fresh cache skips the remote",
 			interval:   24 * time.Hour,
 			remoteYAML: "name: test\ncontract_version: 1\n",
+			wantNoHTTP: true,
 		},
 		{
 			name:       "no policy warns without applying",
@@ -74,7 +58,7 @@ func TestMaybeUpdatePolicies(t *testing.T) {
 		},
 		{
 			name:       "unsupported contract skips the prompt",
-			remoteYAML: "name: test\ncontract_version: 2\n",
+			remoteYAML: "name: test\ncontract_version: 3\n",
 			wantWarn:   "skipping update",
 		},
 		{
@@ -86,6 +70,7 @@ func TestMaybeUpdatePolicies(t *testing.T) {
 			name:       "pinned checkout skips the remote",
 			remoteYAML: "name: test\ncontract_version: 1\n",
 			pin:        "v1.2.3",
+			wantNoHTTP: true,
 		},
 	}
 
@@ -123,7 +108,7 @@ func TestMaybeUpdatePolicies(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			fakeUpdateHTTP(t, tt.remoteYAML)
+			stub := stubGitHubAPI(t, "remote-head", tt.remoteYAML)
 
 			confirmed := false
 			confirm := tt.confirm
@@ -153,6 +138,9 @@ func TestMaybeUpdatePolicies(t *testing.T) {
 			}
 			if tt.wantWarn != "" && !strings.Contains(strings.Join(warnings, " "), tt.wantWarn) {
 				t.Fatalf("warnings %v do not contain %q", warnings, tt.wantWarn)
+			}
+			if tt.wantNoHTTP && stub.Calls() != 0 {
+				t.Fatalf("remote was contacted %d times, want 0", stub.Calls())
 			}
 		})
 	}
@@ -196,19 +184,7 @@ func TestCacheIsolationBetweenOwners(t *testing.T) {
 	}
 
 	// Local bare remote stands in for github.com/bob/utils.git.
-	remote := filepath.Join(root, "remote.git")
-	testGit(t, root, "init", "--bare", "-b", "main", "remote.git")
-	testGit(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
-	src := filepath.Join(root, "src")
-	if err := os.MkdirAll(src, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	makeBridgeRepo(t, src, "main")
-	writeBridgeYAML(t, src, "bob-2.0.0")
-	testGit(t, src, "add", ".")
-	testGit(t, src, "commit", "-q", "-m", "bob version")
-	testGit(t, src, "remote", "add", "origin", remote)
-	testGit(t, src, "push", "-q", "-u", "origin", "main")
+	remote, _ := newRemoteWithBridge(t, root, "main", "bob-2.0.0")
 
 	home := t.TempDir()
 	cfg := "[url \"file:///" + filepath.ToSlash(remote) + "\"]\n\tinsteadOf = https://github.com/bob/utils.git\n"
@@ -251,17 +227,7 @@ func TestApplyUpdateRejectsUnsupportedContract(t *testing.T) {
 	appdir.SetBaseForTesting(root)
 	defer appdir.SetBaseForTesting("")
 
-	remote := filepath.Join(root, "remote.git")
-	testGit(t, root, "init", "--bare", "-b", "main", "remote.git")
-	testGit(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
-
-	src := filepath.Join(root, "src")
-	if err := os.MkdirAll(src, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	makeBridgeRepo(t, src, "main")
-	testGit(t, src, "remote", "add", "origin", remote)
-	testGit(t, src, "push", "-q", "-u", "origin", "main")
+	remote, src := newRemoteWithBridge(t, root, "main", "")
 
 	entry := cacheEntry("contract-bridge", "owner/contract-bridge")
 	cacheDir := CachePath(entry)
@@ -270,26 +236,15 @@ func TestApplyUpdateRejectsUnsupportedContract(t *testing.T) {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	original := httpGetBodyFn
-	defer func() { httpGetBodyFn = original }()
-	httpGetBodyFn = func(url string) ([]byte, error) {
-		switch {
-		case strings.Contains(url, "/commits/main"):
-			return []byte(`{"sha":"` + testGit(t, remote, "rev-parse", "HEAD") + `"}`), nil
-		case strings.Contains(url, "/repos/"):
-			return []byte(`{"default_branch":"main"}`), nil
-		}
-		return nil, os.ErrNotExist
-	}
-
 	// Publish a bridge.yaml the core cannot support.
-	if err := os.WriteFile(filepath.Join(src, "bridge.yaml"), []byte("name: test\nversion: \"2.0.0\"\ncontract_version: 2\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(src, "bridge.yaml"), []byte("name: test\nversion: \"2.0.0\"\ncontract_version: 3\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	testGit(t, src, "add", ".")
 	testGit(t, src, "commit", "-q", "-m", "bump contract")
 	testGit(t, src, "push", "-q", "origin", "main")
 
+	stubGitHubAPI(t, testGit(t, remote, "rev-parse", "HEAD"), "")
 	update, err := CheckForUpdate(entry, 0)
 	if err != nil || update == nil {
 		t.Fatalf("CheckForUpdate = %+v, %v; want an update", update, err)
@@ -315,17 +270,7 @@ func TestApplyUpdateFallbackRejectsUnsupportedContract(t *testing.T) {
 	appdir.SetBaseForTesting(root)
 	defer appdir.SetBaseForTesting("")
 
-	remote := filepath.Join(root, "remote.git")
-	testGit(t, root, "init", "--bare", "-b", "main", "remote.git")
-	testGit(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
-
-	src := filepath.Join(root, "src")
-	if err := os.MkdirAll(src, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	makeBridgeRepo(t, src, "main")
-	testGit(t, src, "remote", "add", "origin", remote)
-	testGit(t, src, "push", "-q", "-u", "origin", "main")
+	remote, src := newRemoteWithBridge(t, root, "main", "")
 
 	entry := cacheEntry("fallback-contract", "owner/fallback-contract")
 	cacheDir := CachePath(entry)

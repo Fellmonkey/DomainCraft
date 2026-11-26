@@ -4,7 +4,6 @@ package packages
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -19,7 +18,7 @@ import (
 )
 
 // maxRegistryResponseBytes caps a version index read from a registry.
-const maxRegistryResponseBytes = 1 << 20
+const maxRegistryResponseBytes = netutil.DefaultMaxBodyBytes
 
 var registryClient = newRegistryClient()
 
@@ -34,16 +33,14 @@ func newRegistryClient() *http.Client {
 	// for registry lookups.
 	tr.Proxy = nil
 	tr.DialContext = restrictedRegistryDialer
-	return &http.Client{
-		Timeout:   5 * time.Second,
-		Transport: tr,
-		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
-			if err := validateRegistryURL(req.URL.String()); err != nil {
-				return err
-			}
-			return validateRegistryTarget(req.Context(), req.URL)
-		},
+	client := netutil.NewBoundedClient(5*time.Second, tr)
+	client.CheckRedirect = func(req *http.Request, _ []*http.Request) error {
+		if err := validateRegistryURL(req.URL.String()); err != nil {
+			return err
+		}
+		return validateRegistryTarget(req.Context(), req.URL)
 	}
+	return client
 }
 
 // allowLocalRegistryForTests is set only by tests using httptest TLS servers.
@@ -71,11 +68,7 @@ func validateRegistryURL(raw string) error {
 	if err != nil {
 		// url.Error repeats the raw URL (including userinfo/query); keep only
 		// its reason and wrap that instead.
-		var urlErr *url.Error
-		if errors.As(err, &urlErr) && urlErr.Err != nil {
-			err = urlErr.Err
-		}
-		return fmt.Errorf("invalid registry URL %q: %w", netutil.RedactedURL(raw), err)
+		return fmt.Errorf("invalid registry URL %q: %w", netutil.RedactedURL(raw), netutil.RedactURLError(err))
 	}
 	if u.Scheme != "https" || u.Host == "" {
 		return fmt.Errorf("registry URL must be an absolute https URL: %q", netutil.RedactedURL(raw))
@@ -146,14 +139,18 @@ func restrictedRegistryDialer(ctx context.Context, network, addr string) (net.Co
 	return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
 }
 
-// ResolveVersion queries a package registry (e.g. NuGet) for the latest stable version
-// of a package. The registryURL template must contain {id} which is replaced with the package ID.
-func ResolveVersion(registryURL string, packageID string) (string, error) {
+// resolveLatest is the single fetch + select pipeline. maxMajor caps the major
+// version; fallbackUncapped retries without the cap so an over-constrained TFM
+// still produces a usable version (the renderer warns about the fallback).
+func resolveLatest(registryURL, packageID string, maxMajor int, fallbackUncapped bool) (string, error) {
 	versions, err := fetchVersions(registryURL, packageID)
 	if err != nil {
 		return "", err
 	}
-	best := latestStable(versions, 0)
+	best := latestStable(versions, maxMajor)
+	if best == "" && fallbackUncapped {
+		best = latestStable(versions, 0)
+	}
 	if best == "" {
 		return "", fmt.Errorf("no stable versions found for %s", packageID)
 	}
@@ -167,19 +164,7 @@ func ResolveVersion(registryURL string, packageID string) (string, error) {
 // selection unconstrained. If no compatible version exists, the latest stable
 // one is returned so generation can still complete; the renderer warns about it.
 func ResolveVersionForFramework(registryURL, packageID, targetFramework string) (string, error) {
-	versions, err := fetchVersions(registryURL, packageID)
-	if err != nil {
-		return "", err
-	}
-	maxMajor := MaxMajorForFramework(targetFramework)
-	best := latestStable(versions, maxMajor)
-	if best == "" {
-		best = latestStable(versions, 0)
-	}
-	if best == "" {
-		return "", fmt.Errorf("no stable versions found for %s", packageID)
-	}
-	return best, nil
+	return resolveLatest(registryURL, packageID, MaxMajorForFramework(targetFramework), true)
 }
 
 // MaxMajorForFramework extracts the runtime major from "net10.0" → 10.

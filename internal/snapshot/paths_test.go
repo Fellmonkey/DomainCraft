@@ -67,6 +67,24 @@ func TestDeleteFileRejectsSnapshotEscape(t *testing.T) {
 	}
 }
 
+func TestReplaceScaffoldedFileRejectsSnapshotEscape(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	victim := filepath.Join(filepath.Dir(root), "dc-replace-victim-"+filepath.Base(root)+".txt")
+	if err := os.WriteFile(victim, []byte("Product"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := ReplaceScaffoldedFile(root, "../"+filepath.Base(victim), "dest.txt", EntityTransform("Product", "Item"))
+	if err == nil {
+		t.Fatal("ReplaceScaffoldedFile accepted a source path outside outputDir")
+	}
+	data, err := os.ReadFile(victim)
+	if err != nil || string(data) != "Product" {
+		t.Fatalf("victim changed: data=%q err=%v", data, err)
+	}
+}
+
 func TestRewriteFileRejectsSnapshotEscape(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

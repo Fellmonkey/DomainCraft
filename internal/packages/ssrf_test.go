@@ -198,7 +198,7 @@ func TestFetchVersionsUsesCommandContext(t *testing.T) {
 	bridge.SetCommandContext(ctx)
 	cancel()
 
-	if _, err := ResolveVersion(srv.URL+"/{id}", "demo.pkg"); err == nil {
+	if _, err := ResolveVersionForFramework(srv.URL+"/{id}", "demo.pkg", ""); err == nil {
 		t.Fatal("ResolveVersion ignored the cancelled command context")
 	}
 }

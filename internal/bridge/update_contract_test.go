@@ -29,7 +29,7 @@ func TestParseBridgeContractVersion(t *testing.T) {
 		want    int
 		wantErr bool
 	}{
-		{name: "absent defaults to 1", in: "name: b\n", want: 1},
+		{name: "absent defaults to core", in: "name: b\n", want: CoreContractVersion},
 		{name: "explicit 1", in: "name: b\ncontract_version: 1\n", want: 1},
 		{name: "explicit 2", in: "name: b\ncontract_version: 2\n", want: 2},
 		{name: "malformed yaml is an error", in: "contract_version: [1, 2\n", wantErr: true},
@@ -74,7 +74,7 @@ func TestRemoteContractVersion(t *testing.T) {
 		}
 		switch {
 		case strings.Contains(url, "unsupported"):
-			return []byte("name: b\ncontract_version: 2\n"), nil
+			return []byte("name: b\ncontract_version: 3\n"), nil
 		case strings.Contains(url, "malformed"):
 			return []byte("contract_version: [1, 2\n"), nil
 		default:
@@ -83,13 +83,13 @@ func TestRemoteContractVersion(t *testing.T) {
 	}
 
 	ok := RegistryEntry{GitHub: "DomainCraft/domaincraft-bridge-csharp-core"}
-	if v, err := remoteContractVersion(ok, "main"); err != nil || v != 1 {
-		t.Errorf("supported contract = %d, %v; want 1", v, err)
+	if v, err := remoteContractVersion(ok, "main"); err != nil || v != CoreContractVersion {
+		t.Errorf("supported contract = %d, %v; want %d", v, err, CoreContractVersion)
 	}
 
 	bad := RegistryEntry{GitHub: "DomainCraft/unsupported"}
-	if v, err := remoteContractVersion(bad, "main"); err != nil || v != 2 {
-		t.Errorf("unsupported contract = %d, %v; want 2", v, err)
+	if v, err := remoteContractVersion(bad, "main"); err != nil || v != 3 {
+		t.Errorf("unsupported contract = %d, %v; want 3", v, err)
 	}
 
 	malformed := RegistryEntry{GitHub: "DomainCraft/malformed"}

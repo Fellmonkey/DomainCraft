@@ -121,19 +121,18 @@ func monorepoRoot(dir string) string {
 	return found
 }
 
-// SamePath compares two paths using the filesystem's case rules. Consumers
-// outside this package use it for cycle detection on case-insensitive hosts.
-func SamePath(a, b string) bool {
-	return samePath(a, b)
-}
-
 // samePath compares two absolute paths using the filesystem's case rules.
-func samePath(a, b string) bool {
-	a, b = filepath.Clean(a), filepath.Clean(b)
+func samePath(a, b string) bool { return PathKey(a) == PathKey(b) }
+
+// PathKey normalizes an absolute path for set-based cycle detection using the
+// filesystem's case rules. Both the chain walker and the CLI's `--replace`
+// validation use it, so a cycle cannot be missed by one of them.
+func PathKey(path string) string {
+	path = filepath.Clean(path)
 	if os.PathSeparator == '\\' {
-		return strings.EqualFold(a, b)
+		return strings.ToLower(path)
 	}
-	return a == b
+	return path
 }
 
 // MonorepoRelPath reports whether dir is the monorepo location of a bundled

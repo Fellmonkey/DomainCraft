@@ -4,7 +4,6 @@ import (
 	"io/fs"
 	"maps"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -65,9 +64,9 @@ func TestEmbeddedContainsRegistryBridges(t *testing.T) {
 }
 
 // TestEmbeddedBridgesMatchTree compares the embedded tree with the source tree.
-// Go drops "_"-prefixed files when embedding a directory, and bridge helper
-// templates use that prefix. The explicit directives in bridges_embed.go
-// must keep the two sets identical, or an installed binary cannot render.
+// Helper templates are named helpers.*.tmpl, so //go:embed bridges picks them up
+// along with every other file. The two sets must stay identical, or an installed
+// binary cannot render.
 func TestEmbeddedBridgesMatchTree(t *testing.T) {
 	root := filepath.Join("..", "..", "bridges")
 	if _, err := os.Stat(root); err != nil {
@@ -132,22 +131,12 @@ func TestEmbeddedBridgesMatchTree(t *testing.T) {
 
 	for _, path := range slices.Sorted(maps.Keys(onDisk)) {
 		if !embedded[path] {
-			t.Errorf("embedded tree missing %s: add an explicit //go:embed directive", path)
+			t.Errorf("embedded tree missing %s: check go:embed name exclusions", path)
 		}
 	}
 	for _, path := range slices.Sorted(maps.Keys(embedded)) {
 		if !onDisk[path] {
 			t.Errorf("embedded tree has %s but the source tree does not", path)
 		}
-	}
-	embeddedHelpers := 0
-	for rel := range embedded {
-		switch path.Base(rel) {
-		case "_helpers.cs.tmpl", "_helpers.ts.tmpl", "_helpers.html.tmpl":
-			embeddedHelpers++
-		}
-	}
-	if embeddedHelpers == 0 {
-		t.Error("no helper templates in the embedded tree — the offline fallback cannot render")
 	}
 }

@@ -26,26 +26,14 @@ func ComputeMigrationPlan(old *Snapshot, project *ir.Project) *ir.MigrationPlan 
 	}
 
 	oldEntities := old.Entities
-	newByOldName := make(map[string]*ir.Entity, len(project.Entities)) // old_name -> new entity
-	newByName := make(map[string]*ir.Entity, len(project.Entities))    // name -> new entity
-	for i := range project.Entities {
-		e := &project.Entities[i]
-		newByName[e.Name] = e
-		if e.OldName != "" {
-			newByOldName[e.OldName] = e
-		}
-	}
+	idx := newEntityIndex(project)
+	newEntityNames := slices.Sorted(maps.Keys(idx.byName))
 
 	// --- table-level operations -------------------------------------------
 
 	// CreateTable: entity is new (not in the old model and not a rename).
-	newEntityNames := make([]string, 0, len(project.Entities))
-	for _, e := range project.Entities {
-		newEntityNames = append(newEntityNames, e.Name)
-	}
-	slices.Sort(newEntityNames)
 	for _, name := range newEntityNames {
-		e := newByName[name]
+		e := idx.byName[name]
 		if _, existed := oldEntities[name]; existed {
 			continue
 		}
@@ -56,30 +44,21 @@ func ComputeMigrationPlan(old *Snapshot, project *ir.Project) *ir.MigrationPlan 
 		}
 		op := ir.MigrationOp{Kind: ir.OpCreateTable, Entity: e.Name, Table: e.TableName()}
 		for _, f := range e.Fields {
-			column := f.ColumnName()
-			op.Columns = append(op.Columns, ir.MigrationColumn{
-				Name:           f.Name,
-				Column:         column,
-				DBType:         f.DatabaseType,
-				Nullable:       f.IsNullable,
-				IsPrimary:      f.IsPrimary,
-				IsRelation:     f.IsRelation,
-				RelationTarget: f.RelationTarget,
-			})
+			op.Columns = append(op.Columns, migrationColumn(f))
 		}
 		plan.Operations = append(plan.Operations, op)
 	}
 
 	// RenameTable: entity declares old_name pointing at a previously existing entity.
-	renamedOldNames := make([]string, 0)
-	for oldName := range newByOldName {
+	renamedOldNames := make([]string, 0, len(idx.byOldName))
+	for oldName := range idx.byOldName {
 		if _, existed := oldEntities[oldName]; existed {
 			renamedOldNames = append(renamedOldNames, oldName)
 		}
 	}
 	slices.Sort(renamedOldNames)
 	for _, oldName := range renamedOldNames {
-		e := newByOldName[oldName]
+		e := idx.byName[idx.byOldName[oldName]]
 		plan.Operations = append(plan.Operations, ir.MigrationOp{
 			Kind:     ir.OpRenameTable,
 			Entity:   e.Name,
@@ -92,10 +71,10 @@ func ComputeMigrationPlan(old *Snapshot, project *ir.Project) *ir.MigrationPlan 
 	// DropTable: entity existed before but is gone now (and not renamed).
 	oldEntityNames := slices.Sorted(maps.Keys(oldEntities))
 	for _, name := range oldEntityNames {
-		if _, stillExists := newByName[name]; stillExists {
+		if _, stillExists := idx.byName[name]; stillExists {
 			continue
 		}
-		if _, renamed := newByOldName[name]; renamed {
+		if _, renamed := idx.byOldName[name]; renamed {
 			continue
 		}
 		plan.Operations = append(plan.Operations, ir.MigrationOp{
@@ -108,7 +87,7 @@ func ComputeMigrationPlan(old *Snapshot, project *ir.Project) *ir.MigrationPlan 
 	// --- column-level operations -----------------------------------------
 	// For entities that survive (same name, or renamed), diff their fields.
 	for _, name := range newEntityNames {
-		e := newByName[name]
+		e := idx.byName[name]
 		// The old state this entity corresponds to (rename resolution).
 		oldName := name
 		if e.OldName != "" {
@@ -120,42 +99,74 @@ func ComputeMigrationPlan(old *Snapshot, project *ir.Project) *ir.MigrationPlan 
 		if !ok {
 			continue // brand-new entity already handled by CreateTable
 		}
-		diffColumns(plan, oldState, e)
+		diffColumns(plan, oldState, &e)
 	}
 
 	return plan
 }
 
+// migrationColumn is the single projection from an IR field to a column
+// descriptor, shared by CreateTable and AddColumn so new field attributes
+// cannot be added to one path and forgotten in the other.
+func migrationColumn(f ir.Field) ir.MigrationColumn {
+	return ir.MigrationColumn{
+		Name:           f.Name,
+		Column:         f.ColumnName(),
+		DBType:         f.DatabaseType,
+		Nullable:       f.IsNullable,
+		IsPrimary:      f.IsPrimary,
+		IsRelation:     f.IsRelation,
+		RelationTarget: f.RelationTarget,
+	}
+}
+
 // diffColumns appends AddColumn / DropColumn / RenameColumn / AlterColumn ops
 // for one surviving entity.
-func diffColumns(plan *ir.MigrationPlan, oldState EntityState, e *ir.Entity) {
-	oldFields := oldState.Fields // field name -> IR database type
-	newFieldByName := make(map[string]*ir.Field, len(e.Fields))
+// fieldPointersByName is the migration plan's field index; the diff uses the
+// type-only fieldsByName helper, so both agree on field names by construction.
+func fieldPointersByName(e *ir.Entity) map[string]*ir.Field {
+	fields := make(map[string]*ir.Field, len(e.Fields))
 	for i := range e.Fields {
 		f := &e.Fields[i]
-		newFieldByName[f.Name] = f
+		fields[f.Name] = f
 	}
+	return fields
+}
+
+func diffColumns(plan *ir.MigrationPlan, oldState EntityState, e *ir.Entity) {
+	oldFields := oldState.Fields // field name -> IR database type
+	newFieldByName := fieldPointersByName(e)
 
 	table := e.TableName()
 
-	// RenameColumn: new field declares old_name pointing at a field that existed.
-	renamedFields := make([]string, 0)
-	for _, f := range e.Fields {
+	// A rename is only clean when the old field existed AND the new name was
+	// not already present in the previous model. Deciding this once here keeps
+	// RenameColumn, AddColumn and DropColumn in agreement — previously
+	// renameTarget omitted the shadow check and suppressed a needed DropColumn.
+	renamedFromOld := make(map[string]*ir.Field)
+	for i := range e.Fields {
+		f := &e.Fields[i]
 		if f.OldName == "" {
 			continue
 		}
-		if _, existed := oldFields[f.OldName]; existed {
-			// Ambiguous: the new name also existed before — not a clean rename.
-			if _, shadowed := oldFields[f.Name]; shadowed {
-				continue
-			}
-			renamedFields = append(renamedFields, f.Name)
+		if _, existed := oldFields[f.OldName]; !existed {
+			continue
 		}
+		if _, shadowed := oldFields[f.Name]; shadowed {
+			continue
+		}
+		renamedFromOld[f.OldName] = f
 	}
-	slices.Sort(renamedFields)
-	for _, fieldName := range renamedFields {
-		f := newFieldByName[fieldName]
-		oldColumn := f.OldColumnName()
+	oldNames := slices.Sorted(maps.Keys(renamedFromOld))
+	for _, oldName := range oldNames {
+		f := renamedFromOld[oldName]
+		// Prefer the column recorded in the snapshot: it is the canonical name
+		// (FK-aware, original name in a chained rename). Fall back for snapshots
+		// written before Columns existed.
+		oldColumn := oldState.Columns[oldName]
+		if oldColumn == "" {
+			oldColumn = f.OldColumnName()
+		}
 		newColumn := f.ColumnName()
 		plan.Operations = append(plan.Operations, ir.MigrationOp{
 			Kind:      ir.OpRenameColumn,
@@ -164,7 +175,7 @@ func diffColumns(plan *ir.MigrationPlan, oldState EntityState, e *ir.Entity) {
 			Column:    newColumn,
 			OldColumn: oldColumn,
 			DBType:    f.DatabaseType,
-			OldDBType: oldFields[f.OldName],
+			OldDBType: oldFields[oldName],
 		})
 		// A rename that also changed type is two logical operations for most
 		// migration systems (RenameColumn then AlterColumn). Emit both so a bridge
@@ -186,27 +197,17 @@ func diffColumns(plan *ir.MigrationPlan, oldState EntityState, e *ir.Entity) {
 		if _, existed := oldFields[f.Name]; existed {
 			continue
 		}
-		if f.OldName != "" {
-			if _, wasRenamed := oldFields[f.OldName]; wasRenamed {
-				continue // handled by RenameColumn above
-			}
+		if _, wasRenamed := renamedFromOld[f.OldName]; wasRenamed {
+			continue // handled by RenameColumn above
 		}
 		column := f.ColumnName()
 		plan.Operations = append(plan.Operations, ir.MigrationOp{
-			Kind:   ir.OpAddColumn,
-			Entity: e.Name,
-			Table:  table,
-			Column: column,
-			DBType: f.DatabaseType,
-			Columns: []ir.MigrationColumn{{
-				Name:           f.Name,
-				Column:         column,
-				DBType:         f.DatabaseType,
-				Nullable:       f.IsNullable,
-				IsPrimary:      f.IsPrimary,
-				IsRelation:     f.IsRelation,
-				RelationTarget: f.RelationTarget,
-			}},
+			Kind:    ir.OpAddColumn,
+			Entity:  e.Name,
+			Table:   table,
+			Column:  column,
+			DBType:  f.DatabaseType,
+			Columns: []ir.MigrationColumn{migrationColumn(f)},
 		})
 	}
 
@@ -216,14 +217,18 @@ func diffColumns(plan *ir.MigrationPlan, oldState EntityState, e *ir.Entity) {
 		if _, stillExists := newFieldByName[fn]; stillExists {
 			continue
 		}
-		if renamedTo := renameTarget(e, fn); renamedTo != "" {
+		if _, wasRenamed := renamedFromOld[fn]; wasRenamed {
 			continue
+		}
+		column := oldState.Columns[fn]
+		if column == "" {
+			column = textutil.ToDatabaseColumnName(fn)
 		}
 		plan.Operations = append(plan.Operations, ir.MigrationOp{
 			Kind:   ir.OpDropColumn,
 			Entity: e.Name,
 			Table:  table,
-			Column: textutil.ToDatabaseColumnName(fn),
+			Column: column,
 		})
 	}
 
@@ -245,14 +250,4 @@ func diffColumns(plan *ir.MigrationPlan, oldState EntityState, e *ir.Entity) {
 			})
 		}
 	}
-}
-
-// renameTarget returns the new field name that renames from oldField, or "".
-func renameTarget(e *ir.Entity, oldField string) string {
-	for i := range e.Fields {
-		if e.Fields[i].OldName == oldField {
-			return e.Fields[i].Name
-		}
-	}
-	return ""
 }

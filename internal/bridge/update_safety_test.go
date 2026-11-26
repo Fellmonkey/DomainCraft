@@ -118,6 +118,7 @@ func TestSplitPinRef(t *testing.T) {
 		ref  string
 	}{
 		{"plain", "owner/repo", "owner/repo", ""},
+		{"registry id stays unpinned", "csharp-rest", "csharp-rest", ""},
 		{"version_pin", "owner/repo@v1.2.3", "owner/repo", "v1.2.3"},
 		{"commit_pin", "owner/repo@9f8e7d6c5b4a3210", "owner/repo", "9f8e7d6c5b4a3210"},
 		{"branch_pin", "owner/repo@feature/branch", "owner/repo", "feature/branch"},
@@ -130,13 +131,5 @@ func TestSplitPinRef(t *testing.T) {
 				t.Errorf("splitPinRef(%q) = (%q, %q), want (%q, %q)", c.in, repo, ref, c.repo, c.ref)
 			}
 		})
-	}
-}
-
-// TestPinRefNotAppliedToRegistryIDs ensures the pin syntax never collides with
-// path handling: a bare registry ID is not treated as owner/repo.
-func TestPinRefNotAppliedToRegistryIDs(t *testing.T) {
-	if _, ref := splitPinRef("csharp-rest"); ref != "" {
-		t.Errorf("registry ID got a ref: %q", ref)
 	}
 }

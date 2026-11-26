@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"github.com/DomainCraft/DomainCraft/internal/fsutil"
-
-	"gopkg.in/yaml.v3"
 )
 
 // MetaFileName is the cache-metadata filename stored inside each cached bridge.
@@ -67,18 +65,11 @@ func WriteMeta(entry RegistryEntry, meta *CacheMeta) error {
 	if err := os.MkdirAll(parent, 0o755); err != nil { //nolint:gosec // bridge cache dirs must stay readable across CLI runs
 		return err
 	}
-	if err := fsutil.RefuseSymlinks(parent, path); err != nil {
-		return err
-	}
-	root, err := os.OpenRoot(parent)
+	root, rel, err := fsutil.OpenRootFor(parent, path)
 	if err != nil {
 		return fmt.Errorf("open cache root for %q: %w", entry.ID, err)
 	}
 	defer func() { _ = root.Close() }()
-	rel, err := filepath.Rel(parent, path)
-	if err != nil {
-		return fmt.Errorf("resolve cache metadata path %q: %w", path, err)
-	}
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal cache metadata for %q: %w", entry.ID, err)
@@ -122,7 +113,7 @@ func modifyMeta(entry RegistryEntry, mutate func(*CacheMeta)) error {
 // best-effort: missing git or an unreadable bridge.yaml degrade gracefully.
 func newMetaFromCache(entry RegistryEntry) *CacheMeta {
 	now := time.Now()
-	meta := &CacheMeta{
+	return &CacheMeta{
 		ID:            entry.ID,
 		Source:        entry.GitHub,
 		Version:       readBridgeVersion(entry),
@@ -131,23 +122,16 @@ func newMetaFromCache(entry RegistryEntry) *CacheMeta {
 		ClonedAt:      now,
 		LastCheckedAt: now,
 	}
-	return meta
 }
 
 // readBridgeVersion parses the `version:` field out of a cached bridge.yaml.
 // Returns "" when the field is absent or the file cannot be read.
 func readBridgeVersion(entry RegistryEntry) string {
-	data, err := os.ReadFile(filepath.Join(CachePath(entry), "bridge.yaml"))
+	manifest, err := LoadManifest(CachePath(entry))
 	if err != nil {
 		return ""
 	}
-	var cfg struct {
-		Version string `yaml:"version"`
-	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return ""
-	}
-	return cfg.Version
+	return manifest.Version
 }
 
 // gitHead returns the current git HEAD commit of the cached checkout, or ""

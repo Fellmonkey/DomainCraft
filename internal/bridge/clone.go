@@ -10,18 +10,12 @@ import (
 	"time"
 
 	"github.com/DomainCraft/DomainCraft/internal/appdir"
+	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 )
-
-// CacheDir returns ~/.domaincraft/bridges/, or .domaincraft/bridges relative
-// to the current directory when the home directory is unavailable. appdir owns
-// that fallback, so there is no second policy here.
-func CacheDir() string {
-	return appdir.UnionDir("bridges")
-}
 
 // CachePath returns the local cache directory for a bridge entry.
 func CachePath(entry RegistryEntry) string {
-	return filepath.Join(CacheDir(), entry.ID)
+	return filepath.Join(appdir.UnionDir("bridges"), entry.ID)
 }
 
 // cacheIDForGitHub derives a cache-safe ID for a GitHub shorthand. Using the
@@ -77,17 +71,22 @@ func cacheOriginMatches(entry RegistryEntry) bool {
 	return githubOriginMatches(out, entry.GitHub)
 }
 
+// githubHost is the canonical host for bridge sources. Origin checks, redirect
+// policy and clone URL construction all derive from it so a host change cannot
+// leave one of them pointing elsewhere.
+const githubHost = "github.com"
+
 // githubOriginMatches compares a git origin with the expected GitHub slug.
 // A substring check would accept an unrelated repository whose name merely
 // contains the expected one.
 func githubOriginMatches(origin, repo string) bool {
 	origin = strings.TrimSuffix(strings.TrimSpace(origin), ".git")
 	for _, prefix := range []string{
-		"https://github.com/",
-		"http://github.com/",
-		"ssh://git@github.com/",
-		"git@github.com:",
-		"git://github.com/",
+		"https://" + githubHost + "/",
+		"http://" + githubHost + "/",
+		"ssh://git@" + githubHost + "/",
+		"git@" + githubHost + ":",
+		"git://" + githubHost + "/",
 	} {
 		if origin == prefix+repo {
 			return true
@@ -275,7 +274,12 @@ func warnOpts(opts *EnsureOptions, format string, args ...any) {
 // creating the parent directory. A clone must not follow a link out of the
 // cache any more than embedded materialization or metadata writes may.
 func prepareCloneCacheDir(cacheDir string) error {
-	if err := refuseSymlinks(CacheDir(), cacheDir); err != nil {
+	cacheRoot := appdir.UnionDir("bridges")
+	_, err := fsutil.AbsPathWithin(cacheRoot, cacheDir)
+	if err == nil {
+		err = fsutil.RefuseSymlinks(cacheRoot, cacheDir)
+	}
+	if err != nil {
 		return fmt.Errorf("prepare bridge cache dir %q: %w", cacheDir, err)
 	}
 	parent := filepath.Dir(cacheDir)
@@ -299,7 +303,7 @@ func CloneBridge(entry RegistryEntry) error {
 		return err
 	}
 
-	url := fmt.Sprintf("https://github.com/%s.git", entry.GitHub)
+	url := fmt.Sprintf("https://%s/%s.git", githubHost, entry.GitHub)
 	ctx, cancel := gitCommandContext()
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", url, cacheDir) //nolint:gosec // args passed separately; no shell interpretation

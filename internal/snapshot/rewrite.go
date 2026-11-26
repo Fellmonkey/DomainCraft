@@ -28,20 +28,23 @@ import (
 // and unmatched runes are copied verbatim. Scanning resumes after the ORIGINAL
 // token, so replacement text is never rescanned: Product -> ProductItem cannot
 // turn `Products` into `ProductItemItems`.
-func replaceLongest(content []byte, variants map[string]string, ok func([]rune, int, int) bool) []byte {
+// onMatch is optional: a caller that only needs to know whether a token is
+// present can stop at the first match instead of allocating a rewritten copy.
+func replaceLongest(content []byte, variants map[string]string, ok func([]rune, int, int) bool, onMatch ...func([]byte) bool) []byte {
 	if len(variants) == 0 {
 		return content
 	}
 	type variant struct {
-		old   []rune
-		value []rune
+		old        []rune
+		value      []rune
+		valueBytes []byte
 	}
 	vars := make([]variant, 0, len(variants))
 	for old, value := range variants {
 		if old == "" || old == value {
 			continue
 		}
-		vars = append(vars, variant{old: []rune(old), value: []rune(value)})
+		vars = append(vars, variant{old: []rune(old), value: []rune(value), valueBytes: []byte(value)})
 	}
 	slices.SortFunc(vars, func(a, b variant) int {
 		if c := cmp.Compare(len(b.old), len(a.old)); c != 0 {
@@ -74,7 +77,10 @@ func replaceLongest(content []byte, variants map[string]string, ok func([]rune, 
 			if !ok(rs, i, len(v.old)) {
 				continue
 			}
-			out = append(out, []byte(string(v.value))...)
+			if len(onMatch) > 0 && onMatch[0] != nil && onMatch[0](v.valueBytes) {
+				return content
+			}
+			out = append(out, v.valueBytes...)
 			i += len(v.old) // replacement text is never scanned again
 			matched = true
 			break
@@ -174,9 +180,6 @@ func EntityTransform(oldName, newName string) func([]byte) []byte {
 
 // NamespaceTransform returns a transform rewriting the old root namespace.
 func NamespaceTransform(n *NamespaceMismatch) func([]byte) []byte {
-	if n == nil {
-		return func(b []byte) []byte { return b }
-	}
 	oldNs, newNs := n.OldNamespace, n.NewNamespace
 	return func(b []byte) []byte { return RewriteNamespaceContent(b, oldNs, newNs) }
 }
@@ -215,27 +218,27 @@ func RewriteFile(outputDir, relPath string, transforms ...func([]byte) []byte) (
 	if len(transforms) == 0 {
 		return false, nil
 	}
-	root, rel, err := openRootFor(outputDir, relPath)
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = root.Close() }()
-	data, err := root.ReadFile(rel)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
+	written := false
+	err := withRoot(outputDir, relPath, func(root *os.Root, rel string) error {
+		data, err := root.ReadFile(rel)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
 		}
-		return false, err
-	}
-	out := data
-	for _, t := range transforms {
-		out = t(out)
-	}
-	if string(out) == string(data) {
-		return false, nil
-	}
-	if err := fsutil.AtomicWriteRoot(root, rel, out); err != nil {
-		return false, err
-	}
-	return true, nil
+		out := data
+		for _, t := range transforms {
+			out = t(out)
+		}
+		if string(out) == string(data) {
+			return nil
+		}
+		if err := fsutil.AtomicWriteRoot(root, rel, out); err != nil {
+			return err
+		}
+		written = true
+		return nil
+	})
+	return written, err
 }

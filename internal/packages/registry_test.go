@@ -82,9 +82,8 @@ func TestResolveVersionPicksHighestStable(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"versions":["1.0.0","9.0.1","9.0.2-beta1","10.0.0-rc.2","9.0.2","2.0.0"]}`))
 	}))
-	defer srv.Close()
 
-	got, err := ResolveVersion(srv.URL+"/{id}/index.json", "Newtonsoft.Json")
+	got, err := ResolveVersionForFramework(srv.URL+"/{id}/index.json", "Newtonsoft.Json", "")
 	if err != nil {
 		t.Fatalf("ResolveVersion: %v", err)
 	}
@@ -112,7 +111,6 @@ func TestResolveVersionForFrameworkRespectsTargetFramework(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"versions":["9.0.9","11.0.0","10.0.0","12.0.0-rc1"]}`))
 	}))
-	defer srv.Close()
 
 	for _, tc := range []struct {
 		name      string
@@ -140,7 +138,6 @@ func TestResolveVersionForFrameworkFallsBackWhenNoCompatibleVersion(t *testing.T
 	srv := newTestRegistryServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"versions":["11.0.0"]}`))
 	}))
-	defer srv.Close()
 	got, err := ResolveVersionForFramework(srv.URL+"/{id}/index.json", "demo.pkg", "net10.0")
 	if err != nil || got != "11.0.0" {
 		t.Fatalf("version = %q, %v; want 11.0.0, nil", got, err)
@@ -164,9 +161,8 @@ func TestResolveVersionErrors(t *testing.T) {
 				w.WriteHeader(c.status)
 				_, _ = w.Write([]byte(c.body))
 			}))
-			defer srv.Close()
 
-			got, err := ResolveVersion(srv.URL+"/{id}.json", "Some.Package")
+			got, err := ResolveVersionForFramework(srv.URL+"/{id}.json", "Some.Package", "")
 			if err == nil {
 				t.Fatalf("expected an error, got version %q", got)
 			}
@@ -182,7 +178,7 @@ func TestResolveVersionUnreachableRegistry(t *testing.T) {
 	url := srv.URL
 	srv.Close() // nothing is listening anymore
 
-	if _, err := ResolveVersion(url+"/{id}", "Any"); err == nil {
+	if _, err := ResolveVersionForFramework(url+"/{id}", "Any", ""); err == nil {
 		t.Fatal("expected a connection error for a dead registry")
 	}
 }
@@ -194,9 +190,8 @@ func TestResolveVersionRejectsOversizedBody(t *testing.T) {
 		_, _ = w.Write([]byte(`{"versions":["1.0.0"]}`))
 		_, _ = w.Write([]byte(strings.Repeat(" ", maxRegistryResponseBytes)))
 	}))
-	defer srv.Close()
 
-	got, err := ResolveVersion(srv.URL+"/{id}.json", "demo.pkg")
+	got, err := ResolveVersionForFramework(srv.URL+"/{id}.json", "demo.pkg", "")
 	if err == nil {
 		t.Fatalf("oversized response accepted, version = %q", got)
 	}

@@ -10,7 +10,18 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 )
+
+// DefaultMaxBodyBytes caps remote responses in the bridge cache and package
+// registry. Both paths fetch the same kind of untrusted remote manifest.
+const DefaultMaxBodyBytes = 1 << 20
+
+// NewBoundedClient builds an HTTP client with a fixed timeout and an optional
+// transport. Shared construction keeps remote probes from drifting apart.
+func NewBoundedClient(timeout time.Duration, transport http.RoundTripper) *http.Client {
+	return &http.Client{Timeout: timeout, Transport: transport}
+}
 
 // RedactedURL reduces a URL to scheme and host for error messages. Userinfo,
 // path, query and fragment are dropped: any of them can carry a secret.
@@ -22,10 +33,11 @@ func RedactedURL(raw string) string {
 	return u.Scheme + "://" + u.Hostname()
 }
 
-// redactURLError drops the raw URL carried by *url.Error while keeping the
+// RedactURLError drops the raw URL carried by *url.Error while keeping the
 // underlying reason available for %w wrapping. Nested url.Errors are unwrapped
-// as well, since a transport may add its own URL-bearing error.
-func redactURLError(err error) error {
+// as well, since a transport may add its own URL-bearing error. Remote probes
+// share this rule so error messages cannot leak tokens from different callers.
+func RedactURLError(err error) error {
 	for {
 		var urlErr *url.Error
 		if !errors.As(err, &urlErr) || urlErr.Err == nil {
@@ -50,7 +62,7 @@ func RedirectPolicy(validate ValidateRedirect) func(*http.Request, []*http.Reque
 	}
 	return func(req *http.Request, _ []*http.Request) error {
 		if err := validate(req.URL); err != nil {
-			return fmt.Errorf("redirect from %s: %w", RedactedURL(req.URL.String()), redactURLError(err))
+			return fmt.Errorf("redirect from %s: %w", RedactedURL(req.URL.String()), RedactURLError(err))
 		}
 		return nil
 	}
@@ -71,7 +83,7 @@ func ReadBoundedBody(resp *http.Response, rawURL string, maxBytes int64, validat
 	if validateRedirect != nil && resp.Request != nil && resp.Request.URL != nil &&
 		resp.Request.URL.String() != rawURL {
 		if err := validateRedirect(resp.Request.URL); err != nil {
-			return nil, fmt.Errorf("redirect from %s: %w", scope, redactURLError(err))
+			return nil, fmt.Errorf("redirect from %s: %w", scope, RedactURLError(err))
 		}
 	}
 	if maxBytes <= 0 {
@@ -82,7 +94,7 @@ func ReadBoundedBody(resp *http.Response, rawURL string, maxBytes int64, validat
 	// being truncated into a plausible-looking manifest or binary.
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", scope, redactURLError(err))
+		return nil, fmt.Errorf("read %s: %w", scope, RedactURLError(err))
 	}
 	if int64(len(data)) > maxBytes {
 		return nil, fmt.Errorf("response from %s exceeds %d bytes", scope, maxBytes)
@@ -100,7 +112,7 @@ func BoundedGet(ctx context.Context, client *http.Client, rawURL string, maxByte
 	scope := RedactedURL(rawURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("build request for %s: %w", scope, redactURLError(err))
+		return nil, fmt.Errorf("build request for %s: %w", scope, RedactURLError(err))
 	}
 	if validateRedirect != nil {
 		guarded := *client
@@ -109,7 +121,7 @@ func BoundedGet(ctx context.Context, client *http.Client, rawURL string, maxByte
 	}
 	resp, err := client.Do(req) //nolint:bodyclose // ReadBoundedBody closes the body
 	if err != nil {
-		return nil, fmt.Errorf("request %s: %w", scope, redactURLError(err))
+		return nil, fmt.Errorf("request %s: %w", scope, RedactURLError(err))
 	}
 	return ReadBoundedBody(resp, rawURL, maxBytes, validateRedirect)
 }
