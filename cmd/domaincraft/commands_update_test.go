@@ -10,7 +10,7 @@ import (
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
 )
 
-// fakeReleases returns an httpGetBodyFn that serves a fixed release payload.
+// fakeReleases returns a getBody function that serves a fixed release payload.
 func fakeReleases(tag string, assets map[string]string) func(string) ([]byte, error) {
 	var sb strings.Builder
 	sb.WriteString(`{"tag_name":"` + tag + `","assets":[`)
@@ -28,7 +28,7 @@ func fakeReleases(tag string, assets map[string]string) func(string) ([]byte, er
 	}
 }
 
-func runUpdateCheck(t *testing.T, setVersion string) (string, error) {
+func runUpdateCheck(t *testing.T, ops updateOps, setVersion string) (string, error) {
 	t.Helper()
 	old := version
 	version = setVersion
@@ -37,19 +37,18 @@ func runUpdateCheck(t *testing.T, setVersion string) (string, error) {
 	buf := &bytes.Buffer{}
 	log := logger.New()
 	log.SetWriter(buf)
-	err := runCoreUpdate(log, true)
+	err := runCoreUpdateWithOps(ops, log, true)
 	return buf.String(), err
 }
 
 func TestUpdateDevBuildDoesNotCheck(t *testing.T) {
-	oldHTTP := httpGetBodyFn
-	httpGetBodyFn = func(url string) ([]byte, error) {
+	ops := defaultUpdateOps()
+	ops.getBody = func(url string) ([]byte, error) {
 		t.Fatalf("network must not be contacted for a dev build (url=%s)", url)
 		return nil, nil
 	}
-	defer func() { httpGetBodyFn = oldHTTP }()
 
-	out, err := runUpdateCheck(t, "dev")
+	out, err := runUpdateCheck(t, ops, "dev")
 	if err != nil {
 		t.Fatalf("runCoreUpdate: %v", err)
 	}
@@ -59,13 +58,12 @@ func TestUpdateDevBuildDoesNotCheck(t *testing.T) {
 }
 
 func TestUpdateCheckUpToDate(t *testing.T) {
-	oldHTTP := httpGetBodyFn
-	httpGetBodyFn = fakeReleases("v1.0.0", map[string]string{
+	ops := defaultUpdateOps()
+	ops.getBody = fakeReleases("v1.0.0", map[string]string{
 		"domaincraft-linux-amd64": "https://example/dc-linux-amd64",
 	})
-	defer func() { httpGetBodyFn = oldHTTP }()
 
-	out, err := runUpdateCheck(t, "v1.0.0")
+	out, err := runUpdateCheck(t, ops, "v1.0.0")
 	if err != nil {
 		t.Fatalf("runCoreUpdate: %v", err)
 	}
@@ -75,13 +73,12 @@ func TestUpdateCheckUpToDate(t *testing.T) {
 }
 
 func TestUpdateCheckReportsNewer(t *testing.T) {
-	oldHTTP := httpGetBodyFn
-	httpGetBodyFn = fakeReleases("v1.2.0", map[string]string{
+	ops := defaultUpdateOps()
+	ops.getBody = fakeReleases("v1.2.0", map[string]string{
 		"domaincraft-linux-amd64": "https://example/dc-linux-amd64",
 	})
-	defer func() { httpGetBodyFn = oldHTTP }()
 
-	out, err := runUpdateCheck(t, "v1.0.0")
+	out, err := runUpdateCheck(t, ops, "v1.0.0")
 	if err != nil {
 		t.Fatalf("runCoreUpdate: %v", err)
 	}
@@ -94,11 +91,10 @@ func TestUpdateCheckReportsNewer(t *testing.T) {
 }
 
 func TestUpdateCheckSamePatch(t *testing.T) {
-	oldHTTP := httpGetBodyFn
-	httpGetBodyFn = fakeReleases("v1.0.0", map[string]string{})
-	defer func() { httpGetBodyFn = oldHTTP }()
+	ops := defaultUpdateOps()
+	ops.getBody = fakeReleases("v1.0.0", map[string]string{})
 
-	out, err := runUpdateCheck(t, "v1.0.0")
+	out, err := runUpdateCheck(t, ops, "v1.0.0")
 	if err != nil {
 		t.Fatalf("runCoreUpdate: %v", err)
 	}
@@ -134,13 +130,12 @@ func TestReleaseAssetFor(t *testing.T) {
 }
 
 func TestDownloadAndReplace(t *testing.T) {
-	oldHTTP := httpGetBodyFn
-	httpGetBodyFn = func(_ string) ([]byte, error) {
+	ops := defaultUpdateOps()
+	ops.getBody = func(_ string) ([]byte, error) {
 		return []byte("new-binary-content"), nil
 	}
-	defer func() { httpGetBodyFn = oldHTTP }()
 
-	tmp, err := downloadBinary("https://github.com/DomainCraft/DomainCraft/releases/download/v1.2.3/domaincraft-linux-amd64", t.TempDir())
+	tmp, err := downloadBinaryWithOps(ops, "https://github.com/DomainCraft/DomainCraft/releases/download/v1.2.3/domaincraft-linux-amd64", t.TempDir())
 	if err != nil {
 		t.Fatalf("downloadBinary: %v", err)
 	}
@@ -151,7 +146,7 @@ func TestDownloadAndReplace(t *testing.T) {
 	if err := os.WriteFile(target, []byte("old-binary"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := replaceExecutable(tmp, target); err != nil {
+	if err := replaceExecutableWithOps(ops, tmp, target); err != nil {
 		t.Fatalf("replaceExecutable: %v", err)
 	}
 	got, err := os.ReadFile(target)

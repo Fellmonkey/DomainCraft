@@ -6,40 +6,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/DomainCraft/DomainCraft/internal/ir"
 )
-
-// TestBeforeCommitHookConcurrentAccess would report a data race under -race
-// if the test seam were an unsynchronized package-level func variable.
-func TestBeforeCommitHookConcurrentAccess(t *testing.T) {
-	var wg sync.WaitGroup
-	for range 16 {
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			setBeforeCommitHook(func() {})
-		}()
-		go func() {
-			defer wg.Done()
-			_ = currentBeforeCommitHook()
-		}()
-	}
-	wg.Wait()
-	called := false
-	setBeforeCommitHook(func() { called = true })
-	if hook := currentBeforeCommitHook(); hook == nil {
-		t.Fatal("hook was lost after concurrent access")
-	} else {
-		hook()
-	}
-	if !called {
-		t.Fatal("retrieved hook was not the stored hook")
-	}
-	setBeforeCommitHook(nil)
-}
 
 // writeHardeningBridge lays out a minimal bridge directory for the filesystem
 // hardening tests. Keys are forward-slash relative paths.
@@ -323,7 +293,7 @@ templates:
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	setBeforeCommitHook(func() {
+	r.SetBeforeCommitHook(func() {
 		if err := os.Remove(a); err != nil && !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("remove staged target: %v", err)
 		}
@@ -331,7 +301,7 @@ templates:
 			t.Errorf("plant symlink before commit: %v", err)
 		}
 	})
-	t.Cleanup(func() { setBeforeCommitHook(nil) })
+	t.Cleanup(func() { r.SetBeforeCommitHook(nil) })
 
 	if _, _, err := r.Render(&ir.Project{Name: "P"}, out); err == nil {
 		t.Fatal("Render succeeded despite a blocked commit")
@@ -377,7 +347,7 @@ templates:
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	setBeforeCommitHook(func() {
+	r.SetBeforeCommitHook(func() {
 		if err := os.RemoveAll(src); err != nil {
 			t.Errorf("remove staged src: %v", err)
 		}
@@ -385,7 +355,7 @@ templates:
 			t.Errorf("plant parent symlink: %v", err)
 		}
 	})
-	t.Cleanup(func() { setBeforeCommitHook(nil) })
+	t.Cleanup(func() { r.SetBeforeCommitHook(nil) })
 
 	if _, _, err := r.Render(&ir.Project{Name: "P"}, out); err == nil {
 		t.Fatal("Render succeeded after parent directory was replaced by a symlink")
@@ -598,12 +568,12 @@ templates:
 			t.Fatalf("write prior Alpha.txt: %v", err)
 		}
 
-		setBeforeCommitHook(func() {
+		r.SetBeforeCommitHook(func() {
 			if err := os.Symlink(outside, filepath.Join(out2, "shared.txt")); err != nil {
 				t.Errorf("plant symlink before commit: %v", err)
 			}
 		})
-		t.Cleanup(func() { setBeforeCommitHook(nil) })
+		t.Cleanup(func() { r.SetBeforeCommitHook(nil) })
 
 		written, manifest, err := r.Render(project, out2)
 		if err == nil {
@@ -678,12 +648,12 @@ templates:
 		t.Fatalf("write prior output: %v", err)
 	}
 	custom := filepath.Join(out, "custom.txt")
-	setBeforeCommitHook(func() {
+	r.SetBeforeCommitHook(func() {
 		if err := os.WriteFile(custom, []byte("developer-owned"), 0o644); err != nil {
 			t.Errorf("create custom file before commit: %v", err)
 		}
 	})
-	t.Cleanup(func() { setBeforeCommitHook(nil) })
+	t.Cleanup(func() { r.SetBeforeCommitHook(nil) })
 
 	written, manifest, err := r.Render(&ir.Project{Name: "P"}, out)
 	if err == nil {

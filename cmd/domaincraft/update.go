@@ -33,11 +33,6 @@ const releasesLatestURL = "https://api.github.com/repos/DomainCraft/DomainCraft/
 // checksumsAssetName is the release asset holding one SHA-256 digest per binary.
 const checksumsAssetName = "checksums.txt"
 
-// maxResponseBody caps reads from the update endpoints. A response larger than
-// this is an error, never a silently truncated success. It is a variable so
-// tests can exercise the overflow path without allocating 64 MiB.
-var maxResponseBody int64 = 64 << 20
-
 // releaseHosts is the strict allowlist for release URLs. A release payload is
 // remote data: only these hosts may supply a binary that replaces this process.
 var releaseHosts = map[string]bool{
@@ -58,21 +53,6 @@ var noticeClient = &http.Client{
 	Transport:     httpClient.Transport,
 	CheckRedirect: httpClient.CheckRedirect,
 }
-
-// httpGetBodyFn is the HTTP GET used by the core update flow. It is a variable
-// so tests can substitute a fake and exercise the GitHub code paths offline.
-var httpGetBodyFn = httpGetBody
-
-// executableFn and replaceExecutableFn are seams for testing the download and
-// verification path without replacing the test binary.
-var (
-	executableFn        = os.Executable
-	replaceExecutableFn = replaceExecutable
-	chmodFn             = os.Chmod
-	renameFn            = os.Rename
-	removeFn            = os.Remove
-	createTempFn        = os.CreateTemp
-)
 
 // githubRelease is the subset of the GitHub releases/latest payload we need.
 type githubRelease struct {
@@ -105,12 +85,14 @@ func updateAvailableMessage(latest, current string) string {
 // maybeNotifyUpdate prints a one-line notice to the command's error stream when
 // a newer core release exists. It is best-effort, throttled by a local cache,
 // and skipped for development builds and for the `update` command itself.
-func maybeNotifyUpdate(cmd *cobra.Command) {
+func maybeNotifyUpdate(cmd *cobra.Command) { maybeNotifyUpdateWithOps(defaultUpdateOps(), cmd) }
+
+func maybeNotifyUpdateWithOps(ops updateOps, cmd *cobra.Command) {
 	current := releaseVersion()
 	if current == "" || current == "dev" || cmd.Name() == "update" {
 		return
 	}
-	latest, err := cachedLatestCoreVersion()
+	latest, err := cachedLatestCoreVersionWithOps(ops)
 	if err != nil || latest == "" {
 		return
 	}
@@ -121,7 +103,9 @@ func maybeNotifyUpdate(cmd *cobra.Command) {
 
 // cachedLatestCoreVersion returns the latest released core version, using the
 // throttled cache when it is fresh and otherwise querying GitHub.
-func cachedLatestCoreVersion() (string, error) {
+func cachedLatestCoreVersion() (string, error) { return cachedLatestCoreVersionWithOps(defaultUpdateOps()) }
+
+func cachedLatestCoreVersionWithOps(ops updateOps) (string, error) {
 	cacheDir := appdir.CacheDir("core")
 	cachePath := filepath.Join(cacheDir, "core-update.json")
 	if data, rerr := os.ReadFile(cachePath); rerr == nil { //nolint:gosec // cachePath is built by appdir helpers
@@ -131,7 +115,7 @@ func cachedLatestCoreVersion() (string, error) {
 		}
 	}
 
-	rel, err := latestReleaseForNoticeFn()
+	rel, err := ops.latestForNotice()
 	if err != nil {
 		// Record the attempt as well: an offline or blackholed network must not
 		// make every later invocation wait for another HTTP timeout again.
@@ -176,6 +160,10 @@ func newUpdateCmd() *cobra.Command {
 
 // runCoreUpdate implements `domaincraft update` (and `domaincraft update --check`).
 func runCoreUpdate(log *logger.Logger, checkOnly bool) error {
+	return runCoreUpdateWithOps(defaultUpdateOps(), log, checkOnly)
+}
+
+func runCoreUpdateWithOps(ops updateOps, log *logger.Logger, checkOnly bool) error {
 	current := releaseVersion()
 	if current == "" || current == "dev" {
 		log.Info("Running a development build (v%s).", version)
@@ -186,7 +174,7 @@ func runCoreUpdate(log *logger.Logger, checkOnly bool) error {
 	}
 
 	log.Info("Checking for updates (current: v%s)...", current)
-	release, err := latestRelease()
+	release, err := latestReleaseWithOps(ops)
 	if err != nil {
 		return fmt.Errorf("check for updates: %w", err)
 	}
@@ -210,22 +198,22 @@ func runCoreUpdate(log *logger.Logger, checkOnly bool) error {
 	if err != nil {
 		return err
 	}
-	wantSum, err := releaseChecksum(release, asset)
+	wantSum, err := releaseChecksumWithOps(ops, release, asset)
 	if err != nil {
 		return err
 	}
 	// Resolve the executable before downloading: the temp file must live on the
 	// same volume as the binary, otherwise rename fails with EXDEV on install.
-	exe, err := executableFn()
+	exe, err := ops.executable()
 	if err != nil {
 		return fmt.Errorf("locate current executable: %w", err)
 	}
-	tmp, err := downloadBinary(assetURL, filepath.Dir(exe))
+	tmp, err := downloadBinaryWithOps(ops, assetURL, filepath.Dir(exe))
 	if err != nil {
 		return err
 	}
 	defer func() {
-		if cerr := removeFn(tmp); cerr != nil && !errors.Is(cerr, os.ErrNotExist) {
+		if cerr := ops.remove(tmp); cerr != nil && !errors.Is(cerr, os.ErrNotExist) {
 			log.Warn("could not remove temporary update %s: %v", tmp, cerr)
 		}
 	}()
@@ -234,7 +222,7 @@ func runCoreUpdate(log *logger.Logger, checkOnly bool) error {
 		return fmt.Errorf("refusing to install update: %w", err)
 	}
 
-	if err := replaceExecutableFn(tmp, exe); err != nil {
+	if err := ops.replaceExecutable(tmp, exe); err != nil {
 		return err
 	}
 	// The new binary is in place only now: a failed rename above never reports
@@ -256,19 +244,11 @@ func decodeRelease(body []byte) (*githubRelease, error) {
 	return &rel, nil
 }
 
-// latestReleaseForNotice probes the same endpoint with the short-lived client.
-// It is a seam so tests can drive the notice path without a network.
-var latestReleaseForNoticeFn = func() (*githubRelease, error) {
-	body, err := netutil.BoundedGet(bridge.CommandContext(), noticeClient, releasesLatestURL, maxResponseBody, validateReleaseRedirect)
-	if err != nil {
-		return nil, err
-	}
-	return decodeRelease(body)
-}
-
 // latestRelease fetches the newest published release metadata.
-func latestRelease() (*githubRelease, error) {
-	body, err := httpGetBodyFn(releasesLatestURL)
+func latestRelease() (*githubRelease, error) { return latestReleaseWithOps(defaultUpdateOps()) }
+
+func latestReleaseWithOps(ops updateOps) (*githubRelease, error) {
+	body, err := ops.getBody(releasesLatestURL)
 	if err != nil {
 		return nil, err
 	}
@@ -349,11 +329,15 @@ func parseAllowedURL(raw string) (*url.URL, error) {
 // releaseChecksum reads the SHA-256 digest for name from the release's
 // checksums.txt asset. A missing, malformed or foreign digest is an error.
 func releaseChecksum(rel *githubRelease, name string) (string, error) {
+	return releaseChecksumWithOps(defaultUpdateOps(), rel, name)
+}
+
+func releaseChecksumWithOps(ops updateOps, rel *githubRelease, name string) (string, error) {
 	assetURL, err := validatedReleaseAssetURL(rel, checksumsAssetName)
 	if err != nil {
 		return "", fmt.Errorf("verify update: %w", err)
 	}
-	data, err := httpGetBodyFn(assetURL)
+	data, err := ops.getBody(assetURL)
 	if err != nil {
 		return "", fmt.Errorf("fetch release checksums: %w", err)
 	}
@@ -401,39 +385,45 @@ func validateReleaseRedirect(u *url.URL) error {
 }
 
 // httpGetBody performs a GET bound to bridge.CommandContext() and returns the response body,
-// capping it at maxResponseBody bytes. The shared helper owns the status check,
+// capping it at the configured maxBodyBytes. The shared helper owns the status check,
 // cap and redaction; this package supplies the client, context and redirect
 // policy.
-func httpGetBody(rawURL string) ([]byte, error) {
-	return netutil.BoundedGet(bridge.CommandContext(), httpClient, rawURL, maxResponseBody, validateReleaseRedirect)
+func httpGetBody(rawURL string) ([]byte, error) { return httpGetBodyWithOps(defaultUpdateOps(), rawURL) }
+
+func httpGetBodyWithOps(ops updateOps, rawURL string) ([]byte, error) {
+	return netutil.BoundedGet(bridge.CommandContext(), httpClient, rawURL, ops.maxBodyBytes, validateReleaseRedirect)
 }
 
 // downloadBinary fetches a release asset into a temp file in dir and returns
 // its path. Callers pass filepath.Dir(exe) so the final rename never crosses a
 // volume boundary (EXDEV on Unix, a needless copy on Windows).
 func downloadBinary(rawURL, dir string) (string, error) {
+	return downloadBinaryWithOps(defaultUpdateOps(), rawURL, dir)
+}
+
+func downloadBinaryWithOps(ops updateOps, rawURL, dir string) (string, error) {
 	validURL, err := validateReleaseURL(rawURL)
 	if err != nil {
 		return "", fmt.Errorf("download update: %w", err)
 	}
-	data, err := httpGetBodyFn(validURL)
+	data, err := ops.getBody(validURL)
 	if err != nil {
 		return "", fmt.Errorf("download update: %w", err)
 	}
 
-	tmp, err := createTempFn(dir, "domaincraft-update-*")
+	tmp, err := ops.createTemp(dir, "domaincraft-update-*")
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = tmp.Close() }()
 
 	if _, err := tmp.Write(data); err != nil {
-		return "", errors.Join(err, removeFn(tmp.Name()))
+		return "", errors.Join(err, ops.remove(tmp.Name()))
 	}
 	if runtime.GOOS != "windows" {
 		// A non-executable download must never reach the install step.
-		if err := chmodFn(tmp.Name(), 0o755); err != nil {
-			return "", errors.Join(fmt.Errorf("make downloaded update executable: %w", err), removeFn(tmp.Name()))
+		if err := ops.chmod(tmp.Name(), 0o755); err != nil {
+			return "", errors.Join(fmt.Errorf("make downloaded update executable: %w", err), ops.remove(tmp.Name()))
 		}
 	}
 	return tmp.Name(), nil
@@ -443,10 +433,14 @@ func downloadBinary(rawURL, dir string) (string, error) {
 // first tries a direct rename; on platforms where the running binary is locked
 // (Windows), it moves the current one aside first.
 func replaceExecutable(tmp, exe string) error {
+	return replaceExecutableWithOps(defaultUpdateOps(), tmp, exe)
+}
+
+func replaceExecutableWithOps(ops updateOps, tmp, exe string) error {
 	// Direct rename is the normal path. Its error is kept: on a locked binary
 	// it explains why the fallback was needed, and on a real failure it is the
 	// only cause reported to the user.
-	firstErr := renameFn(tmp, exe)
+	firstErr := ops.rename(tmp, exe)
 	if firstErr == nil {
 		return nil
 	}
@@ -454,22 +448,22 @@ func replaceExecutable(tmp, exe string) error {
 	// Windows keeps the running executable locked, so move it aside first.
 	// Every failure mentions `old` — a human must be able to recover by hand.
 	old := exe + ".old"
-	if err := removeFn(old); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := ops.remove(old); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove previous backup %s: %w", old, err)
 	}
-	if err := renameFn(exe, old); err != nil {
+	if err := ops.rename(exe, old); err != nil {
 		return fmt.Errorf("update in place failed; replace %s manually or run go install (backup path %s): %w",
 			exe, old, errors.Join(firstErr, fmt.Errorf("move %s to %s: %w", exe, old, err)))
 	}
-	if err := renameFn(tmp, exe); err != nil {
-		restoreErr := renameFn(old, exe)
+	if err := ops.rename(tmp, exe); err != nil {
+		restoreErr := ops.rename(old, exe)
 		return fmt.Errorf("could not install update to %s (backup at %s): %w", exe, old, errors.Join(
 			fmt.Errorf("initial rename: %w", firstErr),
 			fmt.Errorf("rename update into place: %w", err),
 			fmt.Errorf("restore %s from %s: %w", exe, old, restoreErr),
 		))
 	}
-	if err := removeFn(old); err != nil {
+	if err := ops.remove(old); err != nil {
 		return fmt.Errorf("update installed to %s but could not remove backup %s: %w", exe, old, err)
 	}
 	return nil

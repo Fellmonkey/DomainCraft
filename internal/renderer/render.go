@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"text/template"
 
 	"github.com/DomainCraft/DomainCraft/internal/fsutil"
@@ -81,26 +80,6 @@ func safeOutputPathCached(outputDir, renderedTarget string, verified map[string]
 	return safeOutputPathChecked(outputDir, renderedTarget, func(base, target string) error {
 		return fsutil.RefuseSymlinksCached(base, target, verified)
 	})
-}
-
-// beforeCommitHook is a test seam called once between staging and commit. It is
-// nil in production; tests set it to mutate the filesystem at that exact point.
-// The atomic pointer keeps a long-lived host safe from races with rendering.
-var beforeCommitHook atomic.Pointer[func()]
-
-func setBeforeCommitHook(fn func()) {
-	if fn == nil {
-		beforeCommitHook.Store(nil)
-		return
-	}
-	beforeCommitHook.Store(&fn)
-}
-
-func currentBeforeCommitHook() func() {
-	if hook := beforeCommitHook.Load(); hook != nil {
-		return *hook
-	}
-	return nil
 }
 
 // failWithTempCleanup closes and removes a staged temp file, joining any
@@ -484,7 +463,7 @@ func (r *Renderer) stageOneTarget(s *renderSession, in stageTargetInput) error {
 // aside into a sibling backup before the rendered temp file takes its place;
 // rollback moves the backup back, so no prior content is read into memory.
 func (r *Renderer) commitWrites(s *renderSession) error {
-	if hook := currentBeforeCommitHook(); hook != nil {
+	if hook := r.beforeCommitHook; hook != nil {
 		hook()
 	}
 	for _, w := range s.staged {

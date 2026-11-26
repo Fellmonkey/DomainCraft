@@ -38,18 +38,19 @@ func fakeUpdateServer(tag string, assets map[string]string, bodies map[string][]
 	}
 }
 
-// stubUpdateRun installs offline seams for the self-update path.
-func stubUpdateRun(t *testing.T, current string, serve func(string) ([]byte, error)) (*bytes.Buffer, *int, *[]byte) {
+// stubUpdateRun installs offline dependencies for the self-update path.
+func stubUpdateRun(t *testing.T, current string, serve func(string) ([]byte, error)) (*bytes.Buffer, *int, *[]byte, updateOps) {
 	t.Helper()
-	oldVersion, oldHTTP := version, httpGetBodyFn
-	oldExe, oldReplace := executableFn, replaceExecutableFn
+	oldVersion := version
 	version = current
-	httpGetBodyFn = serve
+	t.Cleanup(func() { version = oldVersion })
 
 	calls := 0
 	var installed []byte
-	executableFn = func() (string, error) { return filepath.Join(t.TempDir(), "domaincraft"), nil }
-	replaceExecutableFn = func(tmp, _ string) error {
+	ops := defaultUpdateOps()
+	ops.getBody = serve
+	ops.executable = func() (string, error) { return filepath.Join(t.TempDir(), "domaincraft"), nil }
+	ops.replaceExecutable = func(tmp, _ string) error {
 		calls++
 		data, err := os.ReadFile(tmp)
 		if err != nil {
@@ -61,11 +62,7 @@ func stubUpdateRun(t *testing.T, current string, serve func(string) ([]byte, err
 	out := &bytes.Buffer{}
 	log := logger.New()
 	log.SetWriter(out)
-	t.Cleanup(func() {
-		version, httpGetBodyFn = oldVersion, oldHTTP
-		executableFn, replaceExecutableFn = oldExe, oldReplace
-	})
-	return out, &calls, &installed
+	return out, &calls, &installed, ops
 }
 
 func TestValidateReleaseURL(t *testing.T) {
@@ -120,9 +117,7 @@ func TestRedactURL(t *testing.T) {
 }
 
 func TestReadResponseBodyRejectsOversizedPayload(t *testing.T) {
-	oldLimit := maxResponseBody
-	maxResponseBody = 4
-	t.Cleanup(func() { maxResponseBody = oldLimit })
+	limit := int64(4)
 
 	u, err := url.Parse(updateAssetURL("dc"))
 	if err != nil {
@@ -144,7 +139,7 @@ func TestReadResponseBodyRejectsOversizedPayload(t *testing.T) {
 				Body:       io.NopCloser(strings.NewReader(tt.body)),
 				Request:    &http.Request{URL: u},
 			}
-			got, err := netutil.ReadBoundedBody(resp, u.String(), maxResponseBody, validateReleaseRedirect)
+			got, err := netutil.ReadBoundedBody(resp, u.String(), limit, validateReleaseRedirect)
 			if tt.wantErr {
 				if err == nil || !strings.Contains(err.Error(), "exceeds") {
 					t.Fatalf("err = %v, want oversized error", err)
@@ -178,7 +173,7 @@ func TestReadResponseBodyChecksRedirectHost(t *testing.T) {
 				Body:       io.NopCloser(strings.NewReader("ok")),
 				Request:    &http.Request{URL: u},
 			}
-			_, err = netutil.ReadBoundedBody(resp, updateAssetURL("dc"), maxResponseBody, validateReleaseRedirect)
+			_, err = netutil.ReadBoundedBody(resp, updateAssetURL("dc"), defaultUpdateOps().maxBodyBytes, validateReleaseRedirect)
 			if tt.wantErrPart == "" {
 				if err != nil {
 					t.Fatalf("netutil.ReadBoundedBody: %v", err)
@@ -272,9 +267,8 @@ func TestReleaseChecksum(t *testing.T) {
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			oldHTTP := httpGetBodyFn
-			t.Cleanup(func() { httpGetBodyFn = oldHTTP })
-			httpGetBodyFn = fakeUpdateServer("v1.2.0", assets, map[string][]byte{
+			ops := defaultUpdateOps()
+			ops.getBody = fakeUpdateServer("v1.2.0", assets, map[string][]byte{
 				updateAssetURL(checksumsAssetName): []byte(tt.body),
 			})
 
@@ -288,7 +282,7 @@ func TestReleaseChecksum(t *testing.T) {
 					{Name: checksumsAssetName, BrowserDownloadURL: updateAssetURL(checksumsAssetName)},
 				},
 			}
-			got, err := releaseChecksum(rel, asset)
+			got, err := releaseChecksumWithOps(ops, rel, asset)
 			if tt.wantErr != (err != nil) {
 				t.Fatalf("releaseChecksum = %q, %v; want error = %v", got, err, tt.wantErr)
 			}
@@ -385,8 +379,8 @@ func TestRunCoreUpdateFailsClosed(t *testing.T) {
 					bodies[u] = tt.binary
 				}
 			}
-			_, calls, installed := stubUpdateRun(t, "v1.0.0", fakeUpdateServer("v1.2.0", tt.assets, bodies))
-			err := runCoreUpdate(logger.New(), false)
+			_, calls, installed, ops := stubUpdateRun(t, "v1.0.0", fakeUpdateServer("v1.2.0", tt.assets, bodies))
+			err := runCoreUpdateWithOps(ops, logger.New(), false)
 			if tt.wantErrPart != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErrPart) {
 					t.Fatalf("err = %v, want it to contain %q", err, tt.wantErrPart)
@@ -410,10 +404,9 @@ func TestRunCoreUpdateFailsClosed(t *testing.T) {
 
 // --- F03: failed installs must be reported, never presented as success ---
 
-func stubFileOps(t *testing.T) {
+func stubFileOps(t *testing.T) updateOps {
 	t.Helper()
-	oldChmod, oldRename, oldRemove := chmodFn, renameFn, removeFn
-	t.Cleanup(func() { chmodFn, renameFn, removeFn = oldChmod, oldRename, oldRemove })
+	return defaultUpdateOps()
 }
 
 func updatePayload(binary []byte) (map[string]string, map[string][]byte) {
@@ -433,14 +426,12 @@ func TestDownloadBinaryChmodFailure(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("executable bit is not set on Windows")
 	}
-	stubFileOps(t)
-	oldHTTP := httpGetBodyFn
-	httpGetBodyFn = func(string) ([]byte, error) { return []byte("binary"), nil }
-	t.Cleanup(func() { httpGetBodyFn = oldHTTP })
+	ops := stubFileOps(t)
+	ops.getBody = func(string) ([]byte, error) { return []byte("binary"), nil }
 
 	chmodErr := errors.New("chmod denied")
-	chmodFn = func(string, os.FileMode) error { return chmodErr }
-	path, err := downloadBinary("https://github.com/DomainCraft/DomainCraft/releases/download/v1.2.3/domaincraft-linux-amd64", t.TempDir())
+	ops.chmod = func(string, os.FileMode) error { return chmodErr }
+	path, err := downloadBinaryWithOps(ops, "https://github.com/DomainCraft/DomainCraft/releases/download/v1.2.3/domaincraft-linux-amd64", t.TempDir())
 	if !errors.Is(err, chmodErr) || !strings.Contains(err.Error(), "make downloaded update executable") {
 		t.Fatalf("err = %v, want chmod failure", err)
 	}
@@ -452,24 +443,23 @@ func TestDownloadBinaryChmodFailure(t *testing.T) {
 // TestReplaceExecutableUsesSameVolumeTemp guards the EXDEV fix: the download
 // temp must be created next to the running executable, not in the OS temp dir.
 func TestReplaceExecutableUsesSameVolumeTemp(t *testing.T) {
-	oldVersion, oldHTTP, oldExe, oldReplace, oldCreateTemp := version, httpGetBodyFn, executableFn, replaceExecutableFn, createTempFn
-	t.Cleanup(func() {
-		version, httpGetBodyFn, executableFn, replaceExecutableFn, createTempFn = oldVersion, oldHTTP, oldExe, oldReplace, oldCreateTemp
-	})
+	oldVersion := version
+	t.Cleanup(func() { version = oldVersion })
+	ops := defaultUpdateOps()
 
 	root := t.TempDir()
 	exe := filepath.Join(root, "domaincraft")
 	assets, bodies := updatePayload([]byte("new binary"))
 	version = "1.0.0"
-	httpGetBodyFn = fakeUpdateServer("v1.2.0", assets, bodies)
-	executableFn = func() (string, error) { return exe, nil }
+	ops.getBody = fakeUpdateServer("v1.2.0", assets, bodies)
+	ops.executable = func() (string, error) { return exe, nil }
 
 	var tempDir, installedFrom string
-	createTempFn = func(dir, pattern string) (*os.File, error) {
+	ops.createTemp = func(dir, pattern string) (*os.File, error) {
 		tempDir = dir
 		return os.CreateTemp(dir, pattern)
 	}
-	replaceExecutableFn = func(tmp, gotExe string) error {
+	ops.replaceExecutable = func(tmp, gotExe string) error {
 		installedFrom = tmp
 		if gotExe != exe {
 			t.Errorf("replace target = %q, want %q", gotExe, exe)
@@ -479,7 +469,7 @@ func TestReplaceExecutableUsesSameVolumeTemp(t *testing.T) {
 
 	log := logger.New()
 	log.SetWriter(io.Discard)
-	if err := runCoreUpdate(log, false); err != nil {
+	if err := runCoreUpdateWithOps(ops, log, false); err != nil {
 		t.Fatalf("runCoreUpdate: %v", err)
 	}
 	if tempDir != root {
@@ -491,7 +481,7 @@ func TestReplaceExecutableUsesSameVolumeTemp(t *testing.T) {
 }
 
 func TestReplaceExecutableJoinsRenameFailures(t *testing.T) {
-	stubFileOps(t)
+	ops := stubFileOps(t)
 	root := t.TempDir()
 	tmp, exe := filepath.Join(root, "new"), filepath.Join(root, "domaincraft")
 	if err := os.WriteFile(tmp, []byte("new"), 0o644); err != nil {
@@ -505,7 +495,7 @@ func TestReplaceExecutableJoinsRenameFailures(t *testing.T) {
 	installErr := errors.New("install rename failed")
 	restoreErr := errors.New("restore failed")
 	calls := 0
-	renameFn = func(src, dst string) error {
+	ops.rename = func(src, dst string) error {
 		calls++
 		switch calls {
 		case 1:
@@ -522,7 +512,7 @@ func TestReplaceExecutableJoinsRenameFailures(t *testing.T) {
 		}
 	}
 
-	err := replaceExecutable(tmp, exe)
+	err := replaceExecutableWithOps(ops, tmp, exe)
 	if err == nil {
 		t.Fatal("expected a hard error")
 	}
@@ -534,7 +524,7 @@ func TestReplaceExecutableJoinsRenameFailures(t *testing.T) {
 }
 
 func TestReplaceExecutableRestoresOriginalOnInstallFailure(t *testing.T) {
-	stubFileOps(t)
+	ops := stubFileOps(t)
 	root := t.TempDir()
 	tmp, exe := filepath.Join(root, "new"), filepath.Join(root, "domaincraft")
 	if err := os.WriteFile(tmp, []byte("new"), 0o644); err != nil {
@@ -545,14 +535,14 @@ func TestReplaceExecutableRestoresOriginalOnInstallFailure(t *testing.T) {
 	}
 
 	calls := 0
-	renameFn = func(src, dst string) error {
+	ops.rename = func(src, dst string) error {
 		calls++
 		if calls == 1 || calls == 3 {
 			return errors.New("rename failed")
 		}
 		return os.Rename(src, dst)
 	}
-	err := replaceExecutable(tmp, exe)
+	err := replaceExecutableWithOps(ops, tmp, exe)
 	if err == nil || !strings.Contains(err.Error(), exe+".old") {
 		t.Fatalf("err = %v, want failure naming the backup path", err)
 	}
@@ -562,7 +552,7 @@ func TestReplaceExecutableRestoresOriginalOnInstallFailure(t *testing.T) {
 }
 
 func TestReplaceExecutableRemoveOldFailure(t *testing.T) {
-	stubFileOps(t)
+	ops := stubFileOps(t)
 	root := t.TempDir()
 	tmp, exe := filepath.Join(root, "new"), filepath.Join(root, "domaincraft")
 	if err := os.WriteFile(tmp, []byte("new"), 0o644); err != nil {
@@ -572,27 +562,27 @@ func TestReplaceExecutableRemoveOldFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	removeFn = func(path string) error {
+	ops.remove = func(path string) error {
 		if path == exe+".old" {
 			return errors.New("backup is locked")
 		}
 		return os.Remove(path)
 	}
-	renameFn = func(src, _ string) error {
+	ops.rename = func(src, _ string) error {
 		if src == tmp {
 			return errors.New("locked")
 		}
 		t.Error("no rename should happen when the backup cannot be removed")
 		return nil
 	}
-	err := replaceExecutable(tmp, exe)
+	err := replaceExecutableWithOps(ops, tmp, exe)
 	if err == nil || !strings.Contains(err.Error(), exe+".old") || !strings.Contains(err.Error(), "backup is locked") {
 		t.Fatalf("err = %v, want backup removal failure naming %s", err, exe+".old")
 	}
 }
 
 func TestReplaceExecutableFinalCleanupFailure(t *testing.T) {
-	stubFileOps(t)
+	ops := stubFileOps(t)
 	root := t.TempDir()
 	tmp, exe := filepath.Join(root, "new"), filepath.Join(root, "domaincraft")
 	if err := os.WriteFile(tmp, []byte("new"), 0o644); err != nil {
@@ -603,7 +593,7 @@ func TestReplaceExecutableFinalCleanupFailure(t *testing.T) {
 	}
 
 	renames := 0
-	renameFn = func(src, dst string) error {
+	ops.rename = func(src, dst string) error {
 		renames++
 		if renames == 1 {
 			return errors.New("locked")
@@ -611,14 +601,14 @@ func TestReplaceExecutableFinalCleanupFailure(t *testing.T) {
 		return os.Rename(src, dst)
 	}
 	removals := 0
-	removeFn = func(path string) error {
+	ops.remove = func(path string) error {
 		removals++
 		if removals == 2 {
 			return errors.New("backup cleanup failed")
 		}
 		return os.Remove(path)
 	}
-	err := replaceExecutable(tmp, exe)
+	err := replaceExecutableWithOps(ops, tmp, exe)
 	if err == nil || !strings.Contains(err.Error(), exe+".old") {
 		t.Fatalf("err = %v, want cleanup failure naming %s", err, exe+".old")
 	}
@@ -640,17 +630,17 @@ func TestCoreUpdateLogsSuccessOnlyAfterReplace(t *testing.T) {
 	assets, bodies := updatePayload([]byte("new-binary-content"))
 
 	t.Run("failed replace", func(t *testing.T) {
-		stubUpdateRun(t, "v1.0.0", fakeUpdateServer("v1.2.0", assets, bodies))
+		_, _, _, ops := stubUpdateRun(t, "v1.0.0", fakeUpdateServer("v1.2.0", assets, bodies))
 		replaceErr := errors.New("disk full")
 		calls := 0
-		replaceExecutableFn = func(string, string) error {
+		ops.replaceExecutable = func(string, string) error {
 			calls++
 			return replaceErr
 		}
 		var logOut bytes.Buffer
 		log := logger.New()
 		log.SetWriter(&logOut)
-		err := runCoreUpdate(log, false)
+		err := runCoreUpdateWithOps(ops, log, false)
 		if !errors.Is(err, replaceErr) {
 			t.Fatalf("err = %v, want %v", err, replaceErr)
 		}
@@ -663,11 +653,11 @@ func TestCoreUpdateLogsSuccessOnlyAfterReplace(t *testing.T) {
 	})
 
 	t.Run("successful replace", func(t *testing.T) {
-		_, calls, installed := stubUpdateRun(t, "v1.0.0", fakeUpdateServer("v1.2.0", assets, bodies))
+		_, calls, installed, ops := stubUpdateRun(t, "v1.0.0", fakeUpdateServer("v1.2.0", assets, bodies))
 		var logOut bytes.Buffer
 		log := logger.New()
 		log.SetWriter(&logOut)
-		err := runCoreUpdate(log, false)
+		err := runCoreUpdateWithOps(ops, log, false)
 		if err != nil {
 			t.Fatalf("runCoreUpdate: %v", err)
 		}

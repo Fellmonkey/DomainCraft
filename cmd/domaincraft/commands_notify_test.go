@@ -11,17 +11,15 @@ import (
 )
 
 func TestCachedLatestCoreVersion(t *testing.T) {
-	orig := latestReleaseForNoticeFn
-	defer func() { latestReleaseForNoticeFn = orig }()
-
 	appdir.SetBaseForTesting(t.TempDir())
 	t.Cleanup(func() { appdir.SetBaseForTesting("") })
 
-	latestReleaseForNoticeFn = func() (*githubRelease, error) {
+	ops := defaultUpdateOps()
+	ops.latestForNotice = func() (*githubRelease, error) {
 		return decodeRelease([]byte(`{"tag_name":"v9.9.9","assets":[]}`))
 	}
 
-	latest, err := cachedLatestCoreVersion()
+	latest, err := cachedLatestCoreVersionWithOps(ops)
 	if err != nil {
 		t.Fatalf("cachedLatestCoreVersion: %v", err)
 	}
@@ -30,10 +28,10 @@ func TestCachedLatestCoreVersion(t *testing.T) {
 	}
 
 	// Network is now down — the fresh cache must still serve the same version.
-	latestReleaseForNoticeFn = func() (*githubRelease, error) {
+	ops.latestForNotice = func() (*githubRelease, error) {
 		return nil, fmt.Errorf("network down")
 	}
-	latest2, err := cachedLatestCoreVersion()
+	latest2, err := cachedLatestCoreVersionWithOps(ops)
 	if err != nil || latest2 != "9.9.9" {
 		t.Errorf("cached latest = %q, %v; want 9.9.9", latest2, err)
 	}
@@ -42,24 +40,22 @@ func TestCachedLatestCoreVersion(t *testing.T) {
 // Regression: an offline check used to leave no cache entry, so every later
 // command waited for the full HTTP timeout again.
 func TestCachedLatestCoreVersionCachesFailedCheck(t *testing.T) {
-	orig := latestReleaseForNoticeFn
-	defer func() { latestReleaseForNoticeFn = orig }()
-
 	appdir.SetBaseForTesting(t.TempDir())
 	t.Cleanup(func() { appdir.SetBaseForTesting("") })
 
 	calls := 0
-	latestReleaseForNoticeFn = func() (*githubRelease, error) {
+	ops := defaultUpdateOps()
+	ops.latestForNotice = func() (*githubRelease, error) {
 		calls++
 		return nil, fmt.Errorf("network down")
 	}
 
-	if _, err := cachedLatestCoreVersion(); err == nil {
+	if _, err := cachedLatestCoreVersionWithOps(ops); err == nil {
 		t.Fatal("expected the first check to return an error")
 	}
 	// The failed attempt is cached as an empty result: no notice and no second
 	// network wait.
-	latest, err := cachedLatestCoreVersion()
+	latest, err := cachedLatestCoreVersionWithOps(ops)
 	if err != nil || latest != "" {
 		t.Fatalf("second check = %q, %v; want empty result without error", latest, err)
 	}
@@ -78,9 +74,6 @@ func TestNoticeClientHasShortTimeout(t *testing.T) {
 }
 
 func TestCachedLatestCoreVersionSurfacesCacheWriteFailure(t *testing.T) {
-	orig := latestReleaseForNoticeFn
-	defer func() { latestReleaseForNoticeFn = orig }()
-
 	base := t.TempDir()
 	appdir.SetBaseForTesting(base)
 	t.Cleanup(func() { appdir.SetBaseForTesting("") })
@@ -88,10 +81,11 @@ func TestCachedLatestCoreVersionSurfacesCacheWriteFailure(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(cacheDir, "core-update.json"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	latestReleaseForNoticeFn = func() (*githubRelease, error) {
+	ops := defaultUpdateOps()
+	ops.latestForNotice = func() (*githubRelease, error) {
 		return decodeRelease([]byte(`{"tag_name":"v9.9.9","assets":[]}`))
 	}
-	if _, err := cachedLatestCoreVersion(); err == nil {
+	if _, err := cachedLatestCoreVersionWithOps(ops); err == nil {
 		t.Fatal("cache write failure was silently discarded")
 	}
 }

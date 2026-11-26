@@ -41,7 +41,16 @@ type Renderer struct {
 	seedData *ir.SeedDataset
 	// mockData is the deterministic mock seed (set via SetMockData).
 	mockData *ir.SeedDataset
+	// beforeCommitHook is a test-only seam called between staging and commit.
+	// It lives on the instance, not in package state, so concurrent renders are
+	// isolated and no save/restore is needed in tests.
+	beforeCommitHook func()
 }
+
+// SetBeforeCommitHook installs a hook called once between staging and commit.
+// Production code never calls it; tests use it to mutate the filesystem at the
+// exact point where the commit's path checks must still hold.
+func (r *Renderer) SetBeforeCommitHook(fn func()) { r.beforeCommitHook = fn }
 
 // config returns the topmost (adapter) bridge config, which owns the effective
 // output_dir, name, delimiters and migration commands.
