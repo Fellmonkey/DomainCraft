@@ -193,23 +193,24 @@ func scalarValue(field ir.Field, project *ir.Project, counter *int, record int) 
 		return []any{elem}
 	}
 
-	switch dbType {
+	// FieldKind is the single classification shared with the validator and IR.
+	switch specmeta.FieldKind(strings.ToLower(dbType)) {
 	case "uuid":
 		*counter = *counter + 1
 		return fmt.Sprintf("00000000-0000-0000-0000-%012d", *counter)
-	case "string", "text":
+	case "text":
 		return stringValue(field, record)
 	case "int", "bigint":
 		return intValue(field, record)
 	case "float", "decimal":
 		return floatValue(field, record)
-	case "boolean":
+	case "bool":
 		return true
 	case "date":
 		return "2024-01-01"
 	case "datetime":
 		return "2024-01-01T00:00:00Z"
-	case "json", "jsonb":
+	case "json":
 		return "{}"
 	default:
 		// Enum (or unknown) — use the first declared value when available.
@@ -354,23 +355,22 @@ func coerceValue(value any, dbType string) any {
 		return []any{}
 	}
 
-	switch {
-	case specmeta.IsNumeric(inner):
-		if inner == "int" || inner == "bigint" {
-			switch v := value.(type) {
-			case int:
-				return int64(v)
-			case int64:
-				return v
-			case float64:
-				return int64(v)
-			case string:
-				if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-					return n
-				}
+	switch specmeta.FieldKind(strings.ToLower(inner)) {
+	case "int", "bigint":
+		switch v := value.(type) {
+		case int:
+			return int64(v)
+		case int64:
+			return v
+		case float64:
+			return int64(v)
+		case string:
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+				return n
 			}
-			return int64(0)
 		}
+		return int64(0)
+	case "float", "decimal":
 		switch v := value.(type) {
 		case float64:
 			return v
@@ -384,7 +384,7 @@ func coerceValue(value any, dbType string) any {
 			}
 		}
 		return float64(0)
-	case specmeta.IsBooleanType(inner):
+	case "bool":
 		switch v := value.(type) {
 		case bool:
 			return v
@@ -394,9 +394,9 @@ func coerceValue(value any, dbType string) any {
 			}
 		}
 		return false
-	case inner == "uuid", inner == "string", inner == "text", inner == "date", inner == "datetime":
+	case "text", "date", "datetime", "uuid":
 		return fmt.Sprintf("%v", value)
-	case inner == "json", inner == "jsonb":
+	case "json":
 		return value // keep maps/slices/strings as-is for the bridge's JSON serializer
 	default:
 		// Enum value name (or unknown) — keep as a string.

@@ -283,6 +283,11 @@ func IsAPIStyle(value string) bool { return apiStyleSet[value] }
 // IsAuthType reports whether value is a supported auth type.
 func IsAuthType(value string) bool { return authTypeSet[value] }
 
+// IsAuthEnabled reports whether an auth type enables the auth flow. An unset
+// type is disabled, matching the parser default ("none"), so hand-built
+// schemas behave like parsed ones.
+func IsAuthEnabled(value string) bool { return value != "" && value != "none" }
+
 // IsAddon reports whether value is a known infrastructure addon.
 func IsAddon(value string) bool { return addonSet[value] }
 

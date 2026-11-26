@@ -13,6 +13,12 @@ import (
 	"github.com/DomainCraft/DomainCraft/internal/fsutil"
 )
 
+const (
+	testRegistryURL = "https://reg.example/{id}"
+	testPackageID   = "demo.pkg"
+	testFramework   = "net10.0"
+)
+
 // resetCacheRoot points the app base dir at a fresh temp dir for a test.
 func resetCacheRoot(t *testing.T) {
 	t.Helper()
@@ -22,12 +28,12 @@ func resetCacheRoot(t *testing.T) {
 
 // seedVersion writes an entry directly into a bridge's cache file with the
 // given stored-at time, bypassing the normal time.Now() used on resolution.
-func seedVersion(t *testing.T, bridgeID, key, version string, storedAt time.Time) {
+// The key matches the live ResolveVersionCachedForFramework path, so a seeded
+// entry is visible to the resolver under test.
+func seedVersion(t *testing.T, bridgeID, registryURL, packageID, framework, version string, storedAt time.Time) {
 	t.Helper()
-	dir, err := appdir.CacheDir(bridgeID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	key := frameworkCacheKey(registryURL, packageID, framework)
+	dir := appdir.CacheDir(bridgeID)
 	path := filepath.Join(dir, CacheFileName)
 	if err := fsutil.WriteJSON(path, struct {
 		Entries map[string]struct {
@@ -62,7 +68,7 @@ func TestCachedVersionIsPerFramework(t *testing.T) {
 	}
 
 	for _, framework := range []string{"net10.0", "net11.0", "net10.0"} {
-		if _, err := ResolveVersionCachedForFramework("csharp-rest", "https://reg.example/{id}", "ef", framework); err != nil {
+		if _, err := ResolveVersionCachedForFramework("csharp-rest", testRegistryURL, "ef", framework); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -74,43 +80,40 @@ func TestCachedVersionIsPerFramework(t *testing.T) {
 func TestVersionStoreIsPerBridge(t *testing.T) {
 	resetCacheRoot(t)
 
-	dir, err := appdir.CacheDir("csharp-restful")
-	if err != nil {
-		t.Fatalf("CacheDir: %v", err)
-	}
+	dir := appdir.CacheDir("csharp-restful")
 	want := filepath.Join(dir, CacheFileName)
 
-	old := resolveVersionFn
-	resolveVersionFn = func(_, _ string) (string, error) { return "1.0.0", nil }
-	defer func() { resolveVersionFn = old }()
+	old := resolveVersionForFrameworkFn
+	resolveVersionForFrameworkFn = func(_, _, _ string) (string, error) { return "1.0.0", nil }
+	defer func() { resolveVersionForFrameworkFn = old }()
 
-	if _, err := ResolveVersionCached("csharp-restful", "https://reg.example/{id}", "demo.pkg"); err != nil {
-		t.Fatalf("ResolveVersionCached: %v", err)
+	if _, err := ResolveVersionCachedForFramework("csharp-restful", testRegistryURL, testPackageID, testFramework); err != nil {
+		t.Fatalf("ResolveVersionCachedForFramework: %v", err)
 	}
 	if _, err := os.Stat(want); err != nil {
 		t.Fatalf("expected per-bridge cache file at %s: %v", want, err)
 	}
 }
 
-// TestResolveVersionCachedFreshHit verifies that a fresh cache entry short-
-// circuits the registry lookup (no network, no resolveFn call).
-func TestResolveVersionCachedFreshHit(t *testing.T) {
+// TestResolveVersionCachedForFrameworkFreshHit verifies that a fresh cache
+// entry short-circuits the registry lookup (no network, no resolver call).
+func TestResolveVersionCachedForFrameworkFreshHit(t *testing.T) {
 	resetCacheRoot(t)
 
-	seedVersion(t, "demo", cacheKey("https://reg.example/{id}", "demo.pkg"), "1.0.0", time.Now())
+	seedVersion(t, "demo", testRegistryURL, testPackageID, testFramework, "1.0.0", time.Now())
 
 	// Guard: if the cache path is not taken, the fake below would be called.
 	called := false
-	old := resolveVersionFn
-	resolveVersionFn = func(_, _ string) (string, error) {
+	old := resolveVersionForFrameworkFn
+	resolveVersionForFrameworkFn = func(_, _, _ string) (string, error) {
 		called = true
 		return "9.9.9", nil
 	}
-	defer func() { resolveVersionFn = old }()
+	defer func() { resolveVersionForFrameworkFn = old }()
 
-	got, err := ResolveVersionCached("demo", "https://reg.example/{id}", "demo.pkg")
+	got, err := ResolveVersionCachedForFramework("demo", testRegistryURL, testPackageID, testFramework)
 	if err != nil {
-		t.Fatalf("ResolveVersionCached: %v", err)
+		t.Fatalf("ResolveVersionCachedForFramework: %v", err)
 	}
 	if got != "1.0.0" {
 		t.Fatalf("expected cached version 1.0.0, got %q", got)
@@ -120,44 +123,41 @@ func TestResolveVersionCachedFreshHit(t *testing.T) {
 	}
 }
 
-// TestResolveVersionCachedStaleRefreshes verifies that an expired entry is
-// re-resolved and the new version replaces it in the cache.
-func TestResolveVersionCachedStaleRefreshes(t *testing.T) {
+// TestResolveVersionCachedForFrameworkStaleRefreshes verifies that an expired
+// entry is re-resolved and the new version replaces it in the cache.
+func TestResolveVersionCachedForFrameworkStaleRefreshes(t *testing.T) {
 	resetCacheRoot(t)
 
-	key := cacheKey("https://reg.example/{id}", "demo.pkg")
-	seedVersion(t, "demo", key, "1.0.0", time.Now().Add(-48*time.Hour))
+	seedVersion(t, "demo", testRegistryURL, testPackageID, testFramework, "1.0.0", time.Now().Add(-48*time.Hour))
 
-	oldFn := resolveVersionFn
-	resolveVersionFn = func(_, _ string) (string, error) {
+	oldFn := resolveVersionForFrameworkFn
+	resolveVersionForFrameworkFn = func(_, _, _ string) (string, error) {
 		return "2.0.0", nil
 	}
-	defer func() { resolveVersionFn = oldFn }()
+	defer func() { resolveVersionForFrameworkFn = oldFn }()
 
-	got, err := ResolveVersionCached("demo", "https://reg.example/{id}", "demo.pkg")
+	got, err := ResolveVersionCachedForFramework("demo", testRegistryURL, testPackageID, testFramework)
 	if err != nil {
-		t.Fatalf("ResolveVersionCached: %v", err)
+		t.Fatalf("ResolveVersionCachedForFramework: %v", err)
 	}
 	if got != "2.0.0" {
 		t.Fatalf("expected refreshed version 2.0.0, got %q", got)
 	}
 
 	// The refreshed value must be persisted and now serve as a fresh hit.
-	resolveVersionFn = func(_, _ string) (string, error) {
+	resolveVersionForFrameworkFn = func(_, _, _ string) (string, error) {
 		t.Fatal("must not contact registry after refresh")
 		return "", nil
 	}
-	got2, err := ResolveVersionCached("demo", "https://reg.example/{id}", "demo.pkg")
+	got2, err := ResolveVersionCachedForFramework("demo", testRegistryURL, testPackageID, testFramework)
 	if err != nil || got2 != "2.0.0" {
 		t.Fatalf("expected persisted refresh to serve 2.0.0, got %q (err %v)", got2, err)
 	}
 }
 
-// TestResolveVersionCachedTTLBoundary pins the 24h cutoff: just inside the TTL
-// is a hit, just outside is a miss.
-func TestResolveVersionCachedTTLBoundary(t *testing.T) {
-	key := cacheKey("https://reg.example/{id}", "demo.pkg")
-
+// TestResolveVersionCachedForFrameworkTTLBoundary pins the 24h cutoff: just
+// inside the TTL is a hit, just outside is a miss.
+func TestResolveVersionCachedForFrameworkTTLBoundary(t *testing.T) {
 	tests := []struct {
 		name     string
 		storedAt time.Time
@@ -170,17 +170,17 @@ func TestResolveVersionCachedTTLBoundary(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resetCacheRoot(t)
-			seedVersion(t, "demo", key, "1.0.0", tt.storedAt)
+			seedVersion(t, "demo", testRegistryURL, testPackageID, testFramework, "1.0.0", tt.storedAt)
 
 			called := false
-			old := resolveVersionFn
-			resolveVersionFn = func(_, _ string) (string, error) {
+			old := resolveVersionForFrameworkFn
+			resolveVersionForFrameworkFn = func(_, _, _ string) (string, error) {
 				called = true
 				return "2.0.0", nil
 			}
-			defer func() { resolveVersionFn = old }()
+			defer func() { resolveVersionForFrameworkFn = old }()
 
-			got, err := ResolveVersionCached("demo", "https://reg.example/{id}", "demo.pkg")
+			got, err := ResolveVersionCachedForFramework("demo", testRegistryURL, testPackageID, testFramework)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -198,9 +198,9 @@ func TestResolveVersionCachedTTLBoundary(t *testing.T) {
 	}
 }
 
-// TestResolveVersionCachedRegistryFailures covers the two paths where no
-// version may be cached: a registry error and an empty result.
-func TestResolveVersionCachedRegistryFailures(t *testing.T) {
+// TestResolveVersionCachedForFrameworkRegistryFailures covers the two paths
+// where no version may be cached: a registry error and an empty result.
+func TestResolveVersionCachedForFrameworkRegistryFailures(t *testing.T) {
 	tests := []struct {
 		name    string
 		version string
@@ -213,22 +213,22 @@ func TestResolveVersionCachedRegistryFailures(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resetCacheRoot(t)
-			old := resolveVersionFn
-			resolveVersionFn = func(_, _ string) (string, error) { return tt.version, tt.err }
-			defer func() { resolveVersionFn = old }()
+			old := resolveVersionForFrameworkFn
+			resolveVersionForFrameworkFn = func(_, _, _ string) (string, error) { return tt.version, tt.err }
+			defer func() { resolveVersionForFrameworkFn = old }()
 
-			got, err := ResolveVersionCached("demo", "https://reg.example/{id}", "demo.pkg")
+			got, err := ResolveVersionCachedForFramework("demo", testRegistryURL, testPackageID, testFramework)
 			if (err != nil) != (tt.err != nil) || got != tt.version {
 				t.Fatalf("got %q, %v; want %q, %v", got, err, tt.version, tt.err)
 			}
 
 			// No entry may be cached from a failed or empty resolution.
 			called := false
-			resolveVersionFn = func(_, _ string) (string, error) {
+			resolveVersionForFrameworkFn = func(_, _, _ string) (string, error) {
 				called = true
 				return "3.0.0", nil
 			}
-			got, err = ResolveVersionCached("demo", "https://reg.example/{id}", "demo.pkg")
+			got, err = ResolveVersionCachedForFramework("demo", testRegistryURL, testPackageID, testFramework)
 			if err != nil || !called || got != "3.0.0" {
 				t.Fatalf("second call = %q, %v, called=%v; want 3.0.0 without error", got, err, called)
 			}
@@ -236,23 +236,23 @@ func TestResolveVersionCachedRegistryFailures(t *testing.T) {
 	}
 }
 
-// TestResolveVersionCachedIsolation verifies caches are per bridge: a version
-// cached for one bridge is not served to another.
-func TestResolveVersionCachedIsolation(t *testing.T) {
+// TestResolveVersionCachedForFrameworkIsolation verifies caches are per bridge:
+// a version cached for one bridge is not served to another.
+func TestResolveVersionCachedForFrameworkIsolation(t *testing.T) {
 	resetCacheRoot(t)
 
-	seedVersion(t, "bridge-a", cacheKey("https://reg.example/{id}", "demo.pkg"), "1.0.0", time.Now())
+	seedVersion(t, "bridge-a", testRegistryURL, testPackageID, testFramework, "1.0.0", time.Now())
 
-	oldFn := resolveVersionFn
-	resolveVersionFn = func(_, _ string) (string, error) {
+	oldFn := resolveVersionForFrameworkFn
+	resolveVersionForFrameworkFn = func(_, _, _ string) (string, error) {
 		return "9.9.9", nil
 	}
-	defer func() { resolveVersionFn = oldFn }()
+	defer func() { resolveVersionForFrameworkFn = oldFn }()
 
 	// bridge-b has no cache -> must resolve (fresh) via the registry fake.
-	got, err := ResolveVersionCached("bridge-b", "https://reg.example/{id}", "demo.pkg")
+	got, err := ResolveVersionCachedForFramework("bridge-b", testRegistryURL, testPackageID, testFramework)
 	if err != nil {
-		t.Fatalf("ResolveVersionCached(bridge-b): %v", err)
+		t.Fatalf("ResolveVersionCachedForFramework(bridge-b): %v", err)
 	}
 	if got != "9.9.9" {
 		t.Fatalf("bridge-b must not read bridge-a's cache, got %q", got)
@@ -260,42 +260,26 @@ func TestResolveVersionCachedIsolation(t *testing.T) {
 }
 
 // A failed cache write must not discard a version that was successfully
-// resolved from the registry. Both exported resolvers share this guarantee.
+// resolved from the registry.
 func TestPersistFailureKeepsResolvedVersion(t *testing.T) {
+	resetCacheRoot(t)
+
 	persistErr := errors.New("disk full")
 	oldPersist := persistVersionCacheFn
 	persistVersionCacheFn = func(_ string, _ map[string]versionEntry) error { return persistErr }
 	defer func() { persistVersionCacheFn = oldPersist }()
 
-	t.Run("plain", func(t *testing.T) {
-		resetCacheRoot(t)
-		old := resolveVersionFn
-		resolveVersionFn = func(_, _ string) (string, error) { return "2.0.0", nil }
-		defer func() { resolveVersionFn = old }()
+	oldResolve := resolveVersionForFrameworkFn
+	resolveVersionForFrameworkFn = func(_, _, _ string) (string, error) { return "10.0.0", nil }
+	defer func() { resolveVersionForFrameworkFn = oldResolve }()
 
-		got, err := ResolveVersionCached("demo", "https://reg.example/{id}", "demo.pkg")
-		if got != "2.0.0" {
-			t.Fatalf("version = %q, want 2.0.0 (persist failure must not drop it)", got)
-		}
-		if !errors.Is(err, persistErr) || !strings.Contains(err.Error(), "persist package version cache") {
-			t.Fatalf("err = %v, want a non-fatal persist failure", err)
-		}
-	})
-
-	t.Run("framework", func(t *testing.T) {
-		resetCacheRoot(t)
-		old := resolveVersionForFrameworkFn
-		resolveVersionForFrameworkFn = func(_, _, _ string) (string, error) { return "10.0.0", nil }
-		defer func() { resolveVersionForFrameworkFn = old }()
-
-		got, err := ResolveVersionCachedForFramework("demo", "https://reg.example/{id}", "demo.pkg", "net10.0")
-		if got != "10.0.0" {
-			t.Fatalf("version = %q, want 10.0.0 (persist failure must not drop it)", got)
-		}
-		if !errors.Is(err, persistErr) {
-			t.Fatalf("err = %v, want the persist failure", err)
-		}
-	})
+	got, err := ResolveVersionCachedForFramework("demo", testRegistryURL, testPackageID, testFramework)
+	if got != "10.0.0" {
+		t.Fatalf("version = %q, want 10.0.0 (persist failure must not drop it)", got)
+	}
+	if !errors.Is(err, persistErr) || !strings.Contains(err.Error(), "persist package version cache") {
+		t.Fatalf("err = %v, want a non-fatal persist failure", err)
+	}
 }
 
 // TestLoadCacheIgnoresCorruptFile ensures a corrupt cache file degrades
@@ -303,10 +287,7 @@ func TestPersistFailureKeepsResolvedVersion(t *testing.T) {
 func TestLoadCacheIgnoresCorruptFile(t *testing.T) {
 	resetCacheRoot(t)
 
-	dir, err := appdir.CacheDir("demo")
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir := appdir.CacheDir("demo")
 	path := filepath.Join(dir, CacheFileName)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
@@ -317,29 +298,27 @@ func TestLoadCacheIgnoresCorruptFile(t *testing.T) {
 
 	// A corrupt file must not fail resolution; it should fall through to a
 	// fresh registry lookup.
-	oldFn := resolveVersionFn
-	resolveVersionFn = func(_, _ string) (string, error) { return "1.0.0", nil }
-	defer func() { resolveVersionFn = oldFn }()
+	oldFn := resolveVersionForFrameworkFn
+	resolveVersionForFrameworkFn = func(_, _, _ string) (string, error) { return "1.0.0", nil }
+	defer func() { resolveVersionForFrameworkFn = oldFn }()
 
-	got, err := ResolveVersionCached("demo", "https://reg.example/{id}", "demo.pkg")
+	got, err := ResolveVersionCachedForFramework("demo", testRegistryURL, testPackageID, testFramework)
 	if err != nil {
-		t.Fatalf("ResolveVersionCached: %v", err)
+		t.Fatalf("ResolveVersionCachedForFramework: %v", err)
 	}
 	if got != "1.0.0" {
 		t.Fatalf("expected fresh resolve for corrupt cache, got %q", got)
 	}
 }
 
-// TestResolveVersionCachedRepairsCorruptCache pins the recovery path: after a
-// corrupt packages.json is discarded, the fresh value must be persisted so the
-// next run resolves from cache instead of contacting the registry again.
-func TestResolveVersionCachedRepairsCorruptCache(t *testing.T) {
+// TestResolveVersionCachedForFrameworkRepairsCorruptCache pins the recovery
+// path: after a corrupt packages.json is discarded, the fresh value must be
+// persisted so the next run resolves from cache instead of contacting the
+// registry again.
+func TestResolveVersionCachedForFrameworkRepairsCorruptCache(t *testing.T) {
 	resetCacheRoot(t)
 
-	dir, err := appdir.CacheDir("demo")
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir := appdir.CacheDir("demo")
 	path := filepath.Join(dir, CacheFileName)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
@@ -349,18 +328,18 @@ func TestResolveVersionCachedRepairsCorruptCache(t *testing.T) {
 	}
 
 	calls := 0
-	oldFn := resolveVersionFn
-	resolveVersionFn = func(_, _ string) (string, error) {
+	oldFn := resolveVersionForFrameworkFn
+	resolveVersionForFrameworkFn = func(_, _, _ string) (string, error) {
 		calls++
 		return "1.0.0", nil
 	}
-	defer func() { resolveVersionFn = oldFn }()
+	defer func() { resolveVersionForFrameworkFn = oldFn }()
 
-	if _, err := ResolveVersionCached("demo", "https://reg.example/{id}", "demo.pkg"); err != nil {
-		t.Fatalf("first ResolveVersionCached: %v", err)
+	if _, err := ResolveVersionCachedForFramework("demo", testRegistryURL, testPackageID, testFramework); err != nil {
+		t.Fatalf("first ResolveVersionCachedForFramework: %v", err)
 	}
-	if _, err := ResolveVersionCached("demo", "https://reg.example/{id}", "demo.pkg"); err != nil {
-		t.Fatalf("second ResolveVersionCached: %v", err)
+	if _, err := ResolveVersionCachedForFramework("demo", testRegistryURL, testPackageID, testFramework); err != nil {
+		t.Fatalf("second ResolveVersionCachedForFramework: %v", err)
 	}
 	if calls != 1 {
 		t.Fatalf("registry consulted %d times, want 1: corrupt cache was not rewritten", calls)
@@ -376,7 +355,7 @@ func TestResolveVersionCachedRepairsCorruptCache(t *testing.T) {
 	if err := json.Unmarshal(body, &stored); err != nil {
 		t.Fatalf("cache file is still corrupt: %v", err)
 	}
-	key := cacheKey("https://reg.example/{id}", "demo.pkg")
+	key := frameworkCacheKey(testRegistryURL, testPackageID, testFramework)
 	if got := stored.Entries[key].Value; got != "1.0.0" {
 		t.Fatalf("cached version = %q, want 1.0.0", got)
 	}

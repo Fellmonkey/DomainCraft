@@ -23,10 +23,7 @@ func TestBaseFallback(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
 		t.Setenv("USERPROFILE", home)
-		got, err := Base()
-		if err != nil {
-			t.Fatal(err)
-		}
+		got := Base()
 		if want := filepath.Join(home, ".domaincraft"); got != want {
 			t.Errorf("Base() = %q, want %q", got, want)
 		}
@@ -37,10 +34,7 @@ func TestBaseFallback(t *testing.T) {
 		t.Setenv("USERPROFILE", "")
 		t.Setenv("HOMEDRIVE", "")
 		t.Setenv("HOMEPATH", "")
-		got, err := Base()
-		if err != nil {
-			t.Fatal(err)
-		}
+		got := Base()
 		if got != ".domaincraft" {
 			t.Errorf("Base() = %q, want .domaincraft", got)
 		}
@@ -56,7 +50,7 @@ func TestBaseOverrideConcurrentAccess(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			_, _ = Base()
+			_ = Base()
 		}()
 		go func(i int) {
 			defer wg.Done()
@@ -65,9 +59,8 @@ func TestBaseOverrideConcurrentAccess(t *testing.T) {
 	}
 	wg.Wait()
 	SetBaseForTesting("final")
-	got, err := Base()
-	if err != nil || got != "final" {
-		t.Fatalf("Base() after concurrent access = %q, %v; want final", got, err)
+	if got := Base(); got != "final" {
+		t.Fatalf("Base() after concurrent access = %q; want final", got)
 	}
 }
 
@@ -78,30 +71,21 @@ func TestDerivedPaths(t *testing.T) {
 	setBaseForTest(t, dir)
 
 	t.Run("override", func(t *testing.T) {
-		got, err := Base()
-		if err != nil {
-			t.Fatal(err)
-		}
+		got := Base()
 		if got != dir {
 			t.Errorf("Base() = %q, want %q", got, dir)
 		}
 	})
 
 	t.Run("union dir appends components", func(t *testing.T) {
-		got, err := UnionDir("bridges", "cache")
-		if err != nil {
-			t.Fatal(err)
-		}
+		got := UnionDir("bridges", "cache")
 		if want := filepath.Join(dir, "bridges", "cache"); got != want {
 			t.Errorf("UnionDir() = %q, want %q", got, want)
 		}
 	})
 
 	t.Run("cache dir is namespaced", func(t *testing.T) {
-		got, err := CacheDir("csharp-rest", "v2")
-		if err != nil {
-			t.Fatal(err)
-		}
+		got := CacheDir("csharp-rest", "v2")
 		if want := filepath.Join(dir, "cache", "csharp-rest", "v2"); got != want {
 			t.Errorf("CacheDir() = %q, want %q", got, want)
 		}

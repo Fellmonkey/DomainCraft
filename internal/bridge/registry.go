@@ -16,10 +16,6 @@ type RegistryEntry struct {
 	// or local bridges). The ID→Path mapping lives here, in the registry — it
 	// is never derived from directory names at resolution time.
 	Path string
-	// Layer is the bridge's open layer identifier (core/domain/persistence/
-	// transport, core/client/framework/offline, ...). It matches the `layer:`
-	// field each bridge declares, so --replace matches what it documents.
-	Layer string
 	// Deprecated marks legacy bridges kept resolvable for existing `extends:`
 	// chains but hidden from interactive selection and flagged in `bridges`.
 	Deprecated bool
@@ -35,7 +31,6 @@ var DefaultRegistry = []RegistryEntry{
 		Language:    "C#",
 		GitHub:      "DomainCraft/domaincraft-bridge-csharp-core",
 		Path:        "csharp/core",
-		Layer:       "core",
 	},
 	{
 		ID:          "csharp-domain",
@@ -44,7 +39,6 @@ var DefaultRegistry = []RegistryEntry{
 		Language:    "C#",
 		GitHub:      "DomainCraft/domaincraft-bridge-csharp-domain",
 		Path:        "csharp/domain",
-		Layer:       "domain",
 	},
 	{
 		ID:          "csharp-efcore",
@@ -53,7 +47,6 @@ var DefaultRegistry = []RegistryEntry{
 		Language:    "C#",
 		GitHub:      "DomainCraft/domaincraft-bridge-csharp-efcore",
 		Path:        "csharp/persistence/efcore",
-		Layer:       "persistence",
 	},
 	{
 		ID:          "csharp-rest",
@@ -62,7 +55,6 @@ var DefaultRegistry = []RegistryEntry{
 		Language:    "C#",
 		GitHub:      "DomainCraft/domaincraft-bridge-csharp-rest",
 		Path:        "csharp/transport/rest",
-		Layer:       "transport",
 	},
 	{
 		ID:          "csharp-restful",
@@ -96,7 +88,6 @@ var DefaultRegistry = []RegistryEntry{
 		Language:    "TypeScript",
 		GitHub:      "DomainCraft/domaincraft-bridge-ts-core",
 		Path:        "typescript/core",
-		Layer:       "core",
 	},
 	{
 		ID:          "ts-client",
@@ -105,7 +96,6 @@ var DefaultRegistry = []RegistryEntry{
 		Language:    "TypeScript",
 		GitHub:      "DomainCraft/domaincraft-bridge-ts-client",
 		Path:        "typescript/client",
-		Layer:       "client",
 	},
 	{
 		ID:          "react-rest",
@@ -114,7 +104,6 @@ var DefaultRegistry = []RegistryEntry{
 		Language:    "TypeScript",
 		GitHub:      "DomainCraft/domaincraft-bridge-react",
 		Path:        "typescript/react",
-		Layer:       "framework",
 	},
 }
 

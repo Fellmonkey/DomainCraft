@@ -13,10 +13,7 @@ func TestVersionStoreReportsStorageErrors(t *testing.T) {
 	root := t.TempDir()
 	appdir.SetBaseForTesting(root)
 	defer appdir.SetBaseForTesting("")
-	dir, err := appdir.CacheDir("broken-cache")
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir := appdir.CacheDir("broken-cache")
 	if err := os.MkdirAll(filepath.Join(dir, CacheFileName), 0o755); err != nil {
 		t.Fatal(err)
 	}

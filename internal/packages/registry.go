@@ -75,10 +75,10 @@ func validateRegistryURL(raw string) error {
 		if errors.As(err, &urlErr) && urlErr.Err != nil {
 			err = urlErr.Err
 		}
-		return fmt.Errorf("invalid registry URL %q: %w", redactedRegistryURL(raw), err)
+		return fmt.Errorf("invalid registry URL %q: %w", netutil.RedactedURL(raw), err)
 	}
 	if u.Scheme != "https" || u.Host == "" {
-		return fmt.Errorf("registry URL must be an absolute https URL: %q", redactedRegistryURL(raw))
+		return fmt.Errorf("registry URL must be an absolute https URL: %q", netutil.RedactedURL(raw))
 	}
 	host := strings.ToLower(u.Hostname())
 	if allowLocalRegistryForTests {
@@ -128,7 +128,7 @@ func restrictedRegistryDialer(ctx context.Context, network, addr string) (net.Co
 	}
 	if ip := net.ParseIP(host); ip != nil {
 		if !allowedRegistryIP(ip) {
-			return nil, fmt.Errorf("registry address %s is not allowed", redactedRegistryURL("https://"+addr))
+			return nil, fmt.Errorf("registry address %s is not allowed", netutil.RedactedURL("https://"+addr))
 		}
 		return dialer.DialContext(ctx, network, addr)
 	}
@@ -145,13 +145,6 @@ func restrictedRegistryDialer(ctx context.Context, network, addr string) (net.Co
 		}
 	}
 	return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
-}
-
-// redactedRegistryURL keeps only scheme and host for error messages, so
-// credentials and query strings from a bridge's config never reach the log.
-// The redaction itself is shared with the other network callers.
-func redactedRegistryURL(raw string) string {
-	return netutil.RedactedURL(raw)
 }
 
 // ResolveVersion queries a package registry (e.g. NuGet) for the latest stable version

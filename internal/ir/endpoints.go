@@ -121,7 +121,7 @@ type EndpointDecl struct {
 // AuthEndpoints returns the project-level auth endpoint contract (login /
 // register / me / setup) when authentication is enabled.
 func (p *Project) AuthEndpoints() []EndpointDecl {
-	if !p.HasAuth() || p.Auth == nil {
+	if !p.HasAuth() {
 		return nil
 	}
 	entity := p.Auth.Entity

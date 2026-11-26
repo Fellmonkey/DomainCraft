@@ -137,9 +137,9 @@ func TestValidateRegistryURLRedactsSecrets(t *testing.T) {
 // failed cache write must be reported to the caller.
 func TestVersionCacheConcurrentWrites(t *testing.T) {
 	resetCacheRoot(t)
-	old := resolveVersionFn
-	defer func() { resolveVersionFn = old }()
-	resolveVersionFn = func(_, _ string) (string, error) { return "1.0.0", nil }
+	old := resolveVersionForFrameworkFn
+	defer func() { resolveVersionForFrameworkFn = old }()
+	resolveVersionForFrameworkFn = func(_, _, _ string) (string, error) { return "1.0.0", nil }
 
 	const count = 8
 	var wg sync.WaitGroup
@@ -148,7 +148,7 @@ func TestVersionCacheConcurrentWrites(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, err := ResolveVersionCached("shared", "https://reg.example/{id}", fmt.Sprintf("pkg%d", i))
+			_, err := ResolveVersionCachedForFramework("shared", "https://reg.example/{id}", fmt.Sprintf("pkg%d", i), "net10.0")
 			errs <- err
 		}(i)
 	}
@@ -156,7 +156,7 @@ func TestVersionCacheConcurrentWrites(t *testing.T) {
 	close(errs)
 	for err := range errs {
 		if err != nil {
-			t.Fatalf("ResolveVersionCached: %v", err)
+			t.Fatalf("ResolveVersionCachedForFramework: %v", err)
 		}
 	}
 	entries, err := versionStore("shared")
@@ -170,18 +170,18 @@ func TestVersionCacheConcurrentWrites(t *testing.T) {
 
 func TestVersionCacheWriteFailureIsSurfaced(t *testing.T) {
 	resetCacheRoot(t)
-	oldResolve, oldPersist := resolveVersionFn, persistVersionCacheFn
+	oldResolve, oldPersist := resolveVersionForFrameworkFn, persistVersionCacheFn
 	defer func() {
-		resolveVersionFn, persistVersionCacheFn = oldResolve, oldPersist
+		resolveVersionForFrameworkFn, persistVersionCacheFn = oldResolve, oldPersist
 	}()
-	resolveVersionFn = func(_, _ string) (string, error) { return "2.0.0", nil }
+	resolveVersionForFrameworkFn = func(_, _, _ string) (string, error) { return "2.0.0", nil }
 	persistVersionCacheFn = func(string, map[string]versionEntry) error {
 		return errors.New("disk full")
 	}
 
-	_, err := ResolveVersionCached("demo", "https://reg.example/{id}", "demo.pkg")
+	_, err := ResolveVersionCachedForFramework("demo", "https://reg.example/{id}", "demo.pkg", "net10.0")
 	if err == nil || !strings.Contains(err.Error(), "disk full") {
-		t.Fatalf("ResolveVersionCached error = %v, want the write failure", err)
+		t.Fatalf("ResolveVersionCachedForFramework error = %v, want the write failure", err)
 	}
 }
 

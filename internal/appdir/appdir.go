@@ -37,32 +37,29 @@ func currentBaseOverride() string {
 // Returns .domaincraft relative to the current directory when the home
 // directory is unavailable. The directory is NOT created; callers that write
 // under it are responsible for creating the subdirectories they need.
-func Base() (string, error) {
+// Path resolution cannot fail, so callers get a plain string.
+func Base() string {
 	if override := currentBaseOverride(); override != "" {
-		return override, nil
+		return override
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return filepath.Join(".domaincraft"), nil
+		return ".domaincraft"
 	}
-	return filepath.Join(home, ".domaincraft"), nil
+	return filepath.Join(home, ".domaincraft")
 }
 
 // UnionDir returns the path of a subdirectory under the app base directory,
 // e.g. appdir.UnionDir("bridges") -> ~/.domaincraft/bridges.
-func UnionDir(elem ...string) (string, error) {
-	base, err := Base()
-	if err != nil {
-		return "", err
-	}
-	parts := append([]string{base}, elem...)
-	return filepath.Join(parts...), nil
+func UnionDir(elem ...string) string {
+	parts := append([]string{Base()}, elem...)
+	return filepath.Join(parts...)
 }
 
 // CacheDir resolves a per-consumer cache directory under ~/.domaincraft/cache.
 // Each consumer passes its own name so caches never mix, e.g.
 // appdir.CacheDir("csharp-restful") -> ~/.domaincraft/cache/csharp-restful.
-func CacheDir(names ...string) (string, error) {
+func CacheDir(names ...string) string {
 	parts := append([]string{"cache"}, names...)
 	return UnionDir(parts...)
 }

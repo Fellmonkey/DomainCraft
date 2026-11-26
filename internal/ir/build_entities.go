@@ -271,7 +271,7 @@ func resolveArrayType(targetType string) string {
 }
 
 func convertAuth(source *parser.AuthConfig, schema *parser.ParsedSchema) *AuthConfig {
-	if source == nil || source.Type == "" || source.Type == "none" {
+	if source == nil || !specmeta.IsAuthEnabled(source.Type) {
 		return nil
 	}
 

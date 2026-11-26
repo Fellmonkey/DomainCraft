@@ -156,11 +156,11 @@ func storeParsedSource(key string, src parsedBridgeSource) {
 
 // loadSource loads a single bridge directory (its bridge.yaml).
 func loadSource(bridgePath string) (sourceConfig, error) {
-	bridgeDir, configPath, err := resolveBridgePath(bridgePath)
+	bridgeDir, configPath, err := bridge.LocalBridgePaths(bridgePath)
 	if err != nil {
 		return sourceConfig{}, err
 	}
-	data, err := os.ReadFile(configPath) //nolint:gosec // resolved from validated bridge refs by resolveBridgePath
+	data, err := os.ReadFile(configPath) //nolint:gosec // resolved from validated bridge refs by bridge.LocalBridgePaths
 	if err != nil {
 		return sourceConfig{}, fmt.Errorf("read bridge config: %w", err)
 	}
@@ -285,11 +285,4 @@ func (r *Renderer) applyDelimiters(t *template.Template) *template.Template {
 		return t.Delims(left, right)
 	}
 	return t
-}
-
-// resolveBridgePath normalizes a local bridge reference through the shared
-// bridge-package helper. It is fail-closed: a missing path or a directory
-// without bridge.yaml is an error, never a guessed config path to read.
-func resolveBridgePath(bridgePath string) (string, string, error) {
-	return bridge.LocalBridgePaths(bridgePath)
 }

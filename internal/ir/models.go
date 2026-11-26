@@ -75,7 +75,7 @@ type AuthEndpoints struct {
 
 // HasAuth returns true if authentication is enabled.
 func (p *Project) HasAuth() bool {
-	return p.Auth != nil && p.Auth.Type != "" && p.Auth.Type != "none"
+	return p.Auth != nil && specmeta.IsAuthEnabled(p.Auth.Type)
 }
 
 // AuthEntity returns the resolved authentication entity (the entity that owns
@@ -83,7 +83,7 @@ func (p *Project) HasAuth() bool {
 // is disabled or the entity could not be found. Bridges use this instead of
 // scanning Project.Entities for the auth entity.
 func (p *Project) AuthEntity() *Entity {
-	if p == nil || !p.HasAuth() || p.Auth == nil {
+	if p == nil || !p.HasAuth() {
 		return nil
 	}
 	for i := range p.Entities {

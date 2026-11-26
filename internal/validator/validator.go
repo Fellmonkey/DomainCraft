@@ -309,18 +309,11 @@ func (v *Validator) validateCircularRelations() []ValidationError {
 			case white:
 				dfs(target)
 			case gray:
-				// Back-edge found: mark everything from target up the stack.
-				marking := false
-				for _, n := range stack {
-					if n == target {
-						marking = true
-					}
-					if marking {
-						inCycle[n] = true
-					}
+				// Back-edge found: target is gray, so it is on the stack.
+				// Mark everything from target up to the current node.
+				for _, n := range stack[slices.Index(stack, target):] {
+					inCycle[n] = true
 				}
-			case black:
-				// already fully explored
 			}
 		}
 		stack = stack[:len(stack)-1]
@@ -350,7 +343,7 @@ func (v *Validator) validateAuth() []ValidationError {
 			"unknown auth.type %q; allowed: %s", auth.Type, strings.Join(specmeta.AuthTypes, ", ")))
 	}
 
-	if auth.Type == "" || auth.Type == "none" {
+	if !specmeta.IsAuthEnabled(auth.Type) {
 		return errs
 	}
 
@@ -360,8 +353,7 @@ func (v *Validator) validateAuth() []ValidationError {
 		if !ok {
 			errs = append(errs, invalidf("<schema>", "",
 				"auth.entity %q does not exist", auth.Entity))
-		} else if !specmeta.HasEmailAndPassword(entity.FieldOrder) {
-			hasEmail, hasPassword := specmeta.AuthFieldState(entity.FieldOrder)
+		} else if hasEmail, hasPassword := specmeta.AuthFieldState(entity.FieldOrder); !hasEmail || !hasPassword {
 			errs = append(errs, invalidf("<schema>", "",
 				"auth.entity %q must have both 'email' and 'password' fields (missing: %s)", auth.Entity,
 				missingFields(!hasEmail, !hasPassword)))
@@ -455,7 +447,8 @@ func (v *Validator) singleFKBack(target *parser.ParsedEntity, sourceName string)
 
 func (v *Validator) validateEnums() []ValidationError {
 	var errs []ValidationError
-	for name, values := range v.schema.Enums {
+	for _, name := range slices.Sorted(maps.Keys(v.schema.Enums)) {
+		values := v.schema.Enums[name]
 		if !specmeta.IsValidIdentifier(name) {
 			errs = append(errs, invalid("<enum>", name,
 				"enum name is not a valid identifier"))
@@ -630,7 +623,8 @@ func (v *Validator) validateEntity(entityName string, entity *parser.ParsedEntit
 		}
 		if len(uniqueFields) > 0 {
 			for i, seedEntry := range entity.Seed {
-				for fieldName, values := range uniqueFields {
+				for _, fieldName := range slices.Sorted(maps.Keys(uniqueFields)) {
+					values := uniqueFields[fieldName]
 					seedVal, ok := seedEntry[fieldName]
 					if !ok {
 						continue
@@ -805,7 +799,8 @@ func validateFieldValidations(entityName, fieldName string, field *parser.Parsed
 	isNumeric := specmeta.IsNumeric(ftype)
 	isString := specmeta.IsStringType(ftype)
 
-	for mod, val := range field.Validations {
+	for _, mod := range slices.Sorted(maps.Keys(field.Validations)) {
+		val := field.Validations[mod]
 		if specmeta.IsStringOnlyValidationModifier(mod) && !isString {
 			errs = append(errs, warnf(entityName, fieldName,
 				"validation '%s' is only applicable to string/text fields, not %s", mod, ftype))
@@ -1128,7 +1123,7 @@ func (v *Validator) validateSeedEntry(entityName string, entity *parser.ParsedEn
 	var errs []ValidationError
 
 	// Check that seed fields exist.
-	for seedField := range entry {
+	for _, seedField := range slices.Sorted(maps.Keys(entry)) {
 		if _, ok := entity.Fields[seedField]; !ok {
 			errs = append(errs, invalidf(entityName, seedField,
 				"seed entry %d references unknown field '%s'", entryIdx, seedField))
@@ -1136,7 +1131,8 @@ func (v *Validator) validateSeedEntry(entityName string, entity *parser.ParsedEn
 	}
 
 	// Check seed value types against field types.
-	for seedField, seedValue := range entry {
+	for _, seedField := range slices.Sorted(maps.Keys(entry)) {
+		seedValue := entry[seedField]
 		field := entity.Fields[seedField]
 		if field == nil {
 			continue

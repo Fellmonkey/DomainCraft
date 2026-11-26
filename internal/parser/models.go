@@ -179,12 +179,34 @@ func yamlMergeFieldPairs(value *yaml.Node, mergeKey *yaml.Node) ([]fieldDefPair,
 	return pairs, nil
 }
 
-// rejectUnknownMergeKeys applies the same strict key check to keys contributed
-// by a YAML merge ("<<") as to keys written directly in the block.
-func rejectUnknownMergeKeys(value *yaml.Node, valid map[string]bool, errFn func(string) error) error {
-	for _, name := range yamlMergeKeyNames(value) {
-		if !valid[name] {
-			return errFn(name)
+// checkStrictKeys is the single strict-key rule for every nested config block.
+// It rejects unknown keys, including ones contributed by a YAML merge ("<<"),
+// and optionally records which allowed keys were present. errFn carries the
+// block-specific wording; line preserves the source location from the node.
+func checkStrictKeys(value *yaml.Node, allowed []string, errFn func(string, int) error, mark func(string)) error {
+	if value.Kind != yaml.MappingNode {
+		return nil
+	}
+	valid := specmeta.SliceToSet(allowed)
+	for i := 0; i < len(value.Content)-1; i += 2 {
+		keyNode := value.Content[i]
+		key := keyNode.Value
+		if key == "<<" && keyNode.Tag != "!!str" {
+			for _, name := range yamlMergeKeyNames(value.Content[i+1]) {
+				if !valid[name] {
+					return errFn(name, keyNode.Line)
+				}
+				if mark != nil {
+					mark(name)
+				}
+			}
+			continue
+		}
+		if !valid[key] {
+			return errFn(key, keyNode.Line)
+		}
+		if mark != nil {
+			mark(key)
 		}
 	}
 	return nil
@@ -203,30 +225,16 @@ func unmarshalYAMLWithPresence(value *yaml.Node, target any, typeName string, al
 	if value.Kind != yaml.MappingNode {
 		return value.Decode(target)
 	}
-	allowedKeys := specmeta.SliceToSet(allowed)
-	for i := 0; i < len(value.Content)-1; i += 2 {
-		key := value.Content[i]
-		if mark, tracked := presence[key.Value]; tracked {
-			mark()
-			continue
+	errFn := func(key string, line int) error {
+		return fmt.Errorf("line %d: field %s not found in type parser.%s", line, key, typeName)
+	}
+	mark := func(key string) {
+		if fn, tracked := presence[key]; tracked {
+			fn()
 		}
-		if key.Value == "<<" {
-			if key.Tag != "!!str" {
-				for _, name := range yamlMergeKeyNames(value.Content[i+1]) {
-					if !allowedKeys[name] {
-						return fmt.Errorf("line %d: field %s not found in type parser.%s", key.Line, name, typeName)
-					}
-					if mark, merged := presence[name]; merged {
-						mark()
-					}
-				}
-				continue
-			}
-			// A quoted "<<" is a regular key, not a merge — treat as unknown.
-		}
-		if !allowedKeys[key.Value] {
-			return fmt.Errorf("line %d: field %s not found in type parser.%s", key.Line, key.Value, typeName)
-		}
+	}
+	if err := checkStrictKeys(value, allowed, errFn, mark); err != nil {
+		return err
 	}
 	return value.Decode(target)
 }
@@ -339,23 +347,12 @@ func (p *RawPermissions) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind != yaml.MappingNode {
 		return value.Decode((*rawPermissionsAlias)(p))
 	}
-	// Iterate keys explicitly so unknown permission keys become errors,
-	// including keys smuggled in through a YAML merge.
-	reject := func(key string) error {
+	// Unknown keys become errors, including ones smuggled through a YAML merge.
+	reject := func(key string, _ int) error {
 		return fmt.Errorf("unknown permission key %q; valid keys: %s", key, strings.Join(specmeta.PermissionKeys, ", "))
 	}
-	for i := 0; i < len(value.Content)-1; i += 2 {
-		keyNode := value.Content[i]
-		key := keyNode.Value
-		if key == "<<" && keyNode.Tag != "!!str" {
-			if err := rejectUnknownMergeKeys(value.Content[i+1], specmeta.SliceToSet(specmeta.PermissionKeys), reject); err != nil {
-				return err
-			}
-			continue
-		}
-		if !specmeta.IsPermissionKey(key) {
-			return reject(key)
-		}
+	if err := checkStrictKeys(value, specmeta.PermissionKeys, reject, nil); err != nil {
+		return err
 	}
 	return value.Decode((*rawPermissionsAlias)(p))
 }
@@ -489,22 +486,11 @@ func (r *RawIndex) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind != yaml.MappingNode {
 		return value.Decode((*rawIndexAlias)(r))
 	}
-	valid := specmeta.SliceToSet([]string{"fields", "type", "sort", "unique"})
-	reject := func(key string) error {
+	reject := func(key string, _ int) error {
 		return fmt.Errorf("unknown index key %q; valid keys: fields, type, sort, unique", key)
 	}
-	for i := 0; i < len(value.Content)-1; i += 2 {
-		keyNode := value.Content[i]
-		key := keyNode.Value
-		if key == "<<" && keyNode.Tag != "!!str" {
-			if err := rejectUnknownMergeKeys(value.Content[i+1], valid, reject); err != nil {
-				return err
-			}
-			continue
-		}
-		if !valid[key] {
-			return reject(key)
-		}
+	if err := checkStrictKeys(value, []string{"fields", "type", "sort", "unique"}, reject, nil); err != nil {
+		return err
 	}
 	return value.Decode((*rawIndexAlias)(r))
 }

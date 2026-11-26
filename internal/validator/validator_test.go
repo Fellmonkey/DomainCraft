@@ -11,6 +11,48 @@ import (
 	"github.com/DomainCraft/DomainCraft/internal/testutil"
 )
 
+// TestValidationDiagnosticsAreDeterministic guards the rule that diagnostics
+// use the same order on every run. Several checks iterate maps internally; an
+// unordered range made `validate` and the WASM result change line order.
+func TestValidationDiagnosticsAreDeterministic(t *testing.T) {
+	t.Parallel()
+	schema := &parser.ParsedSchema{
+		Project:     parser.ProjectConfig{Name: "Test"},
+		EntityOrder: []string{"Item"},
+		Entities: map[string]*parser.ParsedEntity{
+			"Item": {
+				Name:       "Item",
+				FieldOrder: []string{"id", "status", "count"},
+				Fields: map[string]*parser.ParsedField{
+					"id":     testutil.MustParsedField(t, "id", "uuid [primary]"),
+					"status": testutil.MustParsedField(t, "status", "enum(Zebra)"),
+					"count":  testutil.MustParsedField(t, "count", "int [min:abc, max:x]"),
+				},
+			},
+		},
+		Enums: map[string][]string{"Zebra": {}, "Alpha": {}},
+	}
+
+	var want string
+	for range 20 {
+		var got strings.Builder
+		for _, e := range New(schema).Validate() {
+			got.WriteString(e.Message)
+			got.WriteByte('\n')
+		}
+		if want == "" {
+			want = got.String()
+			continue
+		}
+		if got.String() != want {
+			t.Fatalf("validation diagnostics are not deterministic:\nfirst:\n%s\nnext:\n%s", want, got.String())
+		}
+	}
+	if !strings.Contains(want, "enum must have at least one value") {
+		t.Fatalf("fixture did not produce the enum diagnostic: %s", want)
+	}
+}
+
 func TestValidateDetectsMissingPrimaryKey(t *testing.T) {
 	t.Parallel()
 	schema := &parser.ParsedSchema{

@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/DomainCraft/DomainCraft/internal/parser"
-	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 	"github.com/DomainCraft/DomainCraft/pkg/textutil"
 )
 
@@ -103,9 +102,11 @@ func reconcileOneToMany(entities []Entity, index map[string]*relationIndex) {
 			if bySource := index[rel.TargetEntity.Name]; bySource != nil {
 				pair = bySource.singleBack[entity.Name]
 			}
-			// The single-back rule is shared with the validator warning.
-			if pair == nil || pair.TargetEntity == nil ||
-				!specmeta.IsSingleBackRelationField(true, pair.IsMany, pair.TargetEntity.Name, entity.Name) {
+			// singleBack holds only !IsMany relations with a non-nil target,
+			// bucketed by that target's name — so the lookup above already
+			// satisfies the validator's single-back rule. The validator keeps
+			// the explicit check because its inputs are user-declared.
+			if pair == nil {
 				continue
 			}
 			rel.RelationType = "one-to-many"

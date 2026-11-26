@@ -33,12 +33,8 @@ func cacheKey(registryURL, packageID string) string {
 	return registryURL + "\x00" + packageID
 }
 
-// resolveVersionFn is the actual registry lookup performed on a cache miss. It
-// is a variable so tests can substitute a fake (avoiding a real network call).
-var resolveVersionFn = ResolveVersion
-
 // resolveVersionForFrameworkFn is the TFM-aware lookup used by renderers. It is
-// a separate seam so the version-filtering logic can be tested offline.
+// a seam so the version-filtering logic can be tested offline.
 var resolveVersionForFrameworkFn = ResolveVersionForFramework
 
 // persistVersionCacheFn is the cache write used by both resolve paths. It is a
@@ -57,10 +53,7 @@ var cacheMu sync.Mutex
 // (~/.domaincraft/cache/<bridge>/packages.json), so with many bridges the
 // caches never mix and a corrupt one only affects its own bridge.
 func versionStore(bridgeID string) (map[string]versionEntry, error) {
-	dir, err := appdir.CacheDir(bridgeID)
-	if err != nil {
-		return nil, err
-	}
+	dir := appdir.CacheDir(bridgeID)
 	var data struct {
 		Entries map[string]versionEntry `json:"entries"`
 	}
@@ -87,10 +80,7 @@ func versionStore(bridgeID string) (map[string]versionEntry, error) {
 // silently discarding it made a broken cache path indistinguishable from a
 // successful resolution.
 func persistVersionCache(bridgeID string, entries map[string]versionEntry) error {
-	dir, err := appdir.CacheDir(bridgeID)
-	if err != nil {
-		return fmt.Errorf("resolve package cache dir for %q: %w", bridgeID, err)
-	}
+	dir := appdir.CacheDir(bridgeID)
 	if err := fsutil.WriteJSON(filepath.Join(dir, CacheFileName), struct {
 		Entries map[string]versionEntry `json:"entries"`
 	}{Entries: entries}); err != nil {
@@ -147,21 +137,20 @@ func resolveVersionCached(bridgeID, key string, resolve func() (string, error)) 
 	return version, nil
 }
 
-// ResolveVersionCached resolves the latest stable version of a package from its
-// registry, caching the result per bridge for DefaultCacheTTL. A fresh cached
-// value avoids a network round-trip on every generation; a stale one triggers a
-// refresh. A corrupt or missing cache is ignored and simply re-resolved.
-func ResolveVersionCached(bridgeID, registryURL, packageID string) (string, error) {
-	return resolveVersionCached(bridgeID, cacheKey(registryURL, packageID), func() (string, error) {
-		return resolveVersionFn(registryURL, packageID)
-	})
+// frameworkCacheKey derives the cache key for a TFM-aware resolution. The
+// framework is part of the key: the same bridge regenerated for net10.0 and
+// net11.0 must never reuse an incompatible version.
+func frameworkCacheKey(registryURL, packageID, targetFramework string) string {
+	return cacheKey(registryURL, packageID) + "\x00" + targetFramework
 }
 
-// ResolveVersionCachedForFramework is the TFM-aware counterpart of
-// ResolveVersionCached. The framework is part of the cache key: the same bridge
-// regenerated for net10.0 and net11.0 must not reuse an incompatible version.
+// ResolveVersionCachedForFramework resolves the latest stable version of a
+// package compatible with targetFramework, caching the result per bridge for
+// DefaultCacheTTL. A fresh cached value avoids a network round-trip on every
+// generation; a stale one triggers a refresh. A corrupt or missing cache is
+// ignored and simply re-resolved.
 func ResolveVersionCachedForFramework(bridgeID, registryURL, packageID, targetFramework string) (string, error) {
-	key := cacheKey(registryURL, packageID) + "\x00" + targetFramework
+	key := frameworkCacheKey(registryURL, packageID, targetFramework)
 	return resolveVersionCached(bridgeID, key, func() (string, error) {
 		return resolveVersionForFrameworkFn(registryURL, packageID, targetFramework)
 	})

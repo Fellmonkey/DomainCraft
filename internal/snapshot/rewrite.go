@@ -119,23 +119,19 @@ func hasPrefixRunes(s, prefix []rune) bool {
 func tokenOK(rs []rune, idx, length int) bool {
 	if idx > 0 {
 		prev := rs[idx-1]
-		prefixOK := unicode.IsUpper(prev) && (idx < 2 || !isIdentRune(rs[idx-2]))
-		if isIdentRune(prev) && !prefixOK {
+		prefixOK := unicode.IsUpper(prev) && (idx < 2 || !specmeta.IsIdentifierRune(rs[idx-2]))
+		if specmeta.IsIdentifierRune(prev) && !prefixOK {
 			return false
 		}
 	}
 	j := idx + length
 	if j < len(rs) {
 		next := rs[j]
-		if isIdentRune(next) && unicode.IsLower(next) {
+		if specmeta.IsIdentifierRune(next) && unicode.IsLower(next) {
 			return false
 		}
 	}
 	return true
-}
-
-func isIdentRune(r rune) bool {
-	return specmeta.IsIdentifierRune(r)
 }
 
 // casingVariants builds the one casing-variant table used by every rename

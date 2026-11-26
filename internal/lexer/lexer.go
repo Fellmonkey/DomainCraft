@@ -110,13 +110,13 @@ func (l *Lexer) parseType(typeStr string, fd *FieldDefinition) error {
 		return nil
 	}
 
-	// Check for array(Type). The prefix/suffix handling lives in specmeta so
-	// every consumer extracts the element type the same way and rejects an
-	// unclosed declaration.
-	if strings.HasPrefix(typeStr, specmeta.FieldTypeArray+"(") && !strings.HasSuffix(typeStr, ")") {
-		return fmt.Errorf("array type requires a closing parenthesis")
-	}
-	if specmeta.IsArrayType(typeStr) {
+	// Check for array(Type). specmeta owns the element-type extraction; the
+	// closing parenthesis is checked here once so an unclosed declaration
+	// gets its own diagnostic instead of falling through to "unknown type".
+	if strings.HasPrefix(typeStr, specmeta.FieldTypeArray+"(") {
+		if !strings.HasSuffix(typeStr, ")") {
+			return fmt.Errorf("array type requires a closing parenthesis")
+		}
 		fd.Type = specmeta.FieldTypeArray
 		fd.TargetType = strings.TrimSpace(specmeta.ParseArrayInner(typeStr))
 		if fd.TargetType == "" {

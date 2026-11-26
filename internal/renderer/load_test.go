@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/DomainCraft/DomainCraft/internal/bridge"
 )
 
 // TestResolveBridgePath covers the four local-path shapes through the shared
@@ -45,10 +47,10 @@ func TestResolveBridgePath(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			dir, config, err := resolveBridgePath(tc.input)
+			dir, config, err := bridge.LocalBridgePaths(tc.input)
 			if tc.wantErrPart != "" {
 				if err == nil {
-					t.Fatalf("resolveBridgePath(%q) = (%q, %q), want error containing %q", tc.input, dir, config, tc.wantErrPart)
+					t.Fatalf("bridge.LocalBridgePaths(%q) = (%q, %q), want error containing %q", tc.input, dir, config, tc.wantErrPart)
 				}
 				if !strings.Contains(err.Error(), tc.wantErrPart) {
 					t.Fatalf("error = %q, want it to contain %q", err, tc.wantErrPart)
@@ -56,10 +58,10 @@ func TestResolveBridgePath(t *testing.T) {
 				return
 			}
 			if err != nil {
-				t.Fatalf("resolveBridgePath(%q): %v", tc.input, err)
+				t.Fatalf("bridge.LocalBridgePaths(%q): %v", tc.input, err)
 			}
 			if dir != tc.wantDir || config != tc.wantConfig {
-				t.Errorf("resolveBridgePath(%q) = (%q, %q), want (%q, %q)", tc.input, dir, config, tc.wantDir, tc.wantConfig)
+				t.Errorf("bridge.LocalBridgePaths(%q) = (%q, %q), want (%q, %q)", tc.input, dir, config, tc.wantDir, tc.wantConfig)
 			}
 		})
 	}

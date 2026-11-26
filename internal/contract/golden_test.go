@@ -204,10 +204,7 @@ func seedPackageVersions(framework string) error {
 				packagesByKey[key] = goldenPackageEntry{Value: hermeticPackageVersion, StoredAt: storedAt}
 			}
 		}
-		cacheDir, err := appdir.CacheDir(cacheNamespace(adapter.Name))
-		if err != nil {
-			return err
-		}
+		cacheDir := appdir.CacheDir(cacheNamespace(adapter.Name))
 		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 			return err
 		}
@@ -363,10 +360,7 @@ func TestGoldenLeafBridges(t *testing.T) {
 // renderer resolves packages with the bridge-declared TFM when the domain has
 // no platform, so that key must be seeded or golden runs hit the network.
 func TestGoldenSeedCoversBridgeTargetFramework(t *testing.T) {
-	cacheDir, err := appdir.CacheDir(cacheNamespace("csharp-rest"))
-	if err != nil {
-		t.Fatalf("resolve seeded cache dir: %v", err)
-	}
+	cacheDir := appdir.CacheDir(cacheNamespace("csharp-rest"))
 	data, err := os.ReadFile(filepath.Join(cacheDir, packages.CacheFileName))
 	if err != nil {
 		t.Fatalf("read seeded package cache: %v", err)

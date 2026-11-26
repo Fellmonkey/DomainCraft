@@ -124,9 +124,6 @@ func (p *Parser) Parse() (*ParsedSchema, error) {
 		schema.EntityOrder = append(schema.EntityOrder, entityName)
 	}
 
-	// Sort for deterministic order
-	slices.Sort(schema.EntityOrder)
-
 	return schema, nil
 }
 
@@ -156,14 +153,12 @@ func (p *Parser) parseEntity(name string, raw RawEntity) (*ParsedEntity, error) 
 	}
 
 	// Add automatic fields based on features
-	if err := p.addFeatureFields(entity); err != nil {
-		return nil, err
-	}
+	p.addFeatureFields(entity)
 
 	// Parse fields in YAML order (preserved by RawEntity.UnmarshalYAML).
 	for _, fieldName := range raw.FieldOrder {
 		fieldDef := raw.Fields[fieldName]
-		field, err := p.parseField(fieldName, fieldDef)
+		field, err := ParseField(fieldName, fieldDef)
 		if err != nil {
 			return nil, fmt.Errorf("field %q: %w", fieldName, err)
 		}
@@ -201,12 +196,6 @@ func (p *Parser) parseEntity(name string, raw RawEntity) (*ParsedEntity, error) 
 	entity.Seed = raw.Seed
 
 	return entity, nil
-}
-
-// parseField is kept for callers inside the parser; the shared entry point is
-// ParseField so the testutil helper cannot drift from the parser's normalization.
-func (p *Parser) parseField(name string, fieldDef string) (*ParsedField, error) {
-	return ParseField(name, fieldDef)
 }
 
 // ParseField parses a single field definition and applies the parser's semantic
@@ -256,7 +245,7 @@ func ParseField(name string, fieldDef string) (*ParsedField, error) {
 
 // addFeatureFields adds automatic fields based on entity features.
 // Uses specmeta.FeatureFieldDefs as the single source of truth.
-func (p *Parser) addFeatureFields(entity *ParsedEntity) error {
+func (p *Parser) addFeatureFields(entity *ParsedEntity) {
 	// Iterate in sorted order for deterministic field generation.
 	names := slices.Sorted(maps.Keys(specmeta.FeatureFieldDefs))
 	for _, fieldName := range names {
@@ -267,7 +256,6 @@ func (p *Parser) addFeatureFields(entity *ParsedEntity) error {
 		entity.Fields[fieldName] = newFeatureField(fieldName, def)
 		entity.FieldOrder = append(entity.FieldOrder, fieldName)
 	}
-	return nil
 }
 
 // newFeatureField creates a ParsedField for an auto-generated feature field.
