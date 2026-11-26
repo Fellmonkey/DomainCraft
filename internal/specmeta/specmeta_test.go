@@ -190,7 +190,7 @@ func TestCacheProvidersShareInfraCacheStores(t *testing.T) {
 
 func TestStringModifierPredicatesMatchSlices(t *testing.T) {
 	t.Parallel()
-	for _, mod := range StringValidationModifiers {
+	for _, mod := range stringValidationModifiers {
 		if !IsStringValidationModifier(mod) {
 			t.Errorf("IsStringValidationModifier(%q) = false, want true", mod)
 		}

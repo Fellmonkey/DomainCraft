@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DomainCraft/DomainCraft/internal/specmeta"
 )
 
 func TestParsePrimitiveTypes(t *testing.T) {
@@ -471,13 +470,9 @@ func TestLexerRejectsUnclosedTypeDeclaration(t *testing.T) {
 	}
 }
 
-func TestLexerAcceptsSpecmetaStringModifier(t *testing.T) {
-	// Not parallel: the spec list is extended for the duration of this test.
-	original := specmeta.StringValidationModifiers
-	t.Cleanup(func() { specmeta.StringValidationModifiers = original })
-	specmeta.StringValidationModifiers = append(append([]string(nil), original...), "startsWith")
-
-	fd, err := ParseFieldString("string [startsWith:foo]")
+func TestLexerAcceptsInjectedStringModifier(t *testing.T) {
+	t.Parallel()
+	fd, err := ParseWithStringModifiers("string [startsWith:foo]", []string{"startsWith"})
 	if err != nil {
 		t.Fatalf("ParseFieldString() error = %v", err)
 	}

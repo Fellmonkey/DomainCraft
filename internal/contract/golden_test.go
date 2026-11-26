@@ -17,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"gopkg.in/yaml.v3"
 
 	"github.com/DomainCraft/DomainCraft/internal/appdir"
 	"github.com/DomainCraft/DomainCraft/internal/bridge"
@@ -51,13 +50,6 @@ var goldenBridges = []string{
 // seeded cache keeps rendering offline and makes the golden manifests stable
 // even when upstream versions change.
 const hermeticPackageVersion = "1.0.0"
-
-type goldenBridgeManifest struct {
-	Name             string            `yaml:"name"`
-	RegistryURL      string            `yaml:"registry_url"`
-	RegistryPackages map[string]string `yaml:"registry_packages"`
-	TargetFramework  string            `yaml:"target_framework"`
-}
 
 type goldenPackageCache struct {
 	Entries map[string]goldenPackageEntry `json:"entries"`
@@ -128,18 +120,6 @@ func cacheNamespace(name string) string {
 	return b.String()
 }
 
-func readBridgeManifest(dir string) (goldenBridgeManifest, error) {
-	data, err := os.ReadFile(filepath.Join(dir, "bridge.yaml"))
-	if err != nil {
-		return goldenBridgeManifest{}, err
-	}
-	var m goldenBridgeManifest
-	if err := yaml.Unmarshal(data, &m); err != nil {
-		return goldenBridgeManifest{}, fmt.Errorf("parse %s: %w", dir, err)
-	}
-	return m, nil
-}
-
 // seedPackageVersions writes one packages.json per bundled adapter so the
 // renderer never needs a network lookup. The key layout is the one documented
 // by internal/packages: registryURL + NUL + packageID + NUL + framework.
@@ -161,9 +141,9 @@ func seedPackageVersions(framework string) error {
 		// single URL: the adapter's, otherwise the first one declared by a base.
 		packageIDs := make(map[string]struct{})
 		registryURL := ""
-		var adapter goldenBridgeManifest
+		var adapter bridge.Manifest
 		for i, base := range chain {
-			m, err := readBridgeManifest(base)
+			m, err := bridge.LoadManifest(base)
 			if err != nil {
 				return err
 			}
@@ -188,7 +168,7 @@ func seedPackageVersions(framework string) error {
 		// hermetic even when the golden domain declares no platform.
 		frameworks := map[string]bool{framework: true}
 		for _, base := range chain {
-			m, err := readBridgeManifest(base)
+			m, err := bridge.LoadManifest(base)
 			if err != nil {
 				return err
 			}

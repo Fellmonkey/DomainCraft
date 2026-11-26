@@ -33,7 +33,7 @@ func JSON() map[string]any {
 		"rateLimitPolicies":          strings(RateLimitPolicies),
 		"permissionKeys":             strings(PermissionKeys),
 		"sortDirections":             strings(SortDirections),
-		"stringValidationModifiers":  strings(StringValidationModifiers),
+		"stringValidationModifiers":  strings(stringValidationModifiers),
 		"numericValidationModifiers": strings(NumericValidationModifiers),
 		"infraQueues":                strings(InfraQueues),
 		"infraCacheStores":           strings(InfraCacheStores),

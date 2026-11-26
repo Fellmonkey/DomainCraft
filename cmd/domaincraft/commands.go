@@ -45,7 +45,6 @@ import (
 	"github.com/DomainCraft/DomainCraft/pkg/logger"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -652,14 +651,14 @@ func parseReplaceFlags(raw []string) ([]replaceEntry, error) {
 func resolveChainWithReplacements(opts *cliOptions, entryDir string, reps []replaceEntry, log *logger.Logger) (string, []string, error) {
 	// One read per directory. A chain with N --replace flags used to parse
 	// every manifest N+1 times through renderer.New and a second YAML reader.
-	metaCache := make(map[string]bridgeManifest)
-	metaFor := func(dir string) (bridgeManifest, error) {
+	metaCache := make(map[string]bridge.Manifest)
+	metaFor := func(dir string) (bridge.Manifest, error) {
 		if m, ok := metaCache[dir]; ok {
 			return m, nil
 		}
-		m, err := readBridgeManifest(dir)
+		m, err := bridge.LoadManifest(dir)
 		if err != nil {
-			return bridgeManifest{}, err
+			return bridge.Manifest{}, err
 		}
 		metaCache[dir] = m
 		return m, nil
@@ -804,45 +803,9 @@ func writeDomainLock(domainPath string, dirs []string) error {
 	return fsutil.WriteJSON(filepath.Join(filepath.Dir(domainPath), "domaincraft.lock.json"), domainLock{Bridges: out})
 }
 
-// bridgeManifest is the identifying part of bridge.yaml. One reader serves
-// --replace matching and the lock file, so defaults and contract parsing
-// cannot diverge between the two consumers.
-type bridgeManifest struct {
-	Layer           string
-	Name            string
-	Version         string
-	Extends         string
-	ContractVersion int
-}
-
-// readBridgeManifest reads bridge.yaml once per directory.
-func readBridgeManifest(dir string) (bridgeManifest, error) {
-	data, err := os.ReadFile(filepath.Join(dir, "bridge.yaml")) //nolint:gosec // dir comes from validated bridge resolution
-	if err != nil {
-		return bridgeManifest{}, err
-	}
-	var cfg struct {
-		Name    string `yaml:"name"`
-		Layer   string `yaml:"layer"`
-		Version string `yaml:"version"`
-		Extends string `yaml:"extends"`
-	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return bridgeManifest{}, err
-	}
-	contractVersion, _, err := bridge.ParseContractVersion(data)
-	if err != nil {
-		return bridgeManifest{}, err
-	}
-	return bridgeManifest{
-		Layer: cfg.Layer, Name: cfg.Name, Version: cfg.Version,
-		Extends: cfg.Extends, ContractVersion: contractVersion,
-	}, nil
-}
-
 // bridgeMetadata is the lock-file view of the shared manifest reader.
 func bridgeMetadata(dir string) (string, string, int, error) {
-	m, err := readBridgeManifest(dir)
+	m, err := bridge.LoadManifest(dir)
 	if err != nil {
 		return "", "", 0, err
 	}

@@ -119,9 +119,11 @@ var StringFieldTypes = []string{FieldTypeString, FieldTypeText}
 // NumericValidationModifiers lists numeric validation modifier names.
 var NumericValidationModifiers = []string{"gte", "gt", "lte", "lt"}
 
-// StringValidationModifiers lists string validation modifier names.
+// stringValidationModifiers lists string validation modifier names. It is
+// private so another package cannot mutate the spec at runtime; callers that
+// need an extended spec inject it explicitly (lexer.ParseWithStringModifiers).
 // min/max are also valid on numeric fields (length vs value bounds).
-var StringValidationModifiers = []string{"min", "max", "email", "url", "ipv4", "regex"}
+var stringValidationModifiers = []string{"min", "max", "email", "url", "ipv4", "regex"}
 
 // StringOnlyValidationModifiers lists validators that never apply to numeric fields.
 var StringOnlyValidationModifiers = []string{"email", "url", "ipv4", "regex"}
@@ -310,11 +312,9 @@ func IsInfraSecretStore(value string) bool { return infraSecretStoreSet[value] }
 // IsInfraStore reports whether value is a supported object store.
 func IsInfraStore(value string) bool { return infraStoreSet[value] }
 
-// IsStringValidationModifier reports whether mod applies to string fields. It
-// reads the slice directly so callers can extend the spec at runtime (the lexer
-// test does) without rebuilding a precomputed set.
+// IsStringValidationModifier reports whether mod applies to string fields.
 func IsStringValidationModifier(mod string) bool {
-	return slices.Contains(StringValidationModifiers, mod)
+	return slices.Contains(stringValidationModifiers, mod)
 }
 
 // IsStringOnlyValidationModifier reports whether mod is invalid on numeric fields.

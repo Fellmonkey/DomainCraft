@@ -4,6 +4,7 @@ package lexer
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/DomainCraft/DomainCraft/internal/specmeta"
@@ -42,6 +43,17 @@ type FieldDefinition struct {
 
 // Parse parses a full field definition: "string [required, max:255]"
 func Parse(input string) (*FieldDefinition, error) {
+	return parse(input, nil)
+}
+
+// ParseWithStringModifiers parses input with additional string validation
+// modifier names. It is the explicit injection point for a caller that extends
+// the spec; no package-level state is mutated.
+func ParseWithStringModifiers(input string, extraStringMods []string) (*FieldDefinition, error) {
+	return parse(input, extraStringMods)
+}
+
+func parse(input string, extraStringMods []string) (*FieldDefinition, error) {
 	input = strings.TrimSpace(input)
 	fd := &FieldDefinition{
 		Validations: make(map[string]string),
@@ -69,7 +81,7 @@ func Parse(input string) (*FieldDefinition, error) {
 			return nil, fmt.Errorf("unterminated modifier list in %q: expected ']'", input)
 		}
 		modifierStr = strings.TrimSuffix(modifierStr, "]")
-		if err := parseModifiers(modifierStr, fd); err != nil {
+		if err := parseModifiers(modifierStr, fd, extraStringMods); err != nil {
 			return nil, err
 		}
 	}
@@ -140,7 +152,7 @@ func parseType(typeStr string, fd *FieldDefinition) error {
 }
 
 // parseModifiers parses modifiers inside square brackets
-func parseModifiers(modStr string, fd *FieldDefinition) error {
+func parseModifiers(modStr string, fd *FieldDefinition, extraStringMods []string) error {
 	modifiers := splitModifiers(modStr)
 
 	for _, mod := range modifiers {
@@ -159,7 +171,7 @@ func parseModifiers(modStr string, fd *FieldDefinition) error {
 			value = strings.Trim(value, `"'`)
 
 			switch {
-			case specmeta.IsStringValidationModifier(key) || specmeta.IsNumericValidationModifier(key):
+			case specmeta.IsStringValidationModifier(key) || slices.Contains(extraStringMods, key) || specmeta.IsNumericValidationModifier(key):
 				fd.Validations[key] = value
 			case key == "default":
 				// Check for function-style defaults like now(), uuid()
