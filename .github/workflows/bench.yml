@@ -3,11 +3,13 @@ name: bench
 # Timing benchmarks are reported, not gated: a CI runner is too noisy for a
 # fixed time budget. Both sides run on the SAME runner, so benchstat can tell
 # whether a change is real without a committed baseline from someone's laptop.
-# Behavior is gated separately by the golden tests inside `go test ./...`.
+# Behavior and allocation budgets are gated by tests inside `go test ./...`.
 on:
   pull_request:
     paths:
       - 'internal/**/*.go'
+      - 'cmd/wasm-validator/**/*.go'
+      - 'pkg/textutil/**/*.go'
       - 'Makefile'
       - 'go.mod'
       - 'go.sum'
@@ -59,7 +61,9 @@ jobs:
           # Makefile so both sides run the exact same benchmark command.
           cp "$GITHUB_WORKSPACE/Makefile" "$RUNNER_TEMP/base/Makefile"
           cd "$RUNNER_TEMP/base"
-          make bench BENCH_COUNT=5 > "$RUNNER_TEMP/base.txt"
+          # At the base commit cmd/wasm-validator only has a js/wasm main.go,
+          # so it cannot be tested on linux/amd64. The PR side keeps it.
+          make bench BENCH_COUNT=5 BENCH_WASM_PACKAGE= > "$RUNNER_TEMP/base.txt"
 
       - name: Benchmark PR
         shell: bash

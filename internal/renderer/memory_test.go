@@ -10,7 +10,7 @@ import (
 	"github.com/DomainCraft/DomainCraft/internal/parser"
 )
 
-func memoryTestProject(t *testing.T) *ir.Project {
+func memoryTestProject(t testing.TB) *ir.Project {
 	t.Helper()
 	schema, err := parser.ParseYAML([]byte(`project:
   name: Shop

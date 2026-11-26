@@ -105,3 +105,8 @@ cmd/wasm-validator/api_test.go::TestGenerateYAML	#review	goGenerate had no nativ
 cmd/wasm-validator/api_test.go::TestGenerateYAMLRejectsInvalidModel	#review	goGenerate rendered files for a schema rejected by goValidate
 internal/bridgecontract/version_test.go::TestParseContractVersion	#review	contract gate extraction changed absent, zero or negative contract_version handling
 cmd/wasm-validator/fieldjson_test.go::TestMarshalFieldDefinitionMatchesEncodingJSON	#review	hand-written goParseField JSON writer emitted `{}` instead of `null` for nil Validations
+internal/parser/parser_bench_test.go::TestParseYAMLStringAllocationBudget	#review	parser allocations regressed after the WASM fast paths
+internal/validator/validator_bench_test.go::TestValidateAllocationBudget	#review	validator allocations regressed after the sorted-key and DFS changes
+internal/lexer/lexer_bench_test.go::TestParseDefinitionAllocationBudget	#review	field-definition parsing or the regex cache regressed
+cmd/wasm-validator/budget_test.go::TestExportAllocationBudgets	#review	WASM export allocations regressed after the JSON and buffer changes
+internal/renderer/memory_bench_test.go::TestRenderMemoryAllocationBudget	#review	in-memory renderer allocations regressed after the buffer size hint
