@@ -412,7 +412,7 @@ func TestApplyUpdateRejectsUnsafeFetchBranch(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 
 	// Source 1: the Update passed by the caller.
-	if _, err := ApplyUpdate(entry, &Update{Entry: entry, RemoteBranch: bad}); err == nil ||
+	if _, err := ApplyUpdate(entry, &Update{RemoteBranch: bad}); err == nil ||
 		!strings.Contains(err.Error(), "invalid fetch branch") {
 		t.Errorf("ApplyUpdate with hostile Update branch = %v, want validation error", err)
 	}

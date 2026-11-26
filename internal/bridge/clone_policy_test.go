@@ -352,7 +352,7 @@ func TestApplyUpdateFallbackRejectsUnsupportedContract(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 
 	// A syntactically valid but nonexistent branch forces the fallback path.
-	u := &Update{Entry: entry, RemoteBranch: "missing-branch"}
+	u := &Update{RemoteBranch: "missing-branch"}
 	if _, err := ApplyUpdate(entry, u); err == nil || !strings.Contains(err.Error(), "contract") {
 		t.Fatalf("ApplyUpdate fallback error = %v, want a contract rejection", err)
 	}

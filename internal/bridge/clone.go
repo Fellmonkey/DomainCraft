@@ -231,12 +231,7 @@ func maybeUpdate(entry RegistryEntry, opts *EnsureOptions) error {
 	// this core cannot support. The hard check is re-done in ApplyUpdate; this
 	// only avoids prompting for an update that would be rejected anyway. A
 	// failed probe is "cannot offer update", never "assume supported".
-	c, rerr := remoteContractVersion(entry, update.RemoteBranch)
-	if rerr != nil {
-		warnOpts(opts, "skipping update of %q: cannot read remote contract: %v", entry.ID, rerr)
-		return nil
-	}
-	if cerr := CheckContractVersion(c); cerr != nil {
+	if cerr := gateRemoteContract(entry, update.RemoteBranch); cerr != nil {
 		warnOpts(opts, "skipping update of %q: %v", entry.ID, cerr)
 		return nil
 	}

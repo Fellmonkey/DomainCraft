@@ -96,6 +96,26 @@ func CheckContractVersion(contractVersion int) error {
 	return nil
 }
 
+// gateRemoteContract fetches a bridge manifest at ref and applies the contract
+// gate. Every read path (update offer, status probe) uses this one decision.
+func gateRemoteContract(entry RegistryEntry, ref string) error {
+	c, err := remoteContractVersion(entry, ref)
+	if err != nil {
+		return err
+	}
+	return CheckContractVersion(c)
+}
+
+// gateContractBytes applies the same gate to bridge.yaml bytes already in hand
+// (a fetched FETCH_HEAD or the local cache). An unreadable manifest fails closed.
+func gateContractBytes(data []byte) error {
+	version, _, err := ParseContractVersion(data)
+	if err != nil {
+		return err
+	}
+	return CheckContractVersion(version)
+}
+
 // remoteContractVersion fetches a bridge's declared contract version at a ref
 // without cloning, via the GitHub raw-content endpoint. An unreadable manifest
 // is an error: callers treat it as "cannot offer update" rather than guessing
@@ -121,9 +141,7 @@ func remoteContractVersion(entry RegistryEntry, ref string) (int, error) {
 // Update describes a detected newer version of a cached bridge. Callers hand it
 // to the user (e.g. an interactive prompt) and then to ApplyUpdate.
 type Update struct {
-	Entry        RegistryEntry
 	LocalVersion string // version of the cached checkout
-	RemoteCommit string
 	RemoteBranch string
 }
 
@@ -195,9 +213,7 @@ func checkForUpdate(entry RegistryEntry, interval time.Duration, recordCheck boo
 	}
 
 	return &Update{
-		Entry:        entry,
 		LocalVersion: meta.Version,
-		RemoteCommit: remoteCommit,
 		RemoteBranch: remoteBranch,
 	}, nil
 }
@@ -213,15 +229,16 @@ func ApplyUpdate(entry RegistryEntry, u *Update) (string, error) {
 
 	// A pinned checkout has an explicit ref. Remember it so a direct ApplyUpdate
 	// never leaves the cache on the default branch.
+	meta, _ := ReadMeta(entry)
 	pin := ""
-	if meta, err := ReadMeta(entry); err == nil && meta != nil {
+	if meta != nil {
 		pin = meta.Pin
 	}
 
 	branch := "main"
 	if u != nil && u.RemoteBranch != "" {
 		branch = u.RemoteBranch
-	} else if meta, err := ReadMeta(entry); err == nil && meta != nil && meta.Branch != "" {
+	} else if meta != nil && meta.Branch != "" {
 		branch = meta.Branch
 	}
 	// The branch can come from cache metadata, so an attacker-controlled value
@@ -243,11 +260,7 @@ func ApplyUpdate(entry RegistryEntry, u *Update) (string, error) {
 		if serr != nil {
 			return "", fmt.Errorf("read fetched bridge manifest: %w", serr)
 		}
-		contract, _, perr := ParseContractVersion([]byte(out))
-		if perr != nil {
-			return "", perr
-		}
-		if cerr := CheckContractVersion(contract); cerr != nil {
+		if cerr := gateContractBytes([]byte(out)); cerr != nil {
 			return "", cerr
 		}
 		if _, err := runGit(cacheDir, "reset", "--hard", "FETCH_HEAD"); err != nil {
@@ -291,11 +304,7 @@ func checkCachedContract(entry RegistryEntry) error {
 	if err != nil {
 		return fmt.Errorf("read bridge manifest in %q: %w", CachePath(entry), err)
 	}
-	version, _, err := ParseContractVersion(data)
-	if err != nil {
-		return err
-	}
-	return CheckContractVersion(version)
+	return gateContractBytes(data)
 }
 
 // finishUpdate re-applies a pin (if any) before recording metadata, so an

@@ -93,25 +93,32 @@ func validateRegistryURL(raw string) error {
 	return nil
 }
 
-// validateRegistryTarget resolves the host and rejects a disallowed address.
-func validateRegistryTarget(ctx context.Context, u *url.URL) error {
+// resolveAllowedIPs resolves host and applies the single address policy shared
+// by the redirect check and the dial hook. The test bypass lives here so both
+// callers cannot drift apart on SSRF rules.
+func resolveAllowedIPs(ctx context.Context, host string) ([]net.IPAddr, error) {
 	if allowLocalRegistryForTests {
-		return nil
+		return nil, nil
 	}
-	host := strings.ToLower(u.Hostname())
 	ips, err := lookupRegistryIPs(ctx, host)
 	if err != nil {
-		return fmt.Errorf("resolve registry host %q: %w", host, err)
+		return nil, fmt.Errorf("resolve registry host %q: %w", host, err)
 	}
 	if len(ips) == 0 {
-		return fmt.Errorf("registry host %q has no addresses", host)
+		return nil, fmt.Errorf("registry host %q has no addresses", host)
 	}
 	for _, addr := range ips {
 		if !allowedRegistryIP(addr.IP) {
-			return fmt.Errorf("registry host %q resolves to disallowed address %s", host, addr.IP)
+			return nil, fmt.Errorf("registry host %q resolves to disallowed address %s", host, addr.IP)
 		}
 	}
-	return nil
+	return ips, nil
+}
+
+// validateRegistryTarget resolves the host and rejects a disallowed address.
+func validateRegistryTarget(ctx context.Context, u *url.URL) error {
+	_, err := resolveAllowedIPs(ctx, strings.ToLower(u.Hostname()))
+	return err
 }
 
 // restrictedRegistryDialer is the http.Transport dial hook. It uses the same
@@ -132,17 +139,9 @@ func restrictedRegistryDialer(ctx context.Context, network, addr string) (net.Co
 		}
 		return dialer.DialContext(ctx, network, addr)
 	}
-	ips, err := lookupRegistryIPs(ctx, host)
+	ips, err := resolveAllowedIPs(ctx, host)
 	if err != nil {
-		return nil, fmt.Errorf("resolve registry host: %w", err)
-	}
-	if len(ips) == 0 {
-		return nil, fmt.Errorf("registry host %q has no addresses", host)
-	}
-	for _, candidate := range ips {
-		if !allowedRegistryIP(candidate.IP) {
-			return nil, fmt.Errorf("registry host %q resolves to disallowed address %s", host, candidate.IP)
-		}
+		return nil, err
 	}
 	return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
 }

@@ -220,10 +220,8 @@ func (e RegistryEntry) Status(checkRemote bool) Status {
 		s.RemoteReachable = true
 		// Only flag an update when the remote contract can be read and is
 		// supported. A failed probe is "cannot offer update".
-		if c, rerr := remoteContractVersion(e, u.RemoteBranch); rerr == nil {
-			if cerr := CheckContractVersion(c); cerr == nil {
-				s.Outdated = true
-			}
+		if gateRemoteContract(e, u.RemoteBranch) == nil {
+			s.Outdated = true
 		}
 	}
 	return s
