@@ -101,10 +101,8 @@ func maybeNotifyUpdateWithOps(ops updateOps, cmd *cobra.Command) {
 	}
 }
 
-// cachedLatestCoreVersion returns the latest released core version, using the
-// throttled cache when it is fresh and otherwise querying GitHub.
-func cachedLatestCoreVersion() (string, error) { return cachedLatestCoreVersionWithOps(defaultUpdateOps()) }
-
+// cachedLatestCoreVersionWithOps returns the latest released core version,
+// using the throttled cache when it is fresh and otherwise querying GitHub.
 func cachedLatestCoreVersionWithOps(ops updateOps) (string, error) {
 	cacheDir := appdir.CacheDir("core")
 	cachePath := filepath.Join(cacheDir, "core-update.json")
@@ -244,9 +242,7 @@ func decodeRelease(body []byte) (*githubRelease, error) {
 	return &rel, nil
 }
 
-// latestRelease fetches the newest published release metadata.
-func latestRelease() (*githubRelease, error) { return latestReleaseWithOps(defaultUpdateOps()) }
-
+// latestReleaseWithOps fetches the newest published release metadata.
 func latestReleaseWithOps(ops updateOps) (*githubRelease, error) {
 	body, err := ops.getBody(releasesLatestURL)
 	if err != nil {
@@ -326,12 +322,8 @@ func parseAllowedURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// releaseChecksum reads the SHA-256 digest for name from the release's
+// releaseChecksumWithOps reads the SHA-256 digest for name from the release's
 // checksums.txt asset. A missing, malformed or foreign digest is an error.
-func releaseChecksum(rel *githubRelease, name string) (string, error) {
-	return releaseChecksumWithOps(defaultUpdateOps(), rel, name)
-}
-
 func releaseChecksumWithOps(ops updateOps, rel *githubRelease, name string) (string, error) {
 	assetURL, err := validatedReleaseAssetURL(rel, checksumsAssetName)
 	if err != nil {
@@ -394,13 +386,9 @@ func httpGetBodyWithOps(ops updateOps, rawURL string) ([]byte, error) {
 	return netutil.BoundedGet(bridge.CommandContext(), httpClient, rawURL, ops.maxBodyBytes, validateReleaseRedirect)
 }
 
-// downloadBinary fetches a release asset into a temp file in dir and returns
-// its path. Callers pass filepath.Dir(exe) so the final rename never crosses a
-// volume boundary (EXDEV on Unix, a needless copy on Windows).
-func downloadBinary(rawURL, dir string) (string, error) {
-	return downloadBinaryWithOps(defaultUpdateOps(), rawURL, dir)
-}
-
+// downloadBinaryWithOps fetches a release asset into a temp file in dir and
+// returns its path. Callers pass filepath.Dir(exe) so the final rename never
+// crosses a volume boundary (EXDEV on Unix, a needless copy on Windows).
 func downloadBinaryWithOps(ops updateOps, rawURL, dir string) (string, error) {
 	validURL, err := validateReleaseURL(rawURL)
 	if err != nil {
@@ -429,13 +417,9 @@ func downloadBinaryWithOps(ops updateOps, rawURL, dir string) (string, error) {
 	return tmp.Name(), nil
 }
 
-// replaceExecutable puts the new binary in place of the running executable. It
-// first tries a direct rename; on platforms where the running binary is locked
-// (Windows), it moves the current one aside first.
-func replaceExecutable(tmp, exe string) error {
-	return replaceExecutableWithOps(defaultUpdateOps(), tmp, exe)
-}
-
+// replaceExecutableWithOps puts the new binary in place of the running
+// executable. It first tries a direct rename; on platforms where the running
+// binary is locked (Windows), it moves the current one aside first.
 func replaceExecutableWithOps(ops updateOps, tmp, exe string) error {
 	// Direct rename is the normal path. Its error is kept: on a locked binary
 	// it explains why the fallback was needed, and on a real failure it is the
