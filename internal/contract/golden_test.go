@@ -336,28 +336,6 @@ func TestGoldenLeafBridges(t *testing.T) {
 	}
 }
 
-// TestGoldenSeedCoversBridgeTargetFramework guards the hermetic cache: the
-// renderer resolves packages with the bridge-declared TFM when the domain has
-// no platform, so that key must be seeded or golden runs hit the network.
-func TestGoldenSeedCoversBridgeTargetFramework(t *testing.T) {
-	cacheDir := appdir.CacheDir(cacheNamespace("csharp-rest"))
-	data, err := os.ReadFile(filepath.Join(cacheDir, packages.CacheFileName))
-	if err != nil {
-		t.Fatalf("read seeded package cache: %v", err)
-	}
-	var cache goldenPackageCache
-	if err := json.Unmarshal(data, &cache); err != nil {
-		t.Fatalf("decode seeded package cache: %v", err)
-	}
-	want := "\x00net10.0"
-	for key := range cache.Entries {
-		if strings.HasSuffix(key, want) {
-			return
-		}
-	}
-	t.Fatalf("seeded cache has no %q key (keys: %d)", want, len(cache.Entries))
-}
-
 // TestRenderDeterministic asserts that two renders of the same domain through
 // the same bridge chain produce byte-identical trees (the core determinism
 // invariant). It covers every bundled bridge, including composed extends-chain

@@ -33,6 +33,57 @@ func oldDatabaseColumnName(field *parser.ParsedField) string {
 	return textutil.ToDatabaseColumnName(field.OldName)
 }
 
+// applyProjectConfig copies the optional project blocks into their IR shape.
+// The parser types carry presence flags for defaulting; the IR types carry only
+// the resolved values, so the mapping is explicit and lives in one place.
+func applyProjectConfig(target *Project, p parser.ProjectConfig) {
+	if p.Cache != nil {
+		target.Cache = &CacheConfig{
+			Enabled:          p.Cache.Enabled,
+			Provider:         p.Cache.Provider,
+			ConnectionString: p.Cache.ConnectionString,
+			TTLSeconds:       p.Cache.TTLSeconds,
+		}
+	}
+	if p.CORS != nil {
+		target.CORS = &CORSConfig{
+			Enabled: p.CORS.Enabled,
+			Origins: append([]string(nil), p.CORS.Origins...),
+		}
+	}
+	if p.Deploy != nil {
+		target.Deploy = &DeployConfig{Domain: p.Deploy.Domain, Port: p.Deploy.Port}
+	}
+	if p.Versioning != nil {
+		target.Versioning = &VersioningConfig{
+			Enabled:        p.Versioning.Enabled,
+			DefaultVersion: p.Versioning.DefaultVersion,
+		}
+	}
+	if p.RateLimit != nil {
+		target.RateLimit = &RateLimitConfig{
+			Enabled:       p.RateLimit.Enabled,
+			Policy:        p.RateLimit.Policy,
+			PermitLimit:   p.RateLimit.PermitLimit,
+			WindowSeconds: p.RateLimit.WindowSeconds,
+		}
+	}
+	if p.Pagination != nil {
+		target.Pagination = &PaginationConfig{
+			DefaultPageSize: p.Pagination.DefaultPageSize,
+			MaxPageSize:     p.Pagination.MaxPageSize,
+		}
+	}
+	if p.Infrastructure != nil {
+		target.Infrastructure = &Infrastructure{
+			Queue:   p.Infrastructure.Queue,
+			Cache:   p.Infrastructure.Cache,
+			Secrets: p.Infrastructure.Secrets,
+			Storage: p.Infrastructure.Storage,
+		}
+	}
+}
+
 // Build converts ParsedSchema into Project.
 func Build(schema *parser.ParsedSchema) (*Project, error) {
 	if schema == nil {
@@ -51,54 +102,7 @@ func Build(schema *parser.ParsedSchema) (*Project, error) {
 		Entities:    make([]Entity, 0, len(schema.Entities)),
 	}
 
-	if schema.Project.Cache != nil {
-		irProject.Cache = &CacheConfig{
-			Enabled:          schema.Project.Cache.Enabled,
-			Provider:         schema.Project.Cache.Provider,
-			ConnectionString: schema.Project.Cache.ConnectionString,
-			TTLSeconds:       schema.Project.Cache.TTLSeconds,
-		}
-	}
-	if schema.Project.CORS != nil {
-		irProject.CORS = &CORSConfig{
-			Enabled: schema.Project.CORS.Enabled,
-			Origins: append([]string(nil), schema.Project.CORS.Origins...),
-		}
-	}
-	if schema.Project.Deploy != nil {
-		irProject.Deploy = &DeployConfig{
-			Domain: schema.Project.Deploy.Domain,
-			Port:   schema.Project.Deploy.Port,
-		}
-	}
-	if schema.Project.Versioning != nil {
-		irProject.Versioning = &VersioningConfig{
-			Enabled:        schema.Project.Versioning.Enabled,
-			DefaultVersion: schema.Project.Versioning.DefaultVersion,
-		}
-	}
-	if schema.Project.RateLimit != nil {
-		irProject.RateLimit = &RateLimitConfig{
-			Enabled:       schema.Project.RateLimit.Enabled,
-			Policy:        schema.Project.RateLimit.Policy,
-			PermitLimit:   schema.Project.RateLimit.PermitLimit,
-			WindowSeconds: schema.Project.RateLimit.WindowSeconds,
-		}
-	}
-	if schema.Project.Pagination != nil {
-		irProject.Pagination = &PaginationConfig{
-			DefaultPageSize: schema.Project.Pagination.DefaultPageSize,
-			MaxPageSize:     schema.Project.Pagination.MaxPageSize,
-		}
-	}
-	if schema.Project.Infrastructure != nil {
-		irProject.Infrastructure = &Infrastructure{
-			Queue:   schema.Project.Infrastructure.Queue,
-			Cache:   schema.Project.Infrastructure.Cache,
-			Secrets: schema.Project.Infrastructure.Secrets,
-			Storage: schema.Project.Infrastructure.Storage,
-		}
-	}
+	applyProjectConfig(irProject, schema.Project)
 
 	// Pass 1: build entities
 	entityIndex := make(map[string]*Entity, len(schema.Entities))

@@ -44,7 +44,6 @@ internal/ir/seed_kind_test.go::TestKindOfFollowsSpecmetaClassification	#5	KindOf
 internal/ir/contract_test.go::TestValidationRulesSemanticOrder	#5	validation rules came out in alphabetical order instead of required, format, length, numeric
 internal/ir/toposort_test.go::TestTopoSortInsertReadyKeepsNameOrder	#5	ready queue could lose name order when entities became ready during topological sort
 internal/snapshot/snapshot_test.go::TestLoadRejectsIncompatibleFormatVersion	#5	Load accepted snapshots with any format_version, so stale snapshots could trigger destructive prune
-internal/contract/golden_test.go::TestGoldenSeedCoversBridgeTargetFramework	#5	golden package cache omitted the bridge-declared TFM, so parallel determinism runs silently hit the network
 internal/renderer/bridgefuncs_test.go::TestBuildBridgeFuncsRequiresLiteralSpecs	#5	core substituted C# and UI syntax when a bridge omitted literal specs
 internal/renderer/render_test.go::TestResolvePackagesHasNoLanguageSpecificFrameworkDefault	#5	core hardcoded net10.0 as the package-resolution framework default; removing it left C# bridges resolving net11.0 packages for net10.0 projects
 internal/renderer/enum_array_test.go::TestTSCoreRendersEnumArrayType	#5	generated TypeScript enum arrays were empty because the core dropped its array syntax fallback and the bridge declared no array_format

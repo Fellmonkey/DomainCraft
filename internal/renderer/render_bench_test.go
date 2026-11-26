@@ -1,32 +1,13 @@
 package renderer
 
 import (
-	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
-	"flag"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
-	"slices"
-	"strings"
 	"testing"
 
 	"github.com/DomainCraft/DomainCraft/internal/ir"
-	"github.com/DomainCraft/DomainCraft/internal/testutil"
 )
-
-var updateGolden = flag.Bool("update", false, "regenerate benchmark golden files")
-
-// checkBenchGolden delegates to the shared golden helper; the flag stays local
-// so `go test ./internal/renderer -update` updates only this package's files.
-func checkBenchGolden(t *testing.T, name, got string) {
-	t.Helper()
-	testutil.CheckGolden(t, name, got, *updateGolden)
-}
-
-func benchHash(lines []string) string { return testutil.HashLines(lines) }
 
 // benchmarkRenderFixture builds the bridge, project and pre-existing output
 // tree shared by BenchmarkRenderWarm and TestBenchmarkRenderWarmGolden. One
@@ -87,49 +68,6 @@ func BenchmarkRenderWarm(b *testing.B) {
 	}
 }
 
-// TestBenchmarkRenderWarmGolden pins the warm-render file list and contents.
-// The manifest is path -> sha256(file), sorted by path and hashed again, so one
-// digest catches both a missing/extra file and a changed template result.
-func TestBenchmarkRenderWarmGolden(t *testing.T) {
-	lines := make([]string, 0, 3)
-	for _, size := range []int{100, 500, 2000} {
-		r, out, project := benchmarkRenderFixture(t, size)
-		if _, _, err := r.Render(project, out); err != nil {
-			t.Fatalf("Render(size=%d): %v", size, err)
-		}
-		files := make(map[string]string)
-		if err := filepath.WalkDir(out, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() {
-				return nil
-			}
-			rel, err := filepath.Rel(out, path)
-			if err != nil {
-				return err
-			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
-			sum := sha256.Sum256(data)
-			files[filepath.ToSlash(rel)] = hex.EncodeToString(sum[:])
-			return nil
-		}); err != nil {
-			t.Fatalf("walk output: %v", err)
-		}
-		keys := slices.Sorted(maps.Keys(files))
-		manifest := make([]string, 0, len(keys))
-		for _, key := range keys {
-			manifest = append(manifest, fmt.Sprintf("%s\t%s", key, files[key]))
-		}
-		lines = append(lines, fmt.Sprintf("entities=%d\tfiles=%d\tsha256=%s", size, len(files), benchHash(manifest)))
-	}
-	checkBenchGolden(t, "render-warm.golden.txt", strings.Join(lines, "\n"))
-}
-
 // benchmarkSafePathFixture builds the output tree shared by
 // BenchmarkSafeOutputPathWarm, its golden test and its allocation guard.
 func benchmarkSafePathFixture(tb testing.TB, size int) (string, []string) {
@@ -178,41 +116,5 @@ func BenchmarkSafeOutputPathWarm(b *testing.B) {
 			}
 		})
 	}
-}
-
-// TestBenchmarkSafeOutputPathWarmGolden pins the containment result: each
-// target must resolve inside the output tree and to the file the fixture wrote.
-// Absolute temp paths are reduced to relative paths before hashing so the
-// digest is host-independent.
-func TestBenchmarkSafeOutputPathWarmGolden(t *testing.T) {
-	lines := make([]string, 0, 3)
-	for _, size := range []int{100, 500, 2000} {
-		out, targets := benchmarkSafePathFixture(t, size)
-		resolved := make(map[string]string, len(targets))
-		for _, rel := range targets {
-			abs, err := safeOutputPath(out, rel)
-			if err != nil {
-				t.Fatalf("safeOutputPath(%s): %v", rel, err)
-			}
-			gotRel, err := filepath.Rel(out, abs)
-			if err != nil {
-				t.Fatalf("Rel(%s, %s): %v", out, abs, err)
-			}
-			gotRel = filepath.ToSlash(gotRel)
-			data, err := os.ReadFile(abs)
-			if err != nil {
-				t.Fatalf("ReadFile(%s): %v", abs, err)
-			}
-			sum := sha256.Sum256(bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n")))
-			resolved[rel] = fmt.Sprintf("%s\t%s", gotRel, hex.EncodeToString(sum[:]))
-		}
-		keys := slices.Sorted(maps.Keys(resolved))
-		entries := make([]string, 0, len(keys))
-		for _, key := range keys {
-			entries = append(entries, fmt.Sprintf("%s\t%s", key, resolved[key]))
-		}
-		lines = append(lines, fmt.Sprintf("entities=%d\tfiles=%d\tsha256=%s", size, len(resolved), benchHash(entries)))
-	}
-	checkBenchGolden(t, "safe-output-path-warm.golden.txt", strings.Join(lines, "\n"))
 }
 

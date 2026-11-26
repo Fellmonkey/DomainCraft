@@ -212,6 +212,19 @@ func checkStrictKeys(value *yaml.Node, allowed []string, errFn func(string, int)
 	return nil
 }
 
+// decodeStrict decodes a block into an alias target, rejecting unknown keys.
+// It shares the non-mapping fallback and the strict-key walk so types that only
+// reject unknown keys do not each repeat them.
+func decodeStrict(value *yaml.Node, target any, allowed []string, reject func(string, int) error) error {
+	if value.Kind != yaml.MappingNode {
+		return value.Decode(target)
+	}
+	if err := checkStrictKeys(value, allowed, reject, nil); err != nil {
+		return err
+	}
+	return value.Decode(target)
+}
+
 // unmarshalYAMLWithPresence decodes a config block through target — an alias
 // of the concrete config type, so yaml.v3 does not re-enter UnmarshalYAML —
 // while recording which of the keys in presence were present. Presence is
@@ -344,17 +357,11 @@ type RawPermissions struct {
 
 // UnmarshalYAML rejects unknown permission keys instead of silently ignoring them.
 func (p *RawPermissions) UnmarshalYAML(value *yaml.Node) error {
-	if value.Kind != yaml.MappingNode {
-		return value.Decode((*rawPermissionsAlias)(p))
-	}
 	// Unknown keys become errors, including ones smuggled through a YAML merge.
 	reject := func(key string, _ int) error {
 		return fmt.Errorf("unknown permission key %q; valid keys: %s", key, strings.Join(specmeta.PermissionKeys, ", "))
 	}
-	if err := checkStrictKeys(value, specmeta.PermissionKeys, reject, nil); err != nil {
-		return err
-	}
-	return value.Decode((*rawPermissionsAlias)(p))
+	return decodeStrict(value, (*rawPermissionsAlias)(p), specmeta.PermissionKeys, reject)
 }
 
 type rawPermissionsAlias RawPermissions
@@ -483,16 +490,10 @@ type RawIndex struct {
 
 // UnmarshalYAML rejects unknown index keys instead of silently ignoring them.
 func (r *RawIndex) UnmarshalYAML(value *yaml.Node) error {
-	if value.Kind != yaml.MappingNode {
-		return value.Decode((*rawIndexAlias)(r))
-	}
 	reject := func(key string, _ int) error {
 		return fmt.Errorf("unknown index key %q; valid keys: fields, type, sort, unique", key)
 	}
-	if err := checkStrictKeys(value, []string{"fields", "type", "sort", "unique"}, reject, nil); err != nil {
-		return err
-	}
-	return value.Decode((*rawIndexAlias)(r))
+	return decodeStrict(value, (*rawIndexAlias)(r), []string{"fields", "type", "sort", "unique"}, reject)
 }
 
 type rawIndexAlias RawIndex

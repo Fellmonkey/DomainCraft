@@ -124,20 +124,15 @@ func (v *Validator) validateProject() []ValidationError {
 	p := v.schema.Project
 
 	if strings.TrimSpace(p.Name) == "" {
-		errs = append(errs, invalid("<schema>", "",
-			"project name must not be empty"))
+		errs = append(errs, invalid("<schema>", "", "project name must not be empty"))
 	}
-
 	if len(v.schema.Entities) == 0 {
-		errs = append(errs, warn("<schema>", "",
-			"no entities defined"))
+		errs = append(errs, warn("<schema>", "", "no entities defined"))
 	}
-
 	if v.schema.Database != "" && !specmeta.IsDatabase(v.schema.Database) {
 		errs = append(errs, invalidf("<schema>", "",
 			"unknown database %q; allowed: %s", v.schema.Database, strings.Join(specmeta.Databases, ", ")))
 	}
-	// Auth validation
 	if v.schema.Auth != nil {
 		errs = append(errs, v.validateAuth()...)
 	}
@@ -145,116 +140,124 @@ func (v *Validator) validateProject() []ValidationError {
 		errs = append(errs, invalidf("<schema>", "",
 			"unknown api_style %q; allowed: %s", v.schema.APIStyle, strings.Join(specmeta.APIStyles, ", ")))
 	}
-
-	// Multi-tenancy
-	if p.MultiTenancy != nil && p.MultiTenancy.Enabled {
-		if p.MultiTenancy.Mode != "" && !specmeta.IsMultiTenancyMode(p.MultiTenancy.Mode) {
-			errs = append(errs, invalidf("<schema>", "",
-				"unknown multi_tenancy.mode %q; allowed: %s", p.MultiTenancy.Mode, strings.Join(specmeta.MultiTenancyModes, ", ")))
-		}
+	if p.MultiTenancy != nil && p.MultiTenancy.Enabled && p.MultiTenancy.Mode != "" &&
+		!specmeta.IsMultiTenancyMode(p.MultiTenancy.Mode) {
+		errs = append(errs, invalidf("<schema>", "",
+			"unknown multi_tenancy.mode %q; allowed: %s", p.MultiTenancy.Mode, strings.Join(specmeta.MultiTenancyModes, ", ")))
+	}
+	if p.CORS != nil && p.CORS.Enabled && len(p.CORS.Origins) == 0 {
+		errs = append(errs, warn("<schema>", "", "cors.enabled is true but no origins specified"))
+	}
+	if p.Deploy != nil && (p.Deploy.Port < 0 || p.Deploy.Port > 65535) {
+		errs = append(errs, invalidf("<schema>", "",
+			"deploy.port must be between 1 and 65535, got %d", p.Deploy.Port))
+	}
+	if p.Versioning != nil && p.Versioning.Enabled && p.Versioning.DefaultVersion == "" {
+		errs = append(errs, warn("<schema>", "", "versioning.enabled is true but default_version is empty"))
 	}
 
-	// Cache
-	if p.Cache != nil && p.Cache.Enabled {
-		if p.Cache.Provider != "" && !specmeta.IsCacheProvider(p.Cache.Provider) {
-			errs = append(errs, invalidf("<schema>", "",
-				"unknown cache.provider %q; allowed: %s", p.Cache.Provider, strings.Join(specmeta.CacheProviders, ", ")))
-		}
-		if p.Cache.TTLSeconds < 0 {
-			errs = append(errs, warn("<schema>", "",
-				"cache.ttl_seconds must be non-negative"))
-		}
+	errs = append(errs, validateCacheConfig(p)...)
+	errs = append(errs, validateRateLimitConfig(p)...)
+	errs = append(errs, validatePaginationConfig(p)...)
+	errs = append(errs, validateInfrastructureConfig(p)...)
+	return errs
+}
+
+// validateCacheConfig keeps the three cache rules together: they describe one
+// policy (enabled, provider and connection string must agree).
+func validateCacheConfig(p parser.ProjectConfig) []ValidationError {
+	var errs []ValidationError
+	c := p.Cache
+	if c == nil {
+		return nil
 	}
-	if p.Cache != nil && !p.Cache.Enabled && (p.Cache.Provider != "" || p.Cache.ConnectionString != "") {
+	if c.Enabled {
+		if c.Provider != "" && !specmeta.IsCacheProvider(c.Provider) {
+			errs = append(errs, invalidf("<schema>", "",
+				"unknown cache.provider %q; allowed: %s", c.Provider, strings.Join(specmeta.CacheProviders, ", ")))
+		}
+		if c.TTLSeconds < 0 {
+			errs = append(errs, warn("<schema>", "", "cache.ttl_seconds must be non-negative"))
+		}
+		if c.Provider != "" && c.ConnectionString == "" {
+			errs = append(errs, warnf("<schema>", "",
+				"cache.provider %q specified but cache.connection_string is empty", c.Provider))
+		}
+		return errs
+	}
+	if c.Provider != "" || c.ConnectionString != "" {
 		errs = append(errs, warn("<schema>", "",
 			"cache.provider or cache.connection_string specified but cache.enabled is false"))
 	}
-	if p.Cache != nil && p.Cache.Enabled && p.Cache.Provider != "" && p.Cache.ConnectionString == "" {
+	return errs
+}
+
+func validateRateLimitConfig(p parser.ProjectConfig) []ValidationError {
+	var errs []ValidationError
+	r := p.RateLimit
+	if r == nil {
+		return nil
+	}
+	if r.Policy != "" && !specmeta.IsRateLimitPolicy(r.Policy) {
+		errs = append(errs, invalidf("<schema>", "",
+			"unknown rate_limit.policy %q; allowed: %s", r.Policy, strings.Join(specmeta.RateLimitPolicies, ", ")))
+	}
+	if r.PermitLimit < 0 {
+		errs = append(errs, warn("<schema>", "", "rate_limit.permit_limit must be non-negative"))
+	}
+	// An explicit 0 means "no window"; only negatives are invalid. The parser
+	// fills in 60 when the key is omitted, so 0 never means "unset" here.
+	if r.WindowSeconds < 0 {
+		errs = append(errs, warn("<schema>", "", "rate_limit.window_seconds must be non-negative"))
+	}
+	return errs
+}
+
+func validatePaginationConfig(p parser.ProjectConfig) []ValidationError {
+	var errs []ValidationError
+	pg := p.Pagination
+	if pg == nil {
+		return nil
+	}
+	// An explicit 0 is meaningful (no default / no cap); only negatives are invalid.
+	if pg.DefaultPageSize < 0 {
+		errs = append(errs, warn("<schema>", "", "pagination.default_page_size must be non-negative"))
+	}
+	if pg.MaxPageSize < 0 {
+		errs = append(errs, warn("<schema>", "", "pagination.max_page_size must be non-negative"))
+	}
+	if pg.DefaultPageSize > 0 && pg.MaxPageSize > 0 && pg.DefaultPageSize > pg.MaxPageSize {
 		errs = append(errs, warnf("<schema>", "",
-			"cache.provider %q specified but cache.connection_string is empty", p.Cache.Provider))
+			"pagination.default_page_size (%d) must not exceed max_page_size (%d)", pg.DefaultPageSize, pg.MaxPageSize))
 	}
+	return errs
+}
 
-	// CORS
-	if p.CORS != nil && p.CORS.Enabled && len(p.CORS.Origins) == 0 {
-		errs = append(errs, warn("<schema>", "",
-			"cors.enabled is true but no origins specified"))
+// validateInfrastructureConfig checks the provider-agnostic backing services
+// used by addons such as Dapr.
+func validateInfrastructureConfig(p parser.ProjectConfig) []ValidationError {
+	var errs []ValidationError
+	i := p.Infrastructure
+	if i == nil {
+		return nil
 	}
-
-	// Deploy
-	if p.Deploy != nil {
-		if p.Deploy.Port < 0 || p.Deploy.Port > 65535 {
+	checks := []struct {
+		value string
+		valid func(string) bool
+		kind  string
+		allowed []string
+	}{
+		{i.Queue, specmeta.IsInfraQueue, "queue", specmeta.InfraQueues},
+		{i.Cache, specmeta.IsInfraCacheStore, "cache", specmeta.InfraCacheStores},
+		{i.Secrets, specmeta.IsInfraSecretStore, "secrets", specmeta.InfraSecretStores},
+		{i.Storage, specmeta.IsInfraStore, "storage", specmeta.InfraStores},
+	}
+	for _, c := range checks {
+		if c.value != "" && !c.valid(c.value) {
 			errs = append(errs, invalidf("<schema>", "",
-				"deploy.port must be between 1 and 65535, got %d", p.Deploy.Port))
+				"unknown infrastructure.%s %q; allowed: %s", c.kind, c.value, strings.Join(c.allowed, ", ")))
 		}
 	}
-
-	// Versioning
-	if p.Versioning != nil && p.Versioning.Enabled && p.Versioning.DefaultVersion == "" {
-		errs = append(errs, warn("<schema>", "",
-			"versioning.enabled is true but default_version is empty"))
-	}
-
-	// Rate limiting
-	if p.RateLimit != nil {
-		if p.RateLimit.Policy != "" && !specmeta.IsRateLimitPolicy(p.RateLimit.Policy) {
-			errs = append(errs, invalidf("<schema>", "",
-				"unknown rate_limit.policy %q; allowed: %s", p.RateLimit.Policy, strings.Join(specmeta.RateLimitPolicies, ", ")))
-		}
-		if p.RateLimit.PermitLimit < 0 {
-			errs = append(errs, warn("<schema>", "",
-				"rate_limit.permit_limit must be non-negative"))
-		}
-		// An explicit 0 means "no window"; only negatives are invalid. The
-		// parser fills in 60 when the key is omitted, so 0 never means "unset"
-		// by the time the validator sees it.
-		if p.RateLimit.WindowSeconds < 0 {
-			errs = append(errs, warn("<schema>", "",
-				"rate_limit.window_seconds must be non-negative"))
-		}
-	}
-
-	// Pagination. An explicit 0 is a meaningful value (no default / no cap);
-	// only negatives are invalid. Omitted keys are defaulted by the parser.
-	if p.Pagination != nil {
-		if p.Pagination.DefaultPageSize < 0 {
-			errs = append(errs, warn("<schema>", "",
-				"pagination.default_page_size must be non-negative"))
-		}
-		if p.Pagination.MaxPageSize < 0 {
-			errs = append(errs, warn("<schema>", "",
-				"pagination.max_page_size must be non-negative"))
-		}
-		if p.Pagination.DefaultPageSize > 0 && p.Pagination.MaxPageSize > 0 &&
-			p.Pagination.DefaultPageSize > p.Pagination.MaxPageSize {
-			errs = append(errs, warnf("<schema>", "",
-				"pagination.default_page_size (%d) must not exceed max_page_size (%d)", p.Pagination.DefaultPageSize,
-				p.Pagination.MaxPageSize))
-		}
-	}
-
-	// Infrastructure (provider-agnostic backing services used by addons such as Dapr)
-	if p.Infrastructure != nil {
-		if p.Infrastructure.Queue != "" && !specmeta.IsInfraQueue(p.Infrastructure.Queue) {
-			errs = append(errs, invalidf("<schema>", "",
-				"unknown infrastructure.queue %q; allowed: %s", p.Infrastructure.Queue, strings.Join(specmeta.InfraQueues, ", ")))
-		}
-		if p.Infrastructure.Cache != "" && !specmeta.IsInfraCacheStore(p.Infrastructure.Cache) {
-			errs = append(errs, invalidf("<schema>", "",
-				"unknown infrastructure.cache %q; allowed: %s", p.Infrastructure.Cache,
-				strings.Join(specmeta.InfraCacheStores, ", ")))
-		}
-		if p.Infrastructure.Secrets != "" && !specmeta.IsInfraSecretStore(p.Infrastructure.Secrets) {
-			errs = append(errs, invalidf("<schema>", "",
-				"unknown infrastructure.secrets %q; allowed: %s", p.Infrastructure.Secrets,
-				strings.Join(specmeta.InfraSecretStores, ", ")))
-		}
-		if p.Infrastructure.Storage != "" && !specmeta.IsInfraStore(p.Infrastructure.Storage) {
-			errs = append(errs, invalidf("<schema>", "",
-				"unknown infrastructure.storage %q; allowed: %s", p.Infrastructure.Storage,
-				strings.Join(specmeta.InfraStores, ", ")))
-		}
-	}
-
 	return errs
 }
 
@@ -1135,7 +1138,13 @@ func (v *Validator) validateSeedEntry(entityName string, entity *parser.ParsedEn
 		if field == nil {
 			continue
 		}
-		errs = append(errs, v.validateSeedValueType(entityName, seedField, entryIdx, field, seedValue)...)
+		errs = append(errs, v.validateSeedValueType(seedValueContext{
+			entityName: entityName,
+			fieldName:  seedField,
+			entryIdx:   entryIdx,
+			field:      field,
+			seedValue:  seedValue,
+		})...)
 	}
 
 	// Check required relation FK dependencies.
@@ -1187,150 +1196,122 @@ func isFractionalFloat(value any) bool {
 	}
 }
 
+// seedValueContext groups the five inputs of one seed-value check. errf adds
+// the shared "seed entry N:" prefix so each branch states only its own problem.
+type seedValueContext struct {
+	entityName string
+	fieldName  string
+	entryIdx   int
+	field      *parser.ParsedField
+	seedValue  any
+}
+
+func (c seedValueContext) errf(format string, args ...any) ValidationError {
+	return invalidf(c.entityName, c.fieldName, "seed entry %d: "+format,
+		append([]any{c.entryIdx}, args...)...)
+}
+
 // validateSeedValueType checks that a seed value is type-compatible with its field.
-func (v *Validator) validateSeedValueType(entityName, fieldName string, entryIdx int,
-	field *parser.ParsedField, seedValue any) []ValidationError {
+func (v *Validator) validateSeedValueType(c seedValueContext) []ValidationError {
 	var errs []ValidationError
-	ftype := strings.ToLower(field.Type)
+	add := func(e ValidationError) { errs = append(errs, e) }
+	ftype := strings.ToLower(c.field.Type)
 
 	switch {
 	case specmeta.IsStringType(ftype):
 		// String-like fields accept strings or JSON string values; numbers/bools are
 		// accepted too (YAML coercion) but must not be a map/slice.
-		if _, isMap := seedValue.(map[string]any); isMap {
-			errs = append(errs, invalidf(entityName, fieldName,
-				"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
-		} else if _, isSlice := seedValue.([]any); isSlice {
-			errs = append(errs, invalidf(entityName, fieldName,
-				"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
+		switch c.seedValue.(type) {
+		case map[string]any, []any:
+			add(c.errf("value %v is not compatible with type %s", c.seedValue, ftype))
 		}
 	case specmeta.IsIntegralType(ftype):
-		switch n := seedValue.(type) {
-		case string:
+		if s, ok := c.seedValue.(string); ok {
 			// A string must parse; otherwise seed coercion silently yields 0.
-			if _, err := strconv.ParseInt(n, 10, 64); err != nil {
-				errs = append(errs, invalidf(entityName, fieldName,
-					"seed entry %d: value %q is not a valid %s", entryIdx, n, ftype))
+			if _, err := strconv.ParseInt(s, 10, 64); err != nil {
+				add(c.errf("value %q is not a valid %s", s, ftype))
 			}
-		default:
-			if !isNativeNumeric(n) {
-				errs = append(errs, invalidf(entityName, fieldName,
-					"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
-				break
-			}
+		} else if !isNativeNumeric(c.seedValue) {
+			add(c.errf("value %v is not compatible with type %s", c.seedValue, ftype))
+		} else if isFractionalFloat(c.seedValue) {
 			// A fractional float would be silently truncated by the seed generator.
-			if isFractionalFloat(n) {
-				errs = append(errs, invalidf(entityName, fieldName,
-					"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
-			}
+			add(c.errf("value %v is not compatible with type %s", c.seedValue, ftype))
 		}
 	case specmeta.IsFloatType(ftype):
-		switch n := seedValue.(type) {
-		case string:
-			if _, err := strconv.ParseFloat(n, 64); err != nil {
-				errs = append(errs, invalidf(entityName, fieldName,
-					"seed entry %d: value %q is not a valid %s", entryIdx, n, ftype))
+		if s, ok := c.seedValue.(string); ok {
+			if _, err := strconv.ParseFloat(s, 64); err != nil {
+				add(c.errf("value %q is not a valid %s", s, ftype))
 			}
-		default:
-			// Other native numeric types are fine; anything else is not a seed number.
-			if !isNativeNumeric(n) {
-				errs = append(errs, invalidf(entityName, fieldName,
-					"seed entry %d: value %v is not compatible with type %s", entryIdx, seedValue, ftype))
-			}
+		} else if !isNativeNumeric(c.seedValue) {
+			add(c.errf("value %v is not compatible with type %s", c.seedValue, ftype))
 		}
 	case ftype == specmeta.FieldTypeBoolean:
-		switch v := seedValue.(type) {
+		switch b := c.seedValue.(type) {
 		case bool:
-			// OK
 		case string:
-			s := strings.ToLower(v)
-			if s != "true" && s != "false" {
-				errs = append(errs, invalidf(entityName, fieldName,
-					"seed entry %d: value %q is not valid for boolean type", entryIdx, seedValue))
+			if s := strings.ToLower(b); s != "true" && s != "false" {
+				add(c.errf("value %q is not valid for boolean type", c.seedValue))
 			}
 		default:
-			errs = append(errs, invalidf(entityName, fieldName,
-				"seed entry %d: value %v is not compatible with boolean type", entryIdx, seedValue))
+			add(c.errf("value %v is not compatible with boolean type", c.seedValue))
 		}
 	case ftype == specmeta.FieldTypeDate:
-		s, ok := seedValue.(string)
+		s, ok := c.seedValue.(string)
 		if !ok {
-			errs = append(errs, invalidf(entityName, fieldName,
-				"seed entry %d: value %v is not compatible with date type (expected string YYYY-MM-DD)", entryIdx, seedValue))
+			add(c.errf("value %v is not compatible with date type (expected string YYYY-MM-DD)", c.seedValue))
 		} else if !isValidDate(s) {
-			errs = append(errs, invalidf(entityName, fieldName,
-				"seed entry %d: value %q is not a valid date (expected YYYY-MM-DD)", entryIdx, s))
+			add(c.errf("value %q is not a valid date (expected YYYY-MM-DD)", s))
 		}
 	case ftype == specmeta.FieldTypeUUID:
-		s, ok := seedValue.(string)
+		s, ok := c.seedValue.(string)
 		if !ok {
-			errs = append(errs, invalidf(entityName, fieldName,
-				"seed entry %d: value %v is not compatible with uuid type (expected string)", entryIdx, seedValue))
+			add(c.errf("value %v is not compatible with uuid type (expected string)", c.seedValue))
 		} else if !isValidUUID(s) {
-			errs = append(errs, invalidf(entityName, fieldName,
-				"seed entry %d: value %q is not a valid UUID (expected xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)", entryIdx, s))
+			add(c.errf("value %q is not a valid UUID (expected xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)", s))
 		}
 	case ftype == specmeta.FieldTypeDatetime:
-		s, ok := seedValue.(string)
+		s, ok := c.seedValue.(string)
 		if !ok {
-			errs = append(errs, invalidf(entityName, fieldName,
-				"seed entry %d: value %v is not compatible with datetime type (expected string)", entryIdx, seedValue))
+			add(c.errf("value %v is not compatible with datetime type (expected string)", c.seedValue))
 		} else if !isValidDatetime(s) {
-			errs = append(errs, invalidf(entityName, fieldName,
-				"seed entry %d: value %q is not a valid datetime (expected ISO 8601 format, e.g. 2024-01-15T10:30:00Z)", entryIdx,
-				s))
+			add(c.errf("value %q is not a valid datetime (expected ISO 8601 format, e.g. 2024-01-15T10:30:00Z)", s))
 		}
 	case specmeta.FieldKind(ftype) == "json":
 		// JSON values can be any valid JSON — accept any type.
 		// String values are validated as parseable JSON.
-		if s, ok := seedValue.(string); ok {
-			if !isValidJSON(s) {
-				errs = append(errs, invalidf(entityName, fieldName,
-					"seed entry %d: value %q is not valid JSON", entryIdx, s))
-			}
+		if s, ok := c.seedValue.(string); ok && !isValidJSON(s) {
+			add(c.errf("value %q is not valid JSON", s))
 		}
 	case ftype == specmeta.FieldTypeEnum:
 		// The value must be one of the declared enum values.
-		sv, ok := seedValue.(string)
+		sv, ok := c.seedValue.(string)
 		if !ok {
-			errs = append(errs, invalidf(entityName, fieldName,
-				"seed entry %d: value %v is not compatible with enum type (expected string)", entryIdx, seedValue))
+			add(c.errf("value %v is not compatible with enum type (expected string)", c.seedValue))
 			break
 		}
-		if values, defined := v.schema.Enums[field.TargetType]; defined {
-			found := slices.Contains(values, sv)
-			if !found {
-				errs = append(errs, invalidf(entityName, fieldName,
-					"seed entry %d: value %q is not a declared value of enum '%s'; valid values: %s", entryIdx, sv, field.TargetType,
-					strings.Join(values, ", ")))
-			}
+		if values, defined := v.schema.Enums[c.field.TargetType]; defined && !slices.Contains(values, sv) {
+			add(c.errf("value %q is not a declared value of enum '%s'; valid values: %s", sv, c.field.TargetType,
+				strings.Join(values, ", ")))
 		}
 	case ftype == specmeta.FieldTypeArray:
 		// Accept a YAML list. String values are accepted as JSON arrays.
-		switch v := seedValue.(type) {
-		case []any:
-			// OK — list of elements
-		case []string:
-			// OK
+		switch sv := c.seedValue.(type) {
+		case []any, []string:
 		case string:
-			if !isValidJSONArray(v) {
-				errs = append(errs, invalidf(entityName, fieldName,
-					"seed entry %d: value %q is not a valid JSON array for array type", entryIdx, v))
+			if !isValidJSONArray(sv) {
+				add(c.errf("value %q is not a valid JSON array for array type", sv))
 			}
 		default:
-			errs = append(errs, invalidf(entityName, fieldName,
-				"seed entry %d: value %v is not compatible with array type (expected a list)", entryIdx, seedValue))
+			add(c.errf("value %v is not compatible with array type (expected a list)", c.seedValue))
 		}
 	case ftype == specmeta.FieldTypeRelation:
 		// FK values reference the target entity's PK. Accept scalar values
 		// (string/number/bool matching the target PK type); more precise
 		// cross-entity type checking is left to the seed FK dependency check.
-		switch seedValue.(type) {
+		switch c.seedValue.(type) {
 		case string, int, int32, int64, float32, float64, bool:
-			// OK
 		default:
-			errs = append(errs, invalidf(entityName, fieldName,
-				"seed entry %d: value %v is not compatible with relation FK type", entryIdx, seedValue))
+			add(c.errf("value %v is not compatible with relation FK type", c.seedValue))
 		}
 	}
 
